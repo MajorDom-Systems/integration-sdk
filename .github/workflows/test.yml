@@ -1,0 +1,25 @@
+name: QA & Tests
+
+on:
+  push:
+    # Long-lived branches — keep whichever your repo uses (main or master) and develop.
+    branches:
+      - main
+      - master
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    uses: ParkerIndustries/workflows/.github/workflows/test.yml@v1
+    # Defaults to the team matrix ["3.12", "3.13"]. Uncomment to customize:
+    # with:
+    #   python-versions: '["3.12", "3.13", "3.14"]'
+    #   # Runs after `poetry install`, before checks (system deps, Cython build_ext,
+    #   # starting service containers, ...):
+    #   setup-script: |
+    #     sudo apt-get update && sudo apt-get install -y espeak-ng
+    #     poetry run python setup.py build_ext --inplace
+    #   # Teardown, always runs after checks:
+    #   post-run-script: docker compose down

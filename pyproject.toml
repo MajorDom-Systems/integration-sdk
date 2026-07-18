@@ -1,0 +1,143 @@
+[project]
+name = "majordom-integration-sdk"
+version = "0.1.0"
+description = "Models, protocols, and tooling for building MajorDom integrations."
+authors = [{ name = "Mark Parker", email = "mark@parker-programs.com" }]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic (>=2.0,<3.0)",
+    # Our fork of pydantic-discriminator (the PyPI `pydantic-discriminator` is a different
+    # project that breaks model_dump for enums), published under its own name. Import name
+    # stays `pydantic_discriminator`.
+    "parker-pydantic-discriminator (>=0.1.4)",
+    "python-slugify",
+    "zeroconf (>=0.130)",
+    "bleak (>=0.22)",
+]
+
+[dependency-groups]
+dev = [
+    "poethepoet (>=0.36.0,<1.0.0)",
+    "ty",             # type checker; swap for mypy/pyright by editing the `check` task below
+    "ruff",
+    "pip-audit",      # dependency vuln scan — gates release (not everyday CI); run locally with `poetry run pip-audit`
+    "pytest>=9.0.3",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-timeout",
+    "pytest-repeat",
+    "pytest-benchmark",
+    "pytest-profiling",
+    "pytest-resource-usage",
+    "coverage",
+    "pympler",        # object memory introspection, leak hunting
+    "psutil",         # process/system resource usage
+    "faker",          # realistic fake data for tests
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+requires-poetry = ">=2.0"
+packages = [{ include = "majordom_integration_sdk" }]
+
+# schemas/ and discovery/ are lifted verbatim from the Hub, which type-checks them under
+# mypy (they carry mypy-style `# type: ignore` comments ty doesn't read, and lean on
+# pydantic-discriminator's dynamic bases ty can't model). Exempt just those rules for just
+# those paths — all SDK-native code stays fully checked. Re-home these fixes in the Hub.
+[[tool.ty.overrides]]
+include = ["majordom_integration_sdk/schemas/**", "majordom_integration_sdk/discovery/**"]
+
+[tool.ty.overrides.rules]
+invalid-return-type = "ignore"
+invalid-assignment = "ignore"
+invalid-argument-type = "ignore"
+unsupported-base = "ignore"
+
+# The repository's typed reads use the `as_: type[T] = Device` idiom (same as the Hub's own
+# repository) so callers get `get(id, as_=MyDevice) -> MyDevice` while the bare `get(id)`
+# still returns a Device. ty rejects a concrete default for a TypeVar-typed parameter; the
+# alternative is @overload on every read across the protocol and both implementations.
+[[tool.ty.overrides]]
+include = ["majordom_integration_sdk/repository/**"]
+
+[tool.ty.overrides.rules]
+invalid-parameter-default = "ignore"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+filterwarnings = ["once"]
+
+[tool.coverage.run]
+omit = ["tests/*"]
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "I",   # isort
+]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["E402"]
+# schemas/ and discovery/ are lifted verbatim from the Hub and maintained under its lint
+# rules; abstract_controller.py keeps the Hub's long-form docstrings. Exempt only the
+# house-style rules for these paths — SDK-native code stays fully linted.
+"majordom_integration_sdk/schemas/*" = ["E501", "UP042"]
+"majordom_integration_sdk/discovery/*" = ["E501", "SIM102", "SIM105"]
+"majordom_integration_sdk/controller/abstract_controller.py" = ["E501"]
+
+[tool.poe.tasks.install]
+shell = """
+poetry install
+echo '#!/bin/sh\npoetry run poe check' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+echo "Pre-commit hook installed."
+"""
+
+[tool.poe.tasks.check]
+shell = """
+code=0
+
+echo "\nRunning ruff lint:"
+poetry run ruff check --fix || code=1
+
+echo "\nRunning ruff format:"
+poetry run ruff format || code=1
+
+echo "\nRunning ty:"
+poetry run ty check || code=1
+
+echo "\nRunning pytest:"
+poetry run pytest --cov=majordom_integration_sdk --cov-report=xml || code=1
+
+echo "\nRunning poetry build:"
+poetry build || code=1
+
+echo "\nRunning poetry check:"
+poetry check || code=1
+
+${ci:+git diff --exit-code}
+
+exit $code
+"""
+args = [{ name = "ci", type = "boolean" }]
