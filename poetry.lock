@@ -539,27 +539,11 @@ version = "26.2"
 description = "Core utilities for Python packages"
 optional = false
 python-versions = ">=3.8"
-groups = ["main", "dev"]
+groups = ["dev"]
 files = [
     {file = "packaging-26.2-py3-none-any.whl", hash = "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"},
     {file = "packaging-26.2.tar.gz", hash = "sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661"},
 ]
-
-[[package]]
-name = "parker-pydantic-discriminator"
-version = "0.1.4"
-description = "Pydantic discriminators for polymorphic models"
-optional = false
-python-versions = ">=3.10"
-groups = ["main"]
-files = [
-    {file = "parker_pydantic_discriminator-0.1.4-py3-none-any.whl", hash = "sha256:722c737eded5942d52caba9f0ea8569cef0948636321b4ddcc6b3ea8fb9829b6"},
-    {file = "parker_pydantic_discriminator-0.1.4.tar.gz", hash = "sha256:8675d6934c5058552989ccb0904a3befa3ebbc6e692c5f3df33a953c87c4b1cc"},
-]
-
-[package.dependencies]
-packaging = "*"
-pydantic = ">=1.10,<3.0"
 
 [[package]]
 name = "pastel"
@@ -1874,4 +1858,4 @@ ifaddr = ">=0.1.7"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "fd8f3f2b1f3cc4da6f661325a784b2d6e66ad764b5df425a5787f88fedc72253"
+content-hash = "1028b36e00c7c737e99953dee7c9f066615272f35f0bd87622512bcad016b481"

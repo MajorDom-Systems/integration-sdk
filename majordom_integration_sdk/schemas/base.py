@@ -7,21 +7,6 @@ from uuid import UUID
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import GetJsonSchemaHandler
 from pydantic_core import core_schema as cs
-from pydantic_discriminator import DiscriminatedBaseModel
-
-# try patching the pydantic-discriminator to fix "object does not support item assignment" at "v[Naming.TYPE_FIELD_ALIAS] = cls.discriminator()" for Scene Id
-# TODO: fix it in pydantic-discriminator
-original = DiscriminatedBaseModel._validate_type_field.__func__
-
-
-def patched(cls, v):
-    if not isinstance(v, dict):
-        return v
-    return original(cls, v)
-
-
-DiscriminatedBaseModel._validate_type_field = classmethod(patched)
-# end patch
 
 
 class StrEnum(str, Enum):
@@ -33,9 +18,6 @@ class Base(PydanticBaseModel):  # TODO: make sure all models use it
         "from_attributes": True,
         "validate_assignment": True,
     }
-
-
-class TypedBaseModel(DiscriminatedBaseModel): ...
 
 
 class NonEmptyStr(str):

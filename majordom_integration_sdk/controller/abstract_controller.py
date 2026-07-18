@@ -5,6 +5,7 @@ See docs.majordom.io/device-integration for the full integration guide.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from contextlib import AbstractAsyncContextManager
@@ -24,9 +25,22 @@ from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter
 from majordom_integration_sdk.schemas.event import Event
 
 _NAME_HELP = (
-    'Set a class-level `name` on your controller, e.g. `name = "Hue"`. '
+    "The integration name is auto-derived from your controller class name; set a class-level "
+    '`name` only to override it (e.g. `name = "ZigBee"`). '
     "See the example integration at https://docs.majordom.io/device-integration"
 )
+
+
+def _titleize(class_name: str) -> str:
+    """Human-readable integration name derived from a controller class name.
+
+    Strips a trailing "Controller" and splits CamelCase/PascalCase into spaced words:
+    ``HueController`` -> ``"Hue"``, ``ZigBeeController`` -> ``"Zig Bee"``. Set an explicit
+    ``name`` on the subclass to override when you want different casing (e.g. ``"ZigBee"``).
+    """
+    base = class_name[: -len("Controller")] if class_name.endswith("Controller") else class_name
+    words = re.findall(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+", base)
+    return " ".join(words) or base
 
 
 class ControllerOutput(Protocol):
@@ -56,6 +70,12 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
     Defines the interface the Hub uses to interact with an integration — the Hub instantiates the subclass and drives it by calling these methods.
     """
 
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        # Auto-derive `name` from the class name unless the subclass set one explicitly.
+        if "name" not in cls.__dict__:
+            cls.name = _titleize(cls.__name__)
+
     @dataclass(frozen=True)
     class Dependencies:
         """
@@ -83,8 +103,6 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
         """
         Called by the Hub with the injected dependencies. Do not change this signature.
         """
-        if not getattr(type(self), "name", None):
-            raise TypeError(f"{type(self).__name__} is missing an integration name. {_NAME_HELP}")
         self.dependencies = dependencies
 
     # Abstract
@@ -102,10 +120,14 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
 
     name: ClassVar[str]
     """
-    Human-readable name of the integration (e.g. "HomeKit", "Zigbee"). Set it on your subclass:
+    Human-readable name of the integration (e.g. "HomeKit", "ZigBee").
 
-        class HueController(AbstractController[Device, Parameter]):
-            name = "Hue"
+    Auto-derived from the controller class name by default (``HueController`` -> "Hue",
+    ``ZigBeeController`` -> "Zig Bee"), so you usually don't set it. Set it on your subclass
+    only to override the casing/wording:
+
+        class ZigBeeController(AbstractController[Device, Parameter]):
+            name = "ZigBee"
 
     It identifies the integration, so it's a constant of the class rather than per-instance
     state — the Hub reads it (and `slug()`) off the class to wire an integration's
@@ -198,13 +220,10 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
         Class-level, so the Hub can key an integration's storage on it before constructing
         the controller.
         """
-        name = getattr(cls, "name", None)
-        if not name:
-            raise TypeError(f"{cls.__name__} is missing an integration name. {_NAME_HELP}")
-        slug = slugify(name)
+        slug = slugify(cls.name)
         if not slug:
             raise ValueError(
-                f"{cls.__name__}'s name {name!r} has no letters or digits to build a slug from. {_NAME_HELP}"
+                f"{cls.__name__}'s name {cls.name!r} has no letters or digits to build a slug from. {_NAME_HELP}"
             )
         return slug
 

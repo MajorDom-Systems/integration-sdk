@@ -6,7 +6,7 @@ and parameter-change reports. Hub-only concerns (rooms, houses, users, the webso
 protocol) and the automation event bus live in the Hub, not here.
 """
 
-from .base import Base, NonEmptyStr, StrEnum, StrIdentifiable, TypedBaseModel, UUIdentifable
+from .base import Base, NonEmptyStr, StrEnum, StrIdentifiable, UUIdentifable
 from .command import DeviceCommand
 from .device import (
     CredentialsType,
@@ -38,7 +38,6 @@ __all__ = [
     "NonEmptyStr",
     "StrEnum",
     "StrIdentifiable",
-    "TypedBaseModel",
     "UUIdentifable",
     # command / events
     "DeviceCommand",

@@ -79,3 +79,18 @@ async def test_recording_output_captures_reports():
 
     assert output.connected_devices == [device.id]
     assert output.events == [change]
+
+
+def test_name_is_autoderived_from_class_name():
+    """`name` defaults to the class name (CamelCase → spaced), overridable with an explicit `name`."""
+
+    class HueController(AbstractController[Device, Parameter]):
+        pass
+
+    class ZigBeeController(AbstractController[Device, Parameter]):
+        name = "ZigBee"  # override the "Zig Bee" default
+
+    assert HueController.name == "Hue"
+    assert HueController.slug() == "hue"
+    assert ZigBeeController.name == "ZigBee"
+    assert ZigBeeController.slug() == "zigbee"

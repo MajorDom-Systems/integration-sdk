@@ -7,10 +7,6 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic (>=2.0,<3.0)",
-    # Our fork of pydantic-discriminator (the PyPI `pydantic-discriminator` is a different
-    # project that breaks model_dump for enums), published under its own name. Import name
-    # stays `pydantic_discriminator`.
-    "parker-pydantic-discriminator (>=0.1.4)",
     "python-slugify",
     "zeroconf (>=0.130)",
     "bleak (>=0.22)",
@@ -45,9 +41,8 @@ requires-poetry = ">=2.0"
 packages = [{ include = "majordom_integration_sdk" }]
 
 # schemas/ and discovery/ are lifted verbatim from the Hub, which type-checks them under
-# mypy (they carry mypy-style `# type: ignore` comments ty doesn't read, and lean on
-# pydantic-discriminator's dynamic bases ty can't model). Exempt just those rules for just
-# those paths — all SDK-native code stays fully checked. Re-home these fixes in the Hub.
+# mypy (they carry mypy-style `# type: ignore` comments ty doesn't read). Exempt just those
+# rules for just those paths — all SDK-native code stays fully checked. Re-home in the Hub.
 [[tool.ty.overrides]]
 include = ["majordom_integration_sdk/schemas/**", "majordom_integration_sdk/discovery/**"]
 
