@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   release:
-    uses: ParkerIndustries/workflows/.github/workflows/release.yml@v3
+    uses: ParkerIndustries/workflows/.github/workflows/release.yml@v1
     with:
       pypi-package-name: majordom-integration-sdk
       python-version: "3.12"
