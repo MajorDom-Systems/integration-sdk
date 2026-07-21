@@ -55,6 +55,17 @@ class LoggingControllerOutput(ControllerOutput):
         for event in events:
             logger.info("event %s: %r", type(event).__name__, event)
 
+    async def controller_did_encounter_error(
+        self,
+        controller: AbstractController,
+        message: str,
+        still_running: bool,
+        device_id: UUID | None = None,
+    ):
+        scope = f"device {device_id}" if device_id is not None else "controller"
+        state = "still running" if still_running else "STOPPED — integration inactive"
+        logger.error("%s error (%s): %s", scope, state, message)
+
 
 def build_dependencies(
     *,

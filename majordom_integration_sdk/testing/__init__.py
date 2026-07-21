@@ -41,6 +41,7 @@ class RecordingControllerOutput(ControllerOutput):
         self.connected_devices: list[UUID] = []
         self.lost_devices: list[UUID] = []
         self.events: list[Event] = []
+        self.errors: list[tuple[str, bool, UUID | None]] = []  # (message, still_running, device_id)
 
     async def controller_did_receive_discovery(self, controller: _Controller, discovery: Discovery):
         self.received_discoveries.append(discovery)
@@ -59,6 +60,11 @@ class RecordingControllerOutput(ControllerOutput):
 
     async def controller_did_receive_events(self, controller: _Controller, events: Iterable[Event]):
         self.events.extend(events)
+
+    async def controller_did_encounter_error(
+        self, controller: _Controller, message: str, still_running: bool, device_id: UUID | None = None
+    ):
+        self.errors.append((message, still_running, device_id))
 
 
 class FakeZeroconfDiscoveryService(ZeroconfDiscoveryService):
