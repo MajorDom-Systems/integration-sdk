@@ -57,13 +57,16 @@ class ParameterUnit(StrEnum):
     meters = "meters"
     mps = "mps"  # meters per second, speed
     mps2 = "mps2"  # meters per second squared, acceleration
+    m3h = "m3h"  # cubic meters per hour, volumetric flow
     rpm = "rpm"  # revolutions per minute
     newton = "newton"  # force
     joule = "joule"  # energy
+    kwh = "kwh"  # kilowatt-hour, energy (metering display unit)
     watt = "watt"  # power
     # temperature
     celsius = "celsius"
     kelvin = "kelvin"
+    mired = "mired"  # reciprocal megakelvin, color temperature
     # electricity
     volt = "volt"
     ampere = "ampere"
@@ -74,6 +77,7 @@ class ParameterUnit(StrEnum):
     # air
     pascal = "pascal"
     ppm = "ppm"  # parts per million, air quality
+    ugm3 = "ugm3"  # micrograms per cubic meter, particulate matter (PM2.5/PM10)
     # informatics
     bytes = "bytes"  # data size
     bps = "bps"  # bytes per second, data rate
