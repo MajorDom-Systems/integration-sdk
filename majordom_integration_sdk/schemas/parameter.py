@@ -102,13 +102,13 @@ def next_main_parameter_value(
     current: int | float | str | bool | None,
     cycle: Sequence[int | float | str] | None,
 ) -> int | float | str | None:
-    """The value a stateless one-tap (cycle/toggle) main parameter should send next.
+    """The value a one-tap (cycle/toggle) main parameter should send next.
 
-    ``cycle`` is the ordered set of values to rotate through — an explicit subset (e.g. ``[off, on]``
-    for a toggle), or the parameter's full ``valid_values`` keys when no subset is curated. A
-    single-element cycle is a "set to this value" button. Returns the element after ``current``
-    (wrapping), or the first element when ``current`` isn't in the set (or is unknown). ``None`` for
-    an empty cycle.
+    ``cycle`` is the ordered set of values to rotate through — a ``default_value`` in
+    ``valid_values`` format (works for any data type, e.g. ``[0, preferred_level]`` as a toggle),
+    or the parameter's full ``valid_values`` keys when no subset is set. A single-element cycle
+    is a "set to this value" button. Returns the element after ``current`` (wrapping), or the
+    first element when ``current`` isn't in the set (or is unknown). ``None`` for an empty cycle.
     """
     if not cycle:
         return None
@@ -144,13 +144,14 @@ class Parameter(UUIdentifable):
     @property
     def can_be_main_parameter(self) -> bool:
         """Whether this parameter can be a device's one-tap ``main_parameter`` (the room-tile
-        shortcut). Eligible when it's a natural stateless action:
+        shortcut). Eligible when a tap can do something meaningful:
 
-        - ``bool`` / ``none`` — a toggle or a button;
-        - ``default_value`` set — a stateless "set to this value" shortcut;
-        - ``enum`` with ``valid_values`` — a stateless **cycle**: each tap advances to the next
-          value (see :func:`next_main_parameter_value`). Curate ``valid_values`` (or supply a
-          cycle subset via integration data) to a small set, e.g. off/on, for a plain toggle.
+        - ``bool`` — a toggle (each tap flips it); ``none`` — a button (fires the command);
+        - ``enum`` with ``valid_values`` — a **cycle**: each tap advances to the next value
+          (see :func:`next_main_parameter_value`);
+        - ``default_value`` set — a single value makes a "set to this value" button; a
+          ``valid_values``-format mapping makes a **cycle** for ANY data type (most commonly a
+          two-value toggle, e.g. 0 and a preferred level, but it can be longer).
         """
         return bool(
             self.data_type in (ParameterDataType.bool, ParameterDataType.none)
