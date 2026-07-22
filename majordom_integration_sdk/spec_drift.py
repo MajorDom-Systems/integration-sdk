@@ -20,11 +20,14 @@ from dataclasses import dataclass
 from typing import Any
 
 
+# Generic over the key type — `Mapping` is invariant in its key, so a plain
+# `Mapping[Hashable, Any]` would reject perfectly valid concrete specs like
+# `dict[tuple[int, int], str]`.
 @dataclass(frozen=True)
-class DriftReport:
-    added: dict[Hashable, Any]
-    removed: dict[Hashable, Any]
-    reclassified: dict[Hashable, tuple[Any, Any]]  # key -> (old, new)
+class DriftReport[K: Hashable]:
+    added: dict[K, Any]
+    removed: dict[K, Any]
+    reclassified: dict[K, tuple[Any, Any]]  # key -> (old, new)
 
     @property
     def is_empty(self) -> bool:
@@ -53,7 +56,7 @@ class DriftReport:
         return "\n".join(lines)
 
 
-def diff_specs(current: Mapping[Hashable, Any], baseline: Mapping[Hashable, Any]) -> DriftReport:
+def diff_specs[K: Hashable](current: Mapping[K, Any], baseline: Mapping[K, Any]) -> DriftReport[K]:
     """Diff a freshly-harvested ``current`` spec against the committed ``baseline``."""
     added = {k: current[k] for k in current if k not in baseline}
     removed = {k: baseline[k] for k in baseline if k not in current}
