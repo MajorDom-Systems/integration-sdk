@@ -63,6 +63,26 @@ class ControllerOutput(Protocol):
         """Report device-domain events (e.g. DeviceParameterChange) observed by the controller."""
         ...
 
+    async def controller_did_encounter_error(
+        self,
+        controller: AbstractController,
+        message: str,
+        still_running: bool,
+        device_id: UUID | None = None,
+    ):
+        """A user-facing problem the integration hit — surfaced to the user, not the developer.
+
+        Use this for things the user should know about or can act on (a wrong setup, an unplugged
+        radio, a device that needs re-pairing); developer/technical detail goes to the logs
+        instead. ``message`` is plain language — include any call-to-action right in the text.
+
+        ``still_running`` is ``False`` when the controller can no longer run and is now inactive
+        — the Hub reflects it as a failed integration; the user is told it failed (and why, if
+        actionable) without a technical dump. ``device_id`` scopes the problem to one device;
+        ``None`` is a controller-level problem.
+        """
+        ...
+
 
 class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
     """
