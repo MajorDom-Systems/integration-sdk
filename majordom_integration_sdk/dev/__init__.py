@@ -129,4 +129,19 @@ async def run_controller(
         logger.info("%s stopped.", controller.name)
 
 
-__all__ = ["run_controller", "build_dependencies", "LoggingControllerOutput"]
+def __getattr__(name: str):
+    # `run_cli` (interactive REPL) needs the optional `cli` extra — typer-shell + rich. Import it
+    # lazily so `dev` (and `run_controller`) stay usable without those dependencies installed.
+    if name == "run_cli":
+        try:
+            from .cli import run_cli
+        except ImportError as exc:  # pragma: no cover - only when the extra is missing
+            raise ImportError(
+                "The interactive CLI needs extra dependencies — install them with:\n"
+                '    pip install "majordom-integration-sdk[cli]"'
+            ) from exc
+        return run_cli
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = ["run_controller", "run_cli", "build_dependencies", "LoggingControllerOutput"]

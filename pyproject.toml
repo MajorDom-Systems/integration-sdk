@@ -23,6 +23,11 @@ dependencies = [
     "bleak (>=0.22)",
 ]
 
+[project.optional-dependencies]
+# Interactive standalone runner: `majordom_integration_sdk.dev.run_cli`. Kept out of the base
+# install (the SDK is a runtime dep of every integration) — `pip install "majordom-integration-sdk[cli]"`.
+cli = ["typer-shell (>=0.2)", "rich (>=13)"]
+
 [project.urls]
 Homepage = "https://majordom.io"
 Documentation = "https://docs.majordom.io/device-integration"
@@ -47,6 +52,8 @@ dev = [
     "pympler",        # object memory introspection, leak hunting
     "psutil",         # process/system resource usage
     "faker",          # realistic fake data for tests
+    "typer-shell",    # the `cli` extra — installed in dev so ty/ruff check dev/cli.py
+    "rich",
 ]
 
 [build-system]
