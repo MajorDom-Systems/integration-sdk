@@ -1,6 +1,7 @@
 import base64
 import json
 import struct
+from collections.abc import Sequence
 from types import NoneType
 from typing import Any, Self
 from uuid import UUID
@@ -57,13 +58,16 @@ class ParameterUnit(StrEnum):
     meters = "meters"
     mps = "mps"  # meters per second, speed
     mps2 = "mps2"  # meters per second squared, acceleration
+    m3h = "m3h"  # cubic meters per hour, volumetric flow
     rpm = "rpm"  # revolutions per minute
     newton = "newton"  # force
     joule = "joule"  # energy
+    kwh = "kwh"  # kilowatt-hour, energy (metering display unit)
     watt = "watt"  # power
     # temperature
     celsius = "celsius"
     kelvin = "kelvin"
+    mired = "mired"  # reciprocal megakelvin, color temperature
     # electricity
     volt = "volt"
     ampere = "ampere"
@@ -74,6 +78,7 @@ class ParameterUnit(StrEnum):
     # air
     pascal = "pascal"
     ppm = "ppm"  # parts per million, air quality
+    ugm3 = "ugm3"  # micrograms per cubic meter, particulate matter (PM2.5/PM10)
     # informatics
     bytes = "bytes"  # data size
     bps = "bps"  # bytes per second, data rate
@@ -91,6 +96,25 @@ class ParameterVisibility(StrEnum):
     user = "user"  # main, everyday interaction, device screen widgets (on/off, brightness, volume)
     setting = "setting"  # user-configurable but behind am extra "settings"/"advanced" tap: configured once and rarely touched again; or diagnostic readings (RSSI, firmware version)
     system = "system"  # hidden under-the-hood wirings; not visible to the user
+
+
+def next_main_parameter_value(
+    current: int | float | str | bool | None,
+    cycle: Sequence[int | float | str] | None,
+) -> int | float | str | None:
+    """The value a stateless one-tap (cycle/toggle) main parameter should send next.
+
+    ``cycle`` is the ordered set of values to rotate through — an explicit subset (e.g. ``[off, on]``
+    for a toggle), or the parameter's full ``valid_values`` keys when no subset is curated. A
+    single-element cycle is a "set to this value" button. Returns the element after ``current``
+    (wrapping), or the first element when ``current`` isn't in the set (or is unknown). ``None`` for
+    an empty cycle.
+    """
+    if not cycle:
+        return None
+    if len(cycle) == 1 or current not in cycle:
+        return cycle[0]
+    return cycle[(cycle.index(current) + 1) % len(cycle)]
 
 
 class Parameter(UUIdentifable):
@@ -119,8 +143,19 @@ class Parameter(UUIdentifable):
 
     @property
     def can_be_main_parameter(self) -> bool:
+        """Whether this parameter can be a device's one-tap ``main_parameter`` (the room-tile
+        shortcut). Eligible when it's a natural stateless action:
+
+        - ``bool`` / ``none`` — a toggle or a button;
+        - ``default_value`` set — a stateless "set to this value" shortcut;
+        - ``enum`` with ``valid_values`` — a stateless **cycle**: each tap advances to the next
+          value (see :func:`next_main_parameter_value`). Curate ``valid_values`` (or supply a
+          cycle subset via integration data) to a small set, e.g. off/on, for a plain toggle.
+        """
         return bool(
-            self.data_type in (ParameterDataType.bool, ParameterDataType.none) or self.default_value is not None
+            self.data_type in (ParameterDataType.bool, ParameterDataType.none)
+            or self.default_value is not None
+            or (self.data_type == ParameterDataType.enum and self.valid_values)
         )
 
     # @classmethod
