@@ -1,6 +1,7 @@
 import base64
 import json
 import struct
+from collections.abc import Sequence
 from types import NoneType
 from typing import Any, Self
 from uuid import UUID
@@ -99,7 +100,7 @@ class ParameterVisibility(StrEnum):
 
 def next_main_parameter_value(
     current: int | float | str | bool | None,
-    cycle: list[int | float | str] | None,
+    cycle: Sequence[int | float | str] | None,
 ) -> int | float | str | None:
     """The value a stateless one-tap (cycle/toggle) main parameter should send next.
 
