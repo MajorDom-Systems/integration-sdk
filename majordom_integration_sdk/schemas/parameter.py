@@ -117,6 +117,33 @@ def next_main_parameter_value(
     return cycle[(cycle.index(current) + 1) % len(cycle)]
 
 
+def _sorted_keys(mapping: dict) -> list:
+    """valid_values keys in cycle order — numeric order when the keys are numbers."""
+    try:
+        return sorted(mapping, key=float)
+    except (TypeError, ValueError):
+        return list(mapping)
+
+
+def _decode_default(parameter: "Parameter"):
+    """Decode ``default_value`` bytes: a JSON ``valid_values``-format mapping -> dict (keys
+    coerced to the parameter's value type), otherwise the single scalar it encodes."""
+    raw = parameter.default_value
+    if not raw:
+        return None
+    try:
+        loaded = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        loaded = None
+    if isinstance(loaded, dict):
+        if parameter.data_type in (ParameterDataType.integer, ParameterDataType.enum):
+            return {int(k): v for k, v in loaded.items()}
+        if parameter.data_type == ParameterDataType.decimal:
+            return {float(k): v for k, v in loaded.items()}
+        return loaded
+    return ParameterState.model_validate(parameter, from_attributes=True).decode_value(raw)
+
+
 class Parameter(UUIdentifable):
     id: UUID
     name: str
@@ -147,8 +174,8 @@ class Parameter(UUIdentifable):
         shortcut). Eligible when a tap can do something meaningful:
 
         - ``bool`` — a toggle (each tap flips it); ``none`` — a button (fires the command);
-        - ``enum`` with ``valid_values`` — a **cycle**: each tap advances to the next value
-          (see :func:`next_main_parameter_value`);
+        - ``valid_values`` set (any data type, not just enum) — a **cycle**: each tap advances
+          to the next value (see :func:`next_main_parameter_value`);
         - ``default_value`` set — a single value makes a "set to this value" button; a
           ``valid_values``-format mapping makes a **cycle** for ANY data type (most commonly a
           two-value toggle, e.g. 0 and a preferred level, but it can be longer).
@@ -156,8 +183,32 @@ class Parameter(UUIdentifable):
         return bool(
             self.data_type in (ParameterDataType.bool, ParameterDataType.none)
             or self.default_value is not None
-            or (self.data_type == ParameterDataType.enum and self.valid_values)
+            or self.valid_values
         )
+
+    @property
+    def main_cycle(self) -> list[int | float | str | bool] | None:
+        """The ordered values a main-parameter tap cycles through, or ``None`` when a tap isn't
+        a cycle (a ``none`` command button, or nothing to derive from). Derivation, first match:
+
+        - ``default_value`` holding a ``valid_values``-format mapping -> its keys (any data type);
+        - ``default_value`` holding a single value -> ``[that value]`` (a button);
+        - ``valid_values`` -> its keys;
+        - ``bool`` -> ``[False, True]`` (a toggle).
+
+        Keys are ordered numerically where possible, so e.g. off(0) -> on(4) -> wraps.
+        """
+        if self.default_value:
+            decoded = _decode_default(self)
+            if isinstance(decoded, dict):
+                return _sorted_keys(decoded)
+            if decoded is not None:
+                return [decoded]
+        if self.valid_values:
+            return _sorted_keys(self.valid_values)
+        if self.data_type == ParameterDataType.bool:
+            return [False, True]
+        return None
 
     # @classmethod
     # def from_orm(cls, obj):
@@ -206,6 +257,29 @@ class ParameterState(Parameter):
         self.default_value = self.encode_value(v)
         return self
 
+    def decode_value(self, data: bytes | None = None) -> Any:
+        """Inverse of :meth:`encode_value` for scalar types — decodes ``data`` (default: this
+        state's own ``value``) back to a python value. Empty bytes decode to ``None``."""
+        raw = self.value if data is None else data
+        if not raw:
+            return None
+        match self.data_type:
+            case ParameterDataType.integer | ParameterDataType.enum:
+                return int.from_bytes(raw, "big", signed=True)
+            case ParameterDataType.bool:
+                return bool(raw[0])
+            case ParameterDataType.decimal:
+                return struct.unpack("d", raw)[0]
+            case ParameterDataType.string:
+                return raw.decode()
+            case ParameterDataType.struct:
+                try:
+                    return json.loads(raw)
+                except ValueError:
+                    return raw
+            case _:
+                return raw
+
     def encode_value(self, v: Any) -> bytes:  # TODO: review this method and the opposite one
         def assert_type(expected_type):
             assert isinstance(v, expected_type), (
@@ -214,6 +288,11 @@ class ParameterState(Parameter):
 
         if v is None:
             return b""
+
+        # A valid_values-format mapping as `default_value` gives ANY data type a tap cycle
+        # (see `main_cycle`); stored as JSON. `struct` handles dicts with its own schema below.
+        if isinstance(v, dict) and self.data_type != ParameterDataType.struct:
+            return json.dumps(v).encode()
 
         match self.data_type:
             case ParameterDataType.none:
