@@ -98,3 +98,11 @@ def test_decode_value_roundtrip():
     p = _p(data_type=ParameterDataType.integer)
     state = ParameterState.model_validate(p, from_attributes=True).with_value(42)
     assert state.decode_value() == 42
+
+
+def test_non_user_visibility_cannot_be_main():
+    p = _p(data_type=ParameterDataType.bool)
+    p.visibility = ParameterVisibility.setting
+    assert not p.can_be_main_parameter
+    p.visibility = ParameterVisibility.system
+    assert not p.can_be_main_parameter

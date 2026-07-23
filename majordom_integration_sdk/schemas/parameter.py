@@ -169,7 +169,9 @@ class Parameter(UUIdentifable):
     @property
     def can_be_main_parameter(self) -> bool:
         """Whether this parameter can be a device's one-tap ``main_parameter`` (the room-tile
-        shortcut). Eligible when a tap can do something meaningful:
+        shortcut). Requires ``user`` visibility — the main action is the most exposed control of
+        all, so a settings/system parameter is never a candidate. Beyond that, eligible when a
+        tap can do something meaningful:
 
         - ``bool`` — a toggle (each tap flips it); ``none`` — a button (fires the command);
         - ``valid_values`` set (any data type, not just enum) — a **cycle**: each tap advances
@@ -178,7 +180,7 @@ class Parameter(UUIdentifable):
           values makes a **cycle** for ANY data type (most commonly a two-value toggle, e.g.
           0 and a preferred level, but it can be longer).
         """
-        return bool(
+        return self.visibility == ParameterVisibility.user and bool(
             self.data_type in (ParameterDataType.bool, ParameterDataType.none)
             or self.default_value is not None
             or self.valid_values
