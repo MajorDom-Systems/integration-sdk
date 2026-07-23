@@ -23,6 +23,7 @@ from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtoco
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.schemas.event import Event
+from majordom_integration_sdk.schemas.notification import Notification
 
 _NAME_HELP = (
     "The integration name is auto-derived from your controller class name; set a class-level "
@@ -79,6 +80,15 @@ class ControllerOutput(Protocol):
         ``still_running`` is ``False`` when the controller can no longer run and is now inactive
         — the Hub reflects it as a failed integration; the user is told it failed (and why, if
         actionable) without a technical dump.
+        """
+        ...
+
+    async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):
+        """Surface a general user-facing notification — a floating tile in the app. Unlike
+        ``controller_did_encounter_error`` (specifically for failures/health), this is for anything
+        informational or advisory: a firmware update is available, a device needs a physical action,
+        a routine finished. The ``Notification`` carries the message plus its callout ``type``
+        (info/warning/error), delivery ``priority``, and ``ttl`` (seconds before auto-dismiss).
         """
         ...
 

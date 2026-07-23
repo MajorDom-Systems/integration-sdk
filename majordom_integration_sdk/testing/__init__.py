@@ -26,6 +26,7 @@ from majordom_integration_sdk.discovery.zeroconf_discovery import ZeroconfDiscov
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.schemas.device import Discovery
 from majordom_integration_sdk.schemas.event import Event
+from majordom_integration_sdk.schemas.notification import Notification
 
 if TYPE_CHECKING:
     from majordom_integration_sdk.controller.abstract_controller import AbstractController as _Controller
@@ -42,6 +43,7 @@ class RecordingControllerOutput(ControllerOutput):
         self.lost_devices: list[UUID] = []
         self.events: list[Event] = []
         self.errors: list[tuple[str, bool]] = []  # (message, still_running)
+        self.notifications: list[Notification] = []
 
     async def controller_did_receive_discovery(self, controller: _Controller, discovery: Discovery):
         self.received_discoveries.append(discovery)
@@ -63,6 +65,9 @@ class RecordingControllerOutput(ControllerOutput):
 
     async def controller_did_encounter_error(self, controller: _Controller, message: str, still_running: bool):
         self.errors.append((message, still_running))
+
+    async def controller_did_emit_notification(self, controller: _Controller, notification: Notification):
+        self.notifications.append(notification)
 
 
 class FakeZeroconfDiscoveryService(ZeroconfDiscoveryService):

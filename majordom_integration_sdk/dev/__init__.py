@@ -29,6 +29,7 @@ from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtoco
 from majordom_integration_sdk.repository.sqlite import SqliteDeviceRepository
 from majordom_integration_sdk.schemas.device import Discovery
 from majordom_integration_sdk.schemas.event import Event
+from majordom_integration_sdk.schemas.notification import Notification
 
 logger = logging.getLogger("majordom_integration_sdk.dev")
 
@@ -63,6 +64,11 @@ class LoggingControllerOutput(ControllerOutput):
     ):
         state = "still running" if still_running else "STOPPED — integration inactive"
         logger.error("integration error (%s): %s", state, message)
+
+    async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):
+        logger.info(
+            "notification [%s/%s]: %s", notification.type.value, notification.priority.value, notification.message
+        )
 
 
 def build_dependencies(
