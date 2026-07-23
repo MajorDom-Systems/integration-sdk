@@ -117,17 +117,18 @@ def next_main_parameter_value(
     return cycle[(cycle.index(current) + 1) % len(cycle)]
 
 
-def _sorted_keys(mapping: dict) -> list:
-    """valid_values keys in cycle order — numeric order when the keys are numbers."""
+def _sorted_values(values) -> list:
+    """Cycle values in a deterministic order — numeric where the values are numbers. (Accepts a
+    ``valid_values`` dict, iterating its keys, or any iterable of values, e.g. a decoded set.)"""
     try:
-        return sorted(mapping, key=float)
+        return sorted(values, key=float)
     except (TypeError, ValueError):
-        return list(mapping)
+        return list(values)
 
 
-def _decode_default(parameter: "Parameter"):
-    """Decode ``default_value`` bytes: a JSON ``valid_values``-format mapping -> dict (keys
-    coerced to the parameter's value type), otherwise the single scalar it encodes."""
+def _decode_default(parameter: "Parameter") -> list | None:
+    """Decode ``default_value`` bytes to the canonical stored form: a JSON array of values
+    (a single default is a 1-element array). Legacy scalar-encoded bytes decode to ``[value]``."""
     raw = parameter.default_value
     if not raw:
         return None
@@ -135,13 +136,10 @@ def _decode_default(parameter: "Parameter"):
         loaded = json.loads(raw)
     except (ValueError, UnicodeDecodeError):
         loaded = None
-    if isinstance(loaded, dict):
-        if parameter.data_type in (ParameterDataType.integer, ParameterDataType.enum):
-            return {int(k): v for k, v in loaded.items()}
-        if parameter.data_type == ParameterDataType.decimal:
-            return {float(k): v for k, v in loaded.items()}
+    if isinstance(loaded, list):
         return loaded
-    return ParameterState.model_validate(parameter, from_attributes=True).decode_value(raw)
+    # Legacy/simple scalar encoding (pre-set-format writers).
+    return [ParameterState.model_validate(parameter, from_attributes=True).decode_value(raw)]
 
 
 class Parameter(UUIdentifable):
@@ -176,9 +174,9 @@ class Parameter(UUIdentifable):
         - ``bool`` — a toggle (each tap flips it); ``none`` — a button (fires the command);
         - ``valid_values`` set (any data type, not just enum) — a **cycle**: each tap advances
           to the next value (see :func:`next_main_parameter_value`);
-        - ``default_value`` set — a single value makes a "set to this value" button; a
-          ``valid_values``-format mapping makes a **cycle** for ANY data type (most commonly a
-          two-value toggle, e.g. 0 and a preferred level, but it can be longer).
+        - ``default_value`` set — one value makes a "set to this value" button; a set of
+          values makes a **cycle** for ANY data type (most commonly a two-value toggle, e.g.
+          0 and a preferred level, but it can be longer).
         """
         return bool(
             self.data_type in (ParameterDataType.bool, ParameterDataType.none)
@@ -191,21 +189,18 @@ class Parameter(UUIdentifable):
         """The ordered values a main-parameter tap cycles through, or ``None`` when a tap isn't
         a cycle (a ``none`` command button, or nothing to derive from). Derivation, first match:
 
-        - ``default_value`` holding a ``valid_values``-format mapping -> its keys (any data type);
-        - ``default_value`` holding a single value -> ``[that value]`` (a button);
+        - ``default_value`` -> its values, one value being a button (any data type);
         - ``valid_values`` -> its keys;
         - ``bool`` -> ``[False, True]`` (a toggle).
 
-        Keys are ordered numerically where possible, so e.g. off(0) -> on(4) -> wraps.
+        Values are ordered numerically where possible, so e.g. off(0) -> on(4) -> wraps.
         """
         if self.default_value:
             decoded = _decode_default(self)
-            if isinstance(decoded, dict):
-                return _sorted_keys(decoded)
-            if decoded is not None:
-                return [decoded]
+            if decoded:
+                return _sorted_values(decoded)
         if self.valid_values:
-            return _sorted_keys(self.valid_values)
+            return _sorted_values(self.valid_values)
         if self.data_type == ParameterDataType.bool:
             return [False, True]
         return None
@@ -254,7 +249,23 @@ class ParameterState(Parameter):
         return self
 
     def with_default_value(self, v: Any) -> Self:
-        self.default_value = self.encode_value(v)
+        """Set ``default_value`` from one value or a set/list of values (any data type).
+
+        Stored canonically as a JSON array — a single value becomes a 1-element array (a tap
+        "button"); several values become the tap cycle (see ``main_cycle``). Reading mirrors the
+        stored form: ``_decode_default``/``main_cycle`` always yield the array. For ``data`` /
+        ``struct`` parameters a single raw value is stored via ``encode_value`` as before.
+        """
+        if v is None:
+            self.default_value = b""
+            return self
+        if self.data_type in (ParameterDataType.data, ParameterDataType.struct):
+            self.default_value = self.encode_value(v)
+            return self
+        values = list(v) if isinstance(v, (set, frozenset, list, tuple)) else [v]
+        for item in values:
+            self.encode_value(item)  # type-check each against this parameter's data type
+        self.default_value = json.dumps(_sorted_values(values)).encode()
         return self
 
     def decode_value(self, data: bytes | None = None) -> Any:
@@ -288,11 +299,6 @@ class ParameterState(Parameter):
 
         if v is None:
             return b""
-
-        # A valid_values-format mapping as `default_value` gives ANY data type a tap cycle
-        # (see `main_cycle`); stored as JSON. `struct` handles dicts with its own schema below.
-        if isinstance(v, dict) and self.data_type != ParameterDataType.struct:
-            return json.dumps(v).encode()
 
         match self.data_type:
             case ParameterDataType.none:

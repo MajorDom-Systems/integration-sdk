@@ -67,12 +67,13 @@ def test_main_cycle_from_valid_values():
     assert p.main_cycle == [0, 80]  # numeric order
 
 
-def test_main_cycle_from_mapping_default_value():
+def test_main_cycle_from_set_default_value():
     from majordom_integration_sdk.schemas.parameter import ParameterState
 
     p = _p(data_type=ParameterDataType.integer, valid_values={0: "off", 40: "dim", 80: "bright"})
-    state = ParameterState.model_validate(p, from_attributes=True).with_default_value({0: "off", 80: "bright"})
+    state = ParameterState.model_validate(p, from_attributes=True).with_default_value({0, 80})
     assert state.main_cycle == [0, 80]  # the curated subset wins over full valid_values
+    assert state.default_value == b"[0, 80]"  # stored canonically as a JSON array, 1 value = 1-element array
 
 
 def test_main_cycle_single_default_is_button():
