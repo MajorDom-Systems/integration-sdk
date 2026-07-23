@@ -209,7 +209,8 @@ class _CliControllerOutput(ControllerOutput):
                     device.last_seen = datetime.now()
                     await repo.save(device)
                 if state := await repo.get_parameter_state(event.device_id, event.parameter_id):
-                    await repo.save_parameter_state(event.device_id, state.with_value(event.value))
+                    state.value = event.value
+                    await repo.save_parameter_state(event.device_id, state)
         for event in events:
             _print(f"[event] {type(event).__name__}: {event!r}")
 

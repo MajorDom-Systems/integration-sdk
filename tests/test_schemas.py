@@ -1,9 +1,8 @@
-"""Schema behaviour that the SDK owns (and the Hub should re-home to)."""
+"""Schema behaviour that the SDK owns — pythonic parameter values, generic over the value type V."""
 
 from uuid import uuid4
 
 from majordom_integration_sdk.schemas.parameter import (
-    Parameter,
     ParameterDataType,
     ParameterRole,
     ParameterState,
@@ -11,65 +10,46 @@ from majordom_integration_sdk.schemas.parameter import (
 )
 
 
-def _child(data_type: ParameterDataType) -> Parameter:
-    return Parameter(
+def _state(data_type: ParameterDataType, **kw) -> ParameterState:
+    return ParameterState(
         id=uuid4(),
-        name=f"child-{data_type}",
+        name="p",
         data_type=data_type,
         role=ParameterRole.control,
         visibility=ParameterVisibility.user,
         integration_data=None,
+        **kw,
     )
 
 
-def test_encode_struct_length_prefixes_each_child():
-    flag = _child(ParameterDataType.bool)
-    count = _child(ParameterDataType.integer)
-    struct_param = ParameterState(
-        id=uuid4(),
-        name="command-args",
-        data_type=ParameterDataType.struct,
-        role=ParameterRole.control,
-        visibility=ParameterVisibility.user,
-        integration_data=None,
-        fields=[flag, count],
-    )
-
-    encoded = struct_param.encode_value({flag.id: True, count.id: 5})
-
-    flag_bytes = ParameterState.model_validate(flag, from_attributes=True).encode_value(True)
-    count_bytes = ParameterState.model_validate(count, from_attributes=True).encode_value(5)
-    expected = len(flag_bytes).to_bytes(4, "big") + flag_bytes + len(count_bytes).to_bytes(4, "big") + count_bytes
-    assert encoded == expected
+def test_scalar_value_is_pythonic_and_roundtrips():
+    for dt, v in [
+        (ParameterDataType.integer, 5),
+        (ParameterDataType.bool, True),
+        (ParameterDataType.decimal, 1.5),
+        (ParameterDataType.string, "hi"),
+    ]:
+        s = _state(dt, value=v)
+        assert s.value == v
+        assert ParameterState.model_validate_json(s.model_dump_json()).value == v
 
 
-def test_encode_struct_missing_child_is_empty():
-    flag = _child(ParameterDataType.bool)
-    struct_param = ParameterState(
-        id=uuid4(),
-        name="s",
-        data_type=ParameterDataType.struct,
-        role=ParameterRole.control,
-        visibility=ParameterVisibility.user,
-        integration_data=None,
-        fields=[flag],
-    )
-    # No value supplied for the child -> zero-length segment.
-    assert struct_param.encode_value({}) == (0).to_bytes(4, "big")
+def test_struct_value_is_a_plain_dict():
+    s = _state(ParameterDataType.struct, value={"a": 1, "b": [2, 3]})
+    assert s.value == {"a": 1, "b": [2, 3]}
+    assert ParameterState.model_validate_json(s.model_dump_json()).value == {"a": 1, "b": [2, 3]}
 
 
-def test_encode_struct_without_schema_falls_back_to_json():
-    # Matter maps arbitrary complex values (dicts and lists) to `struct` with no `fields`
-    # schema; those must encode without crashing rather than assert a dict.
-    import json
+def test_value_valid_values_and_default_share_one_type():
+    # An int parameter: int value, int valid_values keys, int default_value — all V=int.
+    s = _state(ParameterDataType.enum, value=0, valid_values={0: "off", 4: "on"}, default_value={0, 4})
+    assert (s.value, s.valid_values, s.default_value) == (0, {0: "off", 4: "on"}, {0, 4})
 
-    p = ParameterState(
-        id=uuid4(),
-        name="raw",
-        data_type=ParameterDataType.struct,
-        role=ParameterRole.control,
-        visibility=ParameterVisibility.user,
-        integration_data=None,
-    )
-    assert p.encode_value([41]) == json.dumps([41]).encode()
-    assert p.encode_value({"a": 1}) == json.dumps({"a": 1}).encode()
+    rt = ParameterState.model_validate_json(s.model_dump_json())
+    assert rt.default_value == {0, 4}  # a set survives the JSON-array round-trip
+    assert rt.valid_values == {0: "off", 4: "on"}  # int keys survive
+
+
+def test_single_default_value_stays_scalar():
+    s = _state(ParameterDataType.integer, default_value=5)
+    assert s.default_value == 5  # a lone value is the scalar branch of `set[V] | V`, not a set

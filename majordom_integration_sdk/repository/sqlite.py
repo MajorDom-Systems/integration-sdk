@@ -1,7 +1,7 @@
 """File-backed :class:`DeviceRepositoryProtocol` on the standard-library ``sqlite3``.
 
 No third-party dependency: each device is stored as one row of JSON (the record already
-round-trips its ``bytes`` parameter values through base64 on the JSON boundary). Suitable
+stores pythonic parameter values as JSON via Pydantic). Suitable
 for a standalone integration that needs its paired devices to survive a restart; the Hub
 uses its own SQLAlchemy-backed repository instead.
 

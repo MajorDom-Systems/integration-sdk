@@ -69,10 +69,10 @@ async def test_parameter_state_round_trip(repository, device_state):
         fetched = await repo.get_parameter_state(device_state.id, parameter.id)
         assert fetched is not None and fetched.id == parameter.id
 
-        parameter.value = b"\x00"
+        parameter.value = 7
         await repo.save_parameter_state(device_state.id, parameter)
         updated = await repo.get_parameter_state(device_state.id, parameter.id)
-        assert updated is not None and updated.value == b"\x00"
+        assert updated is not None and updated.value == 7
 
 
 async def test_update_visibility(repository, device_state):

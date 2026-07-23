@@ -30,7 +30,7 @@ def make_parameter_state(
         integration_data=None,
     )
     if data_type is ParameterDataType.bool:
-        state = state.with_value(True)
+        state.value = True
     return state
 
 

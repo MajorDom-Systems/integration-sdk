@@ -55,7 +55,7 @@ def test_enum_without_valid_values_cannot_be_main():
 
 
 def test_default_value_makes_any_type_main():
-    assert _p(data_type=ParameterDataType.integer, default_value=b"\x00\x00\x00\x05").can_be_main_parameter
+    assert _p(data_type=ParameterDataType.integer, default_value=5).can_be_main_parameter
 
 
 def test_valid_values_makes_any_type_main():
@@ -68,20 +68,14 @@ def test_main_cycle_from_valid_values():
 
 
 def test_main_cycle_from_set_default_value():
-    from majordom_integration_sdk.schemas.parameter import ParameterState
-
-    p = _p(data_type=ParameterDataType.integer, valid_values={0: "off", 40: "dim", 80: "bright"})
-    state = ParameterState.model_validate(p, from_attributes=True).with_default_value({0, 80})
-    assert state.main_cycle == [0, 80]  # the curated subset wins over full valid_values
-    assert state.default_value == b"[0, 80]"  # stored canonically as a JSON array, 1 value = 1-element array
+    p = _p(data_type=ParameterDataType.integer, valid_values={0: "off", 40: "dim", 80: "bright"}, default_value={0, 80})
+    assert p.main_cycle == [0, 80]  # the curated default_value subset wins over full valid_values
+    assert p.default_value == {0, 80}  # a pythonic set (serializes to a JSON array)
 
 
 def test_main_cycle_single_default_is_button():
-    from majordom_integration_sdk.schemas.parameter import ParameterState
-
-    p = _p(data_type=ParameterDataType.integer)
-    state = ParameterState.model_validate(p, from_attributes=True).with_default_value(5)
-    assert state.main_cycle == [5]
+    p = _p(data_type=ParameterDataType.integer, default_value=5)
+    assert p.main_cycle == [5]
 
 
 def test_main_cycle_bool_toggles():
@@ -92,12 +86,14 @@ def test_main_cycle_none_command_is_not_a_cycle():
     assert _p(data_type=ParameterDataType.none).main_cycle is None
 
 
-def test_decode_value_roundtrip():
+def test_value_is_pythonic():
     from majordom_integration_sdk.schemas.parameter import ParameterState
 
     p = _p(data_type=ParameterDataType.integer)
-    state = ParameterState.model_validate(p, from_attributes=True).with_value(42)
-    assert state.decode_value() == 42
+    state = ParameterState.model_validate(p, from_attributes=True)
+    state.value = 42
+    assert state.value == 42
+    assert ParameterState.model_validate_json(state.model_dump_json()).value == 42
 
 
 def test_non_user_visibility_cannot_be_main():
