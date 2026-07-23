@@ -145,7 +145,11 @@ def _decode_default(parameter: "Parameter") -> list | None:
 class Parameter(UUIdentifable):
     id: UUID
     name: str
-    # description: str TODO: consider this one for display/tooltips
+    # Manufacturer-provided, read-only description (for display / tooltips). Integrations set it
+    # when the protocol exposes one; the Hub never edits it.
+    description: str | None = None
+    # User-editable free-text note, stored MajorDom-side only (never sent to the device).
+    note: str | None = None
     data_type: ParameterDataType
     unit: ParameterUnit = ParameterUnit.plain  # TODO: consider making str in case of an unsupported value (e.g. version mismatch). Alternativelely, consider adding a case like unknown<foobar>
     role: ParameterRole

@@ -102,6 +102,10 @@ class DeviceInfo(DevicePatch):
     transport: str
     integration: str
     manufacturer: str | None
+    # Manufacturer-provided, read-only description of the device (a model blurb / product name).
+    # Integrations set it when the protocol exposes one; the Hub never edits it. (User-editable
+    # free text is `note`, on DevicePatch.)
+    description: str | None = None
     main_parameter: UUID | None = None  # for the tap action on the room view, toggle in most cases
 
     last_seen: datetime | None = None
