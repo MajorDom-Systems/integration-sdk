@@ -1,6 +1,6 @@
 [project]
 name = "majordom-integration-sdk"
-version = "0.1.4"
+version = "0.1.5"
 description = "Models, protocols, and tooling for building MajorDom integrations."
 authors = [{ name = "Mark Parker", email = "mark@parker-programs.com" }]
 readme = "README.md"
