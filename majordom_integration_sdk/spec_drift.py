@@ -15,7 +15,7 @@ Dependabot-style PR when anything changed — highlighting RECLASSIFY at the top
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,7 +39,25 @@ class DriftReport[K: Hashable]:
         what current users already see, so it always warrants human review."""
         return bool(self.reclassified)
 
-    def render(self, *, source: str = "spec") -> str:
+    def render(self, *, source: str = "spec", key_label: Callable[[K], str] | None = None) -> str:
+        """Render a human-readable drift summary.
+
+        ``key_label`` optionally resolves a key to a human name (e.g. a raw ``(cluster_id,
+        attribute_id)`` -> ``"Chime.SelectedChime"``) so a reviewer reading the PR body sees what
+        actually changed, not just numeric ids. It's kept out of the engine because the mapping is
+        integration-specific (chip bindings for matter, zigpy for zha); each canary passes its own.
+        A resolver that raises or returns falsy for a key falls back to the bare id.
+        """
+
+        def tag(key: K) -> str:
+            label = None
+            if key_label is not None:
+                try:
+                    label = key_label(key)
+                except Exception:  # noqa: BLE001 - a name lookup must never break the drift report
+                    label = None
+            return f"{label}  {key!r}" if label else f"{key!r}"
+
         if self.is_empty:
             return f"[{source}] no drift"
         lines = [
@@ -48,11 +66,11 @@ class DriftReport[K: Hashable]:
         ]
         # RECLASSIFY first — it's the high-risk tier.
         for key, (old, new) in sorted(self.reclassified.items(), key=lambda kv: repr(kv[0])):
-            lines.append(f"  ~ RECLASSIFY {key!r}: {old!r} -> {new!r}")
+            lines.append(f"  ~ RECLASSIFY {tag(key)}: {old!r} -> {new!r}")
         for key, val in sorted(self.added.items(), key=lambda kv: repr(kv[0])):
-            lines.append(f"  + ADD        {key!r}: {val!r}")
+            lines.append(f"  + ADD        {tag(key)}: {val!r}")
         for key, val in sorted(self.removed.items(), key=lambda kv: repr(kv[0])):
-            lines.append(f"  - REMOVE     {key!r}: {val!r}")
+            lines.append(f"  - REMOVE     {tag(key)}: {val!r}")
         return "\n".join(lines)
 
 

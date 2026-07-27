@@ -33,3 +33,20 @@ def test_render_lists_reclassify_first():
     r = diff_specs({(1, 1): "user", (9, 9): "user"}, {(1, 1): "setting"})
     out = r.render(source="zha")
     assert out.index("RECLASSIFY") < out.index("ADD")
+
+
+def test_render_key_label_annotates_each_change():
+    r = diff_specs({(0x0556, 1): "user"}, {})
+    out = r.render(source="matter-ha", key_label=lambda k: f"Chime.Attr{k[1]}")
+    # the human name appears alongside the raw id on the change line
+    assert "Chime.Attr1" in out
+    assert "(1366, 1)" in out
+
+
+def test_render_key_label_failure_falls_back_to_id():
+    def boom(_key: object) -> str:
+        raise KeyError("unknown")
+
+    r = diff_specs({(0x0556, 1): "user"}, {})
+    out = r.render(source="matter-ha", key_label=boom)  # must not raise
+    assert "(1366, 1)" in out
