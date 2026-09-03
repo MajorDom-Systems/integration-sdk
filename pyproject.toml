@@ -17,9 +17,9 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "pydantic (>=2.0,<3.0)",
+    "pydantic (>=2.13.5,<3.0)",
     "python-slugify",
-    "zeroconf (>=0.130)",
+    "zeroconf (>=0.151.3)",
     "bleak (>=0.22)",
 ]
 
