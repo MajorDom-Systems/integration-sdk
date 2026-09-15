@@ -193,7 +193,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
 
     # Hub -> device
 
-    async def start_pairing_window(self, duration_sec: int):  # noqa: B027  (optional no-op hook, not abstract)
+    async def start_pairing_window(self, duration_sec: int, credentials: ProvidedCredentials | None):  # noqa: B027  (optional no-op hook, not abstract)
         """
         Temporarily enables protocol-level discovery mechanisms that are not continuously active. Must only be used when default continuous discovery options aren't available or are insufficient. Does not affect, nor does use always-on discovery channels such as mDNS or SSDP.
 
