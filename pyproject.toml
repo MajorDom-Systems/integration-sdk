@@ -19,7 +19,7 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic (>=2.13.5,<3.0)",
     "python-slugify",
-    "zeroconf (>=0.151.3)",
+    "zeroconf (>=0.151.5)",
     "bleak (>=0.22)",
 ]
 
