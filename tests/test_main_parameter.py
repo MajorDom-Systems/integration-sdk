@@ -9,8 +9,8 @@ from majordom_integration_sdk.schemas.parameter import (
 )
 
 
-def _p(*, data_type, valid_values=None, default_value=None):
-    return Parameter(
+def _p(*, data_type, valid_values=None, default_value=None, cls=Parameter):
+    return cls(
         id=uuid4(),
         name="p",
         data_type=data_type,
@@ -102,3 +102,22 @@ def test_non_user_visibility_cannot_be_main():
     assert not p.can_be_main_parameter
     p.visibility = ParameterVisibility.system
     assert not p.can_be_main_parameter
+
+
+class _UnparametrizedParameter(Parameter):  # integrations subclass without a type argument
+    pass
+
+
+def _roundtrip_from_json_data(p: Parameter) -> Parameter:
+    # The repositories' read path: a JSON-mode dict validated back (not model_validate_json)
+    return type(p).model_validate(p.model_dump(mode="json"))
+
+
+def test_set_default_value_survives_roundtrip():
+    p = _p(data_type=ParameterDataType.integer, default_value={0, 100}, cls=_UnparametrizedParameter)
+    assert _roundtrip_from_json_data(p).default_value == {0, 100}
+
+
+def test_main_cycle_survives_roundtrip():
+    p = _p(data_type=ParameterDataType.integer, default_value={0, 100}, cls=_UnparametrizedParameter)
+    assert _roundtrip_from_json_data(p).main_cycle == [0, 100]
