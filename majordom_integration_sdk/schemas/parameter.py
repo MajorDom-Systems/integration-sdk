@@ -155,6 +155,15 @@ class Parameter[V](UUIdentifable):
 
     integration_data: Any
 
+    @field_validator("default_value", mode="before")
+    @classmethod
+    def _coerce_default_value_array_to_set(cls, v: Any) -> Any:
+        """A set default dumps to a JSON array. Validated back from that dict (not from a JSON
+        string) with ``V`` unbound, the union matches the list as a single ``V`` and the cycle
+        silently becomes a one-element button. No data type has a list value, so an array here
+        is always the set."""
+        return set(v) if isinstance(v, list | tuple) else v
+
     @field_validator("valid_values", mode="before")
     @classmethod
     def _coerce_valid_values_keys(cls, v, info):
