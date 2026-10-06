@@ -94,3 +94,9 @@ def test_name_is_autoderived_from_class_name():
     assert HueController.slug() == "hue"
     assert ZigBeeController.name == "ZigBee"
     assert ZigBeeController.slug() == "zigbee"
+
+
+async def test_the_pairing_window_opens_without_credentials():
+    # the Hub broadcasts `start_pairing_window(duration)`: credentials are only for the one integration that needs them
+    controller = _MinimalController(build_test_dependencies(integration="minimal"))
+    await controller.start_pairing_window(5)
