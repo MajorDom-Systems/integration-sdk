@@ -37,6 +37,9 @@ Any layer can be yours instead:
 | to run containers yourself | `docker=False` — the would-be `compose.json` is still written |
 | nothing of this | skip the package; hand the controller `Dependencies(links={...})` |
 
+Service templates can use `{device}`, `{data}`, `{links.<family>.url}`, `{settings.<field>}`,
+`{context.region}` and `{host.interface}`.
+
 Soldered radios come from a board profile: `board=[{"id": "mg26", "path": "/dev/ttyAMA3", "driver": "silabs", "firmware": "multipan"}]`.
 
 ## Firmware

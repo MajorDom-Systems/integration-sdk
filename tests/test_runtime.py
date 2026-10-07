@@ -8,7 +8,7 @@ from majordom_transports import Runtime
 
 MATTER_SERVER = Service(
     "matter-server",
-    compose={"image": "matter", "environment": {"OTBR": "{links.thread.url}"}},
+    compose={"image": "matter", "environment": {"OTBR": "{links.thread.url}", "REGION": "{context.region}"}},
     needs=[Need("ip"), Need("thread", ["otbr-rest"], required=False)],
     provides=[Endpoint("matter", "ws", "ws://127.0.0.1:5580/ws")],
 )
@@ -143,8 +143,10 @@ async def test_settings_persist_and_feed_context(tmp_path):
     assert runtime(tmp_path).settings("zigbee").tx_power == -20
     assert rt.context().wifi == WifiCredentials("home", "pw")
 
-    await rt.update_settings("hub", {"region": "EU", "wifi": [{"ssid": "iot", "password": "x"}], "wifi_ssid": "iot"})
-    assert rt.context().region == "EU"
+    wifi = [{"ssid": "iot", "password": "x"}]
+    await rt.update_settings("hub", {"region": "Europe", "wifi": wifi, "wifi_ssid": "iot"})
+    assert rt.context().region == "Europe"
+    assert compose(tmp_path)["matter-server"]["environment"]["REGION"] == "Europe"
     assert rt.context().wifi == WifiCredentials("iot", "x")
     assert rt.settings_scopes("matter") == []
 

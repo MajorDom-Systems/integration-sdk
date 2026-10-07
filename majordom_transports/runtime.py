@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from glob import glob
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from majordom_integration_sdk import Context, Endpoint, Need, Service, WifiCredentials
 from pydantic import BaseModel, Field
@@ -33,8 +33,15 @@ class Consumer(Protocol):
     async def probe(self, path: str) -> Endpoint | None: ...
 
 
+#: Radio regulatory regions, named as Z-Wave JS names them.
+Region = Literal[
+    "Europe", "USA", "Australia/New Zealand", "Hong Kong", "India", "Israel", "Russia", "China", "Japan", "Korea",
+    "USA (Long Range)", "Europe (Long Range)",
+]  # fmt: skip
+
+
 class HubSettings(BaseModel):
-    region: str | None = Field(None, title="Radio region", description="Where the hub is used, e.g. EU or US.")
+    region: Region | None = Field(None, title="Radio region", description="Where the hub is used.")
     wifi: list[WifiCredentials] = Field([], title="Wi-Fi networks", description="Saved networks to set devices up on.")
     wifi_ssid: str | None = Field(None, title="Wi-Fi for devices", description="Empty uses the hub's own network.")
 
@@ -313,7 +320,8 @@ class Runtime:
             data.mkdir(parents=True, exist_ok=True)
             data.chmod(0o777)  # containers run as their own users
             values = {"data": data, "links": _Links(self._links[name]), "settings": self.settings(name)}
-            spec = {"restart": "unless-stopped", **_render(self.services[name].compose, values | {"host": _Host()})}
+            values |= {"context": self.context(), "host": _Host()}
+            spec = {"restart": "unless-stopped", **_render(self.services[name].compose, values)}
             if depends := sorted(set(self._providers[name].values()) & self.services.keys()):
                 spec["depends_on"] = depends
             services[name] = spec
