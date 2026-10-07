@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import ClassVar, Protocol, cast, final
 from uuid import UUID, uuid5
 
+from pydantic import BaseModel
 from slugify import slugify
 
 from majordom_integration_sdk.discovery.ble_discovery import BLEDiscoveryService
@@ -24,6 +25,7 @@ from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
+from majordom_integration_sdk.transport import Context, Endpoint, Need, PeripheralChange, Service
 
 _NAME_HELP = (
     "The integration name is auto-derived from your controller class name; set a class-level "
@@ -123,7 +125,9 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
         ssdp_discovery_service: SSDPDiscoveryService
         ble_discovery_service: BLEDiscoveryService
 
-        hardware_interfaces: list[str] = field(default_factory=list)
+        links: Mapping[str, Endpoint] = field(default_factory=dict)  # bound `needs`, by family
+        settings: BaseModel | None = None  # validated instance of the controller's `settings` model
+        context: Context = field(default_factory=Context)
 
         def copy(self, **kwargs) -> AbstractController.Dependencies:
             return replace(self, **kwargs)
@@ -162,6 +166,31 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
     state — the Hub reads it (and `slug()`) off the class to wire an integration's
     dependencies *before* the controller exists.
     """
+
+    needs: ClassVar[Sequence[Need]] = ()
+    """Capabilities the controller connects to, e.g. ``[Need("zigbee")]``. Bound ones arrive in
+    ``dependencies.links`` keyed by family; in library mode pass them yourself."""
+
+    services: ClassVar[Sequence[Service]] = ()
+    """Containers the integration brings along (Matter: matter-server), run by the runtime only when needed."""
+
+    settings: ClassVar[type[BaseModel] | None] = None
+    """User-facing options as a pydantic model; the validated instance arrives in ``dependencies.settings``."""
+
+    @classmethod
+    async def probe(cls, path: str) -> Endpoint | None:
+        """Tell whether an unidentified serial device at ``path`` speaks one of your protocols, and
+        what it offers then, e.g. ``Endpoint("zigbee", "znp", path)``. The runtime asks this only
+        about devices no transport recognised."""
+        return None
+
+    async def peripheral_did_change(self, change: PeripheralChange) -> bool:
+        """A bound link was lost, appeared, or moved; ``dependencies.links`` is already updated.
+
+        Return True when handled in place (e.g. Matter keeps working over IP without Thread).
+        False lets the Hub restart the integration, or stop it while a required link is missing.
+        """
+        return False
 
     # TODO: review if these two are needed, test the implementation
 

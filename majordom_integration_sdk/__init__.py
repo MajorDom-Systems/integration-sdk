@@ -4,6 +4,7 @@ Public submodules:
 
 - ``majordom_integration_sdk.schemas``     — the wire protocol (pydantic models shared with the Hub)
 - ``majordom_integration_sdk.controller``  — the ``AbstractController`` framework + ``ControllerOutput``
+- ``majordom_integration_sdk.transport``   — ``Need``/``Endpoint``/``Service``: what an integration connects to
 - ``majordom_integration_sdk.repository``  — ``DeviceRepositoryProtocol`` + in-memory / SQLite implementations
 - ``majordom_integration_sdk.discovery``   — zeroconf / SSDP / BLE discovery services
 - ``majordom_integration_sdk.testing``     — shared test doubles for integration test suites
@@ -26,6 +27,7 @@ from majordom_integration_sdk.repository import (
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.schemas.event import DeviceParameterChange, Event
+from majordom_integration_sdk.transport import Context, Endpoint, Need, PeripheralChange, Service, WifiCredentials
 
 __version__ = version("majordom-integration-sdk")
 
@@ -43,4 +45,10 @@ __all__ = [
     "Event",
     "DeviceParameterChange",
     "MissingCredentialsError",
+    "Need",
+    "Endpoint",
+    "Service",
+    "PeripheralChange",
+    "Context",
+    "WifiCredentials",
 ]
