@@ -1,0 +1,32 @@
+[project]
+name = "majordom-transports"
+version = "0.1.0"
+description = "Radios, firmware and the services between them and MajorDom integrations."
+authors = [{ name = "Mark Parker", email = "mark@parker-programs.com" }]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "majordom-integration-sdk (>=0.2.0,<0.3.0)",
+    "pydantic (>=2.13.5,<3.0)",
+    "pyserial (>=3.5)",
+]
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "ruff"]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{ include = "majordom_transports" }]
+include = [{ path = "majordom_transports/images", format = ["sdist", "wheel"] }]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "SIM", "I"]
