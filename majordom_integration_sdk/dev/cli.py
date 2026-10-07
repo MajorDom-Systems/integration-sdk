@@ -25,6 +25,7 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import rich
@@ -223,9 +224,11 @@ async def run_cli(
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
+    **dependencies: Any,
 ) -> None:
     """Start ``controller_type`` (with real discovery + a local repository) and drop into an
-    interactive prompt. ``db_path`` file-backs the repository so paired devices survive restarts;
+    interactive prompt. ``dependencies`` override fields of `AbstractController.Dependencies`
+    (``links``, ``settings``, ``context``). ``db_path`` file-backs the repository so paired devices survive restarts;
     omit it for in-memory. ``exit`` / Ctrl-D leaves the prompt and stops everything cleanly."""
     # Capture all logs + warnings into a buffer for the duration of the session so they don't break
     # the interactive TUI; the buffer is dumped to stderr on exit/crash (see the finally block).
@@ -248,7 +251,7 @@ async def run_cli(
         integration=controller_type.name,
         slug=controller_type.slug(),
     )
-    deps = deps.copy(output=_CliControllerOutput(deps.make_device_repository))
+    deps = deps.copy(output=_CliControllerOutput(deps.make_device_repository), **dependencies)
     controller = controller_type(deps)
     session = _CliSession(controller)
 

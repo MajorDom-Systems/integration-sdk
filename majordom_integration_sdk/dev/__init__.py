@@ -18,6 +18,7 @@ import asyncio
 import logging
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from majordom_integration_sdk.controller.abstract_controller import AbstractController, ControllerOutput
@@ -111,9 +112,11 @@ async def run_controller(
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
+    **dependencies: Any,
 ) -> None:
     """Instantiate ``controller_type``, start it and its discovery services, and run until
-    interrupted (Ctrl-C), then stop everything cleanly."""
+    interrupted (Ctrl-C), then stop everything cleanly. ``dependencies`` override fields of
+    `AbstractController.Dependencies`, e.g. ``links={"zwave": Endpoint("zwave", "ws", url)}``."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
     # The integration's identity is class-level, so its repository and documents folder can be
@@ -123,7 +126,7 @@ async def run_controller(
         db_path=db_path,
         integration=controller_type.name,
         slug=controller_type.slug(),
-    )
+    ).copy(**dependencies)
     controller = controller_type(deps)
 
     await deps.zeroconf_discovery_service.start()
