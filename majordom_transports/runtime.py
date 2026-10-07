@@ -56,6 +56,7 @@ class Radio:
     offers: list[str]  # families it serves right now
     options: dict[str, list[str]]  # firmware it can be switched to -> families that firmware would serve
     used_by: list[str] = field(default_factory=list)
+    busy: bool = False  # being flashed
 
 
 class Runtime:
@@ -145,6 +146,10 @@ class Runtime:
         """Bound endpoints of a consumer by family; None while a required need can't be met."""
         return self._links.get(consumer)
 
+    def providers(self, owner: str) -> dict[str, str]:
+        """Who serves each bound need of a consumer or service: a radio id, a service name, "host" or "pinned"."""
+        return dict(self._providers.get(owner, {}))
+
     def context(self) -> Context:
         hub = self.settings("hub")
         wifi = next((w for w in hub.wifi if w.ssid == hub.wifi_ssid), None) or self.default_wifi()
@@ -165,6 +170,7 @@ class Runtime:
                     offers=sorted({e.family for e in self._radio_endpoints(radio_id, entry)}),
                     options={fw: self._reach(fw_endpoints(driver, fw, path)) for fw in firmwares},
                     used_by=[c for c in self.consumers if radio_id in self._roots(c)],
+                    busy=radio_id in self._busy,
                 )
             )
         return result
