@@ -341,7 +341,7 @@ class Runtime:
         self._compose = compose
         if not self.docker:
             return
-        args = ["up", "-d", "--remove-orphans", "--wait", "--wait-timeout", "300"] if services else ["down"]
+        args = ["up", "-d", "--remove-orphans"] if services else ["down"]  # integrations retry while services start
         process = await asyncio.create_subprocess_exec(
             "docker", "compose", "-f", str(self.data / "compose.json"), *args,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
