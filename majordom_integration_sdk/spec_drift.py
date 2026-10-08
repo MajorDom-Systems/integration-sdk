@@ -78,7 +78,5 @@ def diff_specs[K: Hashable](current: Mapping[K, Any], baseline: Mapping[K, Any])
     """Diff a freshly-harvested ``current`` spec against the committed ``baseline``."""
     added = {k: current[k] for k in current if k not in baseline}
     removed = {k: baseline[k] for k in baseline if k not in current}
-    reclassified = {
-        k: (baseline[k], current[k]) for k in current if k in baseline and current[k] != baseline[k]
-    }
+    reclassified = {k: (baseline[k], current[k]) for k in current if k in baseline and current[k] != baseline[k]}
     return DriftReport(added=added, removed=removed, reclassified=reclassified)
