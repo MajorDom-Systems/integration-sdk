@@ -83,6 +83,7 @@ async def test_multipan_stick_serves_zigbee_and_matter_through_one_service(tmp_p
     assert services["matter-server"]["environment"]["OTBR"] == "http://127.0.0.1:8081"
     assert services["matter-server"]["depends_on"] == ["multiprotocol"]
     assert rt.radios()[0].used_by == ["zigbee", "matter"]
+    assert rt.radios()[0].offers == ["thread", "zigbee"]
 
 
 async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp_path, stick):

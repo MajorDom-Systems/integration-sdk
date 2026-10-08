@@ -56,7 +56,7 @@ class Radio:
     present: bool
     driver: str | None  # None: recognised by an integration's probe, or not recognised at all
     firmware: str | None
-    offers: list[str]  # families it serves right now
+    offers: list[str]  # what it serves right now, through services: zigbee, thread, …
     options: dict[str, list[str]]  # firmware it can be switched to -> families that firmware would serve
     used_by: list[str] = field(default_factory=list)
     busy: bool = False  # being flashed
@@ -168,7 +168,7 @@ class Runtime:
                     present=radio_id in self._present,
                     driver=entry.get("driver"),
                     firmware=entry.get("firmware"),
-                    offers=sorted({e.family for e in self._radio_endpoints(radio_id, entry)}),
+                    offers=self._reach(self._radio_endpoints(radio_id, entry)),
                     options={fw: self._reach(fw_endpoints(driver, fw, path)) for fw in firmwares},
                     used_by=[c for c in self.consumers if radio_id in self._roots(c)],
                     busy=radio_id in self._busy,
