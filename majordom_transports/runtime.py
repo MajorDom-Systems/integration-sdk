@@ -98,7 +98,9 @@ class Runtime:
         self._present: dict[str, str] = {}
         self._busy: set[str] = set()  # radios being flashed
         self._compose = ""
-        self._dataset: str | None = None
+        self._router: tuple[str, str] | None = None  # border router in use: URL and provider
+        self._dataset: str | None = None  # its Thread network
+        self._thread: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._watcher: asyncio.Task | None = None
 
@@ -109,8 +111,9 @@ class Runtime:
         self._watcher = asyncio.create_task(self._watch(), name="transports.watch")
 
     async def stop(self):
-        if self._watcher:
-            self._watcher.cancel()
+        for task in (self._watcher, self._thread):
+            if task:
+                task.cancel()
 
     async def refresh(self):
         async with self._lock:
@@ -121,11 +124,19 @@ class Runtime:
                 self.state["radios"][radio_id]["path"] = path
             self._save()
             self._resolve()
-            await self._apply()
-            self._dataset = None
-            if thread := self._border_router():
-                url, provider = thread
-                self._dataset = await thread_dataset(url, self.settings(provider) or ThreadNetwork())
+            recreated = await self._apply()
+            if self._thread:
+                self._thread.cancel()
+            if (router := self._border_router()) != self._router or recreated:
+                self._router, self._dataset = router, None
+            if router and not self._dataset:
+                self._thread = asyncio.create_task(self._follow_thread(*router))
+        if self.on_change:
+            await self.on_change()
+
+    async def _follow_thread(self, url: str, provider: str):
+        """Learn the Thread network once the border router has one; integrations then get it in their context."""
+        self._dataset = await thread_dataset(url, self.settings(provider) or ThreadNetwork())
         if self.on_change:
             await self.on_change()
 
@@ -322,7 +333,8 @@ class Runtime:
         wanted |= {need.family for c in self.consumers.values() for s in c.services for need in s.needs}
         return sorted(families & wanted)
 
-    async def _apply(self):
+    async def _apply(self) -> bool:
+        """Run the bound services; True when what runs changed."""
         services = {}
         for name in self._links.keys() & self.services.keys():
             data = self.data / "services" / name
@@ -336,11 +348,11 @@ class Runtime:
             services[name] = spec
         compose = json.dumps({"name": "majordom", "services": services}, indent=2)
         if compose == self._compose:
-            return
+            return False
         (self.data / "compose.json").write_text(compose)
         self._compose = compose
         if not self.docker:
-            return
+            return True
         args = ["up", "-d", "--remove-orphans"] if services else ["down"]  # integrations retry while services start
         process = await asyncio.create_subprocess_exec(
             "docker", "compose", "-f", str(self.data / "compose.json"), *args,
@@ -349,6 +361,7 @@ class Runtime:
         output = (await process.communicate())[0].decode(errors="replace")
         if process.returncode:
             log.error(f"docker compose {args[0]} failed:\n{output[-3000:]}")
+        return True
 
     def _save(self):
         self.data.mkdir(parents=True, exist_ok=True)

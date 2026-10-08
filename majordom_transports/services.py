@@ -86,9 +86,10 @@ otbr = Service(
 SERVICES = [multiprotocol, otbr]
 
 
-async def thread_dataset(url: str, network: ThreadNetwork) -> str | None:
-    """Make sure the border router at ``url`` runs a network (joining ``network.dataset`` or forming a
-    new one), then return its active dataset as hex TLVs. None while it isn't reachable yet."""
+async def thread_dataset(url: str, network: ThreadNetwork, patience: float = 15) -> str:
+    """Wait for the border router at ``url`` and return its active dataset as hex TLVs. When it has
+    answered for ``patience`` seconds without one (nobody else formed a network), join
+    ``network.dataset`` or form a new network."""
 
     def call(method: str, path: str, body: str | None = None, kind: str = "text/plain") -> str:
         request = urllib.request.Request(
@@ -98,17 +99,21 @@ async def thread_dataset(url: str, network: ThreadNetwork) -> str | None:
         with urllib.request.urlopen(request, timeout=5) as response:
             return response.read().decode().strip()
 
-    def ensure() -> str | None:
-        if active := call("GET", "/node/dataset/active"):
-            return active
+    def form():
         if network.dataset:
             call("PUT", "/node/dataset/active", network.dataset)
         else:
             call("PUT", "/node/dataset/active", json.dumps({"NetworkName": "MajorDom"}), "application/json")
         call("PUT", "/node/state", json.dumps("enable"), "application/json")
-        return call("GET", "/node/dataset/active") or None
 
-    try:
-        return await asyncio.to_thread(ensure)
-    except OSError:
-        return None
+    answered = 0.0
+    while True:
+        try:
+            if active := await asyncio.to_thread(call, "GET", "/node/dataset/active"):
+                return active
+            answered += 1
+            if answered > patience:
+                await asyncio.to_thread(form)
+        except OSError:
+            pass  # not up yet
+        await asyncio.sleep(1)
