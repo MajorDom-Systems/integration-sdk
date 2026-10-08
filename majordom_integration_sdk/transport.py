@@ -18,8 +18,7 @@ from pydantic import BaseModel
 class Endpoint:
     """What a radio, a service or the host offers — and, once bound, what a consumer connects to.
 
-    While declared, ``url`` may hold templates the runtime fills in: ``{device}``, ``{data}``,
-    ``{links.<family>.url}``, ``{settings.<field>}``.
+    A radio firmware's ``url`` may hold ``{device}``, the stick's path; a service's is used as written.
     """
 
     family: str
@@ -42,8 +41,9 @@ class Need:
 class Service:
     """A container the runtime starts only while something is bound to one of its endpoints.
 
-    ``compose`` is its Docker Compose service definition (image, environment, volumes, …),
-    templated like `Endpoint.url`.
+    ``compose`` is its Docker Compose service definition (image, environment, volumes, …); its strings
+    may hold ``{data}``, ``{links.<family>.url}``, ``{settings.<field>}``, ``{context.<field>}`` and
+    ``{host.interface|uid|gid}``.
     """
 
     name: str
@@ -72,6 +72,6 @@ class WifiCredentials:
 class Context:
     """Hub-wide facts an integration may need to set devices up."""
 
-    region: str | None = None  # RF region for sub-GHz radios, e.g. "EU", "US"
+    region: str | None = None  # RF region for sub-GHz radios, a Z-Wave JS name: "Europe", "USA", …
     wifi: WifiCredentials | None = None  # the network to provision Wi-Fi devices onto
     thread_dataset: str | None = None  # active operational dataset of the hub's Thread network, hex TLVs
