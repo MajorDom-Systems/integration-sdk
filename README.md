@@ -44,7 +44,8 @@ Soldered radios come from a board profile: `board=[{"id": "mg26", "path": "/dev/
 
 ## Firmware
 
-`channel="stable"` offers verified builds only; `"dev"` adds every known build. Flashing uses the
+The hub setting `firmware` (`"stable"`, the default, or `"dev"`) picks what radios can be flashed to:
+verified builds only, or every known build. Flashing uses the
 `universal-silabs-flasher` command, which must be on `PATH`.
 
 ## Develop

@@ -153,7 +153,7 @@ async def test_settings_persist_and_feed_context(tmp_path):
 
 async def test_firmware_options_name_what_each_firmware_would_serve(tmp_path, stick):
     stick("usb-Nabu_Casa_SkyConnect_v1.0_1-if00", driver="silabs", firmware="thread")
-    rt = runtime(tmp_path, channel="dev")
-    radio = rt.radios()[0]
-    assert radio.options == {"zigbee": ["zigbee"], "thread": ["thread"], "multipan": ["thread", "zigbee"]}
-    assert runtime(tmp_path).radios()[0].options == {}  # stable channel: nothing verified to flash yet
+    rt = runtime(tmp_path)
+    assert rt.radios()[0].options == {}  # stable channel: nothing verified to flash yet
+    await rt.update_settings("hub", {"firmware": "dev"})
+    assert rt.radios()[0].options == {"zigbee": ["zigbee"], "thread": ["thread"], "multipan": ["thread", "zigbee"]}

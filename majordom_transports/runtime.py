@@ -44,6 +44,9 @@ class HubSettings(BaseModel):
     region: Region | None = Field(None, title="Radio region", description="Where the hub is used.")
     wifi: list[WifiCredentials] = Field([], title="Wi-Fi networks", description="Saved networks to set devices up on.")
     wifi_ssid: str | None = Field(None, title="Wi-Fi for devices", description="Empty uses the hub's own network.")
+    firmware: Literal["stable", "dev"] = Field(
+        "stable", title="Radio firmware", description="Stable offers verified builds only, dev every known build."
+    )
 
 
 @dataclass
@@ -70,7 +73,6 @@ class Runtime:
         devices: Mapping[str, str] = {},
         board: Sequence[Mapping[str, str]] = (),
         pinned: Mapping[str, Endpoint] = {},
-        channel: str = "stable",
         default_wifi: Callable[[], WifiCredentials | None] = lambda: None,
         on_change: Callable[[], Awaitable[None]] | None = None,
         poll: float = 2,
@@ -81,10 +83,9 @@ class Runtime:
         scan: look for USB sticks in /dev/serial/by-id; `devices` adds paths by id.
         board: soldered radios, ``{"id", "path", "driver", "firmware"}``, used without asking.
         pinned: endpoints you provide yourself by family; they win over anything found.
-        channel: "stable" offers verified firmware only, "dev" everything known.
         """
         self.data, self.consumers, self.docker, self.scan = data, dict(consumers), docker, scan
-        self.devices, self.board, self.pinned, self.channel = dict(devices), list(board), dict(pinned), channel
+        self.devices, self.board, self.pinned = dict(devices), list(board), dict(pinned)
         self.default_wifi, self.on_change, self.poll = default_wifi, on_change, poll
         self.services = {s.name: s for c in self.consumers.values() for s in c.services} | {s.name: s for s in SERVICES}
         self.state: dict[str, Any] = {"radios": {}, "pins": {}, "settings": {}}
@@ -159,7 +160,7 @@ class Runtime:
         result = []
         for radio_id, entry in self.state["radios"].items():
             path, driver = entry.get("path", ""), DRIVERS.get(entry.get("driver", ""))
-            firmwares = driver.flashable(path, self.channel) if driver else []
+            firmwares = driver.flashable(path, self.settings("hub").firmware) if driver else []
             result.append(
                 Radio(
                     id=radio_id,
@@ -210,7 +211,8 @@ class Runtime:
         self._busy.add(radio_id)
         try:
             await self.refresh()  # releases the stick: whatever used it is stopped or unlinked
-            await DRIVERS[entry["driver"]].flash(entry["path"], firmware, self.channel, self.data / "firmware")
+            channel = self.settings("hub").firmware
+            await DRIVERS[entry["driver"]].flash(entry["path"], firmware, channel, self.data / "firmware")
             entry["firmware"] = await DRIVERS[entry["driver"]].identify(entry["path"])
         finally:
             self._busy.discard(radio_id)
