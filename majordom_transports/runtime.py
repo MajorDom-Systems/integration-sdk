@@ -122,6 +122,7 @@ class Runtime:
             self._save()
             self._resolve()
             await self._apply()
+            self._dataset = None
             if thread := self._border_router():
                 url, provider = thread
                 self._dataset = await thread_dataset(url, self.settings(provider) or ThreadNetwork())
