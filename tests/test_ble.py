@@ -140,3 +140,16 @@ async def test_a_listener_registered_later_hears_devices_already_around(radios):
     ble.register(listener, {MATTER})
     await settle()
     assert [i.device.address for i in listener.found] == ["AA"]
+
+
+async def test_a_silent_radio_is_restarted(radios):
+    ble, near, far = radios
+    near.on_advertisement = None  # bluetoothd restarted: the scanner is gone without a word
+    far.advertise("AA")
+    await settle()
+
+    ble._silence_sec = 0.01
+    await asyncio.sleep(0.02)
+    far.advertise("AA")
+    await ble._revive_silent()
+    assert near.on_advertisement is not None  # listening again
