@@ -19,7 +19,7 @@ from majordom_integration_sdk import Context, Endpoint, Need, Service, WifiCrede
 from pydantic import BaseModel, Field
 
 from majordom_transports.drivers import DRIVERS
-from majordom_transports.services import SERVICES, ThreadNetwork, thread_dataset
+from majordom_transports.services import SELF_FORMING, SERVICES, ThreadNetwork, thread_dataset
 
 log = logging.getLogger(__name__)
 
@@ -137,7 +137,8 @@ class Runtime:
 
     async def _follow_thread(self, url: str, provider: str):
         """Learn the Thread network once the border router has one; integrations then get it in their context."""
-        self._dataset = await thread_dataset(url, self.settings(provider) or ThreadNetwork())
+        network = self.settings(provider) or ThreadNetwork()
+        self._dataset = await thread_dataset(url, network, form=provider not in SELF_FORMING)
         if self.on_change:
             await self.on_change()
 
@@ -394,7 +395,12 @@ class _Host:
 
     @property
     def interface(self) -> str:
-        """The interface of the default route (eth0, wlan0, …)."""
+        """The backbone interface: a wired one with a link (Wi-Fi drops the multicast a Thread border
+        router relies on), else the one of the default route."""
+        for wired in sorted(glob("/sys/class/net/e*/carrier")):
+            with contextlib.suppress(OSError):
+                if Path(wired).read_text().strip() == "1":
+                    return Path(wired).parent.name
         with contextlib.suppress(OSError):
             for line in Path("/proc/net/route").read_text().splitlines()[1:]:
                 name, destination, *_ = line.split()

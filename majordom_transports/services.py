@@ -52,7 +52,7 @@ multiprotocol = Service(
             "HARNESS_TX_DBM": "{settings.tx_power}",
         },
         "healthcheck": {
-            "test": ["CMD-SHELL", "pgrep -x cpcd && pgrep -x zigbeed && pgrep -x otbr-agent && pgrep -f tcp-listen"],
+            "test": ["CMD-SHELL", "pgrep -f tcp-listen && ot-ctl state | grep -qE 'leader|router|child'"],
             "interval": "10s",
             "start_period": "120s",
             "retries": 3,
@@ -67,7 +67,8 @@ otbr = Service(
     provides=[_OTBR_REST],
     settings=ThreadNetwork,
     compose={
-        "image": "openthread/border-router:latest",
+        # Pinned: a moved :latest once shipped a broken RCP serial init (no wpan0). Bump on purpose.
+        "image": "openthread/border-router@sha256:acc612303d3bd5aea28621ec8f3d2cc154cdc94c370398285dc828d08c5a5cf9",
         "privileged": True,
         "userns_mode": "host",
         "network_mode": "host",
@@ -81,17 +82,25 @@ otbr = Service(
             "OT_THREAD_IF": "wpan0",
             "OT_REST_LISTEN_ADDR": "0.0.0.0",
         },
-        "healthcheck": {"test": ["CMD-SHELL", "ot-ctl state"], "interval": "10s", "start_period": "60s", "retries": 3},
+        "healthcheck": {
+            "test": ["CMD-SHELL", "ot-ctl state | grep -qE 'leader|router|child'"],
+            "interval": "10s",
+            "start_period": "60s",
+            "retries": 3,
+        },
     },
 )
 
 SERVICES = [multiprotocol, otbr]
 
+#: Services whose container forms its own Thread network (the runtime must not form a second one).
+SELF_FORMING = {multiprotocol.name}
 
-async def thread_dataset(url: str, network: ThreadNetwork, patience: float = 15) -> str:
-    """Wait for the border router at ``url`` and return its active dataset as hex TLVs. When it has
-    answered for ``patience`` seconds without one (nobody else formed a network), join
-    ``network.dataset`` or form a new network."""
+
+async def thread_dataset(url: str, network: ThreadNetwork, form: bool = True, patience: float = 15) -> str:
+    """Wait for the border router at ``url`` and return its active dataset as hex TLVs. When ``form``
+    and it has answered for ``patience`` seconds without one, join ``network.dataset`` or form a new
+    network — once."""
 
     def call(method: str, path: str, body: str | None = None, kind: str = "text/plain") -> str:
         request = urllib.request.Request(
@@ -101,7 +110,7 @@ async def thread_dataset(url: str, network: ThreadNetwork, patience: float = 15)
         with urllib.request.urlopen(request, timeout=5) as response:
             return response.read().decode().strip()
 
-    def form():
+    def form_network():
         if network.dataset:
             call("PUT", "/node/dataset/active", network.dataset)
         else:
@@ -114,8 +123,9 @@ async def thread_dataset(url: str, network: ThreadNetwork, patience: float = 15)
             if active := await asyncio.to_thread(call, "GET", "/node/dataset/active"):
                 return active
             answered += 1
-            if answered > patience:
-                await asyncio.to_thread(form)
+            if form and answered > patience:
+                form = False
+                await asyncio.to_thread(form_network)
         except OSError:
             pass  # not up yet
         await asyncio.sleep(1)

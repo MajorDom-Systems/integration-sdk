@@ -32,6 +32,10 @@ log() { echo "[multiprotocol] $*"; }
 # 0. Kernel prerequisites that OTBR's Backbone-Router/ND-proxy needs (harmless if already set).
 sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null 2>&1 || true
 sysctl -w net.ipv4.ip_forward=1          >/dev/null 2>&1 || true
+# Forwarding makes Linux ignore router advertisements unless accept_ra=2: keep learning the routes
+# other border routers announce on the backbone (route info up to /64).
+sysctl -w "net.ipv6.conf.${BACKBONE_IF}.accept_ra=2" >/dev/null 2>&1 || true
+sysctl -w "net.ipv6.conf.${BACKBONE_IF}.accept_ra_rt_info_max_plen=64" >/dev/null 2>&1 || true
 
 # 1. System D-Bus — otbr-agent EMERG-crashes without it.
 mkdir -p /run/dbus

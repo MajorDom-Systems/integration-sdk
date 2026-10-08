@@ -1,3 +1,4 @@
+import asyncio
 import json
 import threading
 from http.server import BaseHTTPRequestHandler
@@ -23,7 +24,7 @@ def border_router():
         def do_PUT(self):
             body = self.rfile.read(int(self.headers["Content-Length"])).decode()
             state["puts"].append((self.path, body))
-            if self.path == "/node/dataset/active":
+            if self.path == "/node/dataset/active" and not state.get("stuck"):
                 state["dataset"] = body if body.startswith("0e") else "0e08newnetwork"
             self.send_response(200)
             self.end_headers()
@@ -56,3 +57,17 @@ async def test_forms_a_network_when_none_appears(border_router):
 async def test_joins_the_configured_network(border_router):
     url, state = border_router
     assert await thread_dataset(url, ThreadNetwork(dataset="0e08configured"), patience=0) == "0e08configured"
+
+
+async def test_forms_only_once_and_never_for_a_self_forming_router(border_router):
+    url, state = border_router
+    state["stuck"] = True  # forming takes a while: the dataset doesn't appear yet
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(thread_dataset(url, ThreadNetwork(), patience=0), 3)
+    assert len(state["puts"]) == 2  # one dataset, one enable
+
+    state["puts"].clear()
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(thread_dataset(url, ThreadNetwork(), form=False, patience=0), 2)
+    assert state["puts"] == []
