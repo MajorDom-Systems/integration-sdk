@@ -129,3 +129,14 @@ async def test_pauses_nest_and_a_source_added_meanwhile_waits(radios):
         await ble.add_source(proxy)
         assert proxy.on_advertisement is None
     assert near.on_advertisement and proxy.on_advertisement
+
+
+async def test_a_listener_registered_later_hears_devices_already_around(radios):
+    ble, near, _ = radios
+    near.advertise("AA", service_uuids=[str(MATTER)])
+    await settle()
+
+    listener = Listener()
+    ble.register(listener, {MATTER})
+    await settle()
+    assert [i.device.address for i in listener.found] == ["AA"]
