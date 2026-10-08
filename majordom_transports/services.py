@@ -36,6 +36,7 @@ multiprotocol = Service(
         "privileged": True,
         "userns_mode": "host",
         "network_mode": "host",
+        "hostname": "majordom-thread",  # its mDNS daemon announces this, not the hub's own name
         "devices": ["{links.cpc.url}:/dev/ttyACM0", "/dev/net/tun:/dev/net/tun"],
         "volumes": [
             f"{_IMAGES}/multiprotocol/cpcd.conf:/usr/local/etc/cpcd.conf:ro",
@@ -70,6 +71,7 @@ otbr = Service(
         "privileged": True,
         "userns_mode": "host",
         "network_mode": "host",
+        "hostname": "majordom-thread",  # its mDNS daemon announces this, not the hub's own name
         "devices": ["{links.thread.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
         "volumes": ["{data}:/data"],
         "tmpfs": ["/run:exec,mode=1777", "/tmp:mode=1777"],  # s6-overlay runs its init from /run

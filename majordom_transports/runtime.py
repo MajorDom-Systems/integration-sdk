@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import string
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -339,7 +340,6 @@ class Runtime:
         for name in self._links.keys() & self.services.keys():
             data = self.data / "services" / name
             data.mkdir(parents=True, exist_ok=True)
-            data.chmod(0o777)  # containers run as their own users
             values = {"data": data, "links": _Links(self._links[name]), "settings": self.settings(name)}
             values |= {"context": self.context(), "host": _Host()}
             spec = {"restart": "unless-stopped", **_render(self.services[name].compose, values)}
@@ -390,6 +390,8 @@ class _Links(dict):
 
 
 class _Host:
+    uid, gid = os.getuid(), os.getgid()  # for services that should write their data as the hub's user
+
     @property
     def interface(self) -> str:
         """The interface of the default route (eth0, wlan0, …)."""

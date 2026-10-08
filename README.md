@@ -38,7 +38,7 @@ Any layer can be yours instead:
 | nothing of this | skip the package; hand the controller `Dependencies(links={...})` |
 
 Service templates can use `{device}`, `{data}`, `{links.<family>.url}`, `{settings.<field>}`,
-`{context.region}` and `{host.interface}`.
+`{context.region}`, `{host.interface}`, `{host.uid}` and `{host.gid}`.
 
 Soldered radios come from a board profile: `board=[{"id": "mg26", "path": "/dev/ttyAMA3", "driver": "silabs", "firmware": "multipan"}]`.
 
