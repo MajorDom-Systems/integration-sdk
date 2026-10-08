@@ -73,19 +73,20 @@ sleep 4
 log "otbr-agent up; Thread REST on :${OTBR_REST_PORT}"
 
 if [ "${THREAD_FORM}" = "1" ]; then
-  state=$(ot-ctl state 2>/dev/null | head -1 || true)
-  if ! echo "$state" | grep -qE "leader|router|child"; then
-    if [ -n "${THREAD_DATASET:-}" ]; then
-      log "joining the configured Thread network"
-      ot-ctl dataset set active "${THREAD_DATASET}" >/dev/null 2>&1 || true
-    else
-      log "forming Thread network"
-      ot-ctl dataset init new     >/dev/null 2>&1 || true
-      ot-ctl dataset commit active >/dev/null 2>&1 || true
-    fi
-    ot-ctl ifconfig up          >/dev/null 2>&1 || true
-    ot-ctl thread start         >/dev/null 2>&1 || true
+  # Decide on the saved dataset, not the state: a restored network is still "detached" right after
+  # start, and forming then would replace it (new network, orphaned devices).
+  if ot-ctl dataset active -x 2>/dev/null | grep -qE "^[0-9a-fA-F]{20,}"; then
+    log "Thread network restored"
+  elif [ -n "${THREAD_DATASET:-}" ]; then
+    log "joining the configured Thread network"
+    ot-ctl dataset set active "${THREAD_DATASET}" >/dev/null 2>&1 || true
+  else
+    log "forming Thread network"
+    ot-ctl dataset init new     >/dev/null 2>&1 || true
+    ot-ctl dataset commit active >/dev/null 2>&1 || true
   fi
+  ot-ctl ifconfig up          >/dev/null 2>&1 || true
+  ot-ctl thread start         >/dev/null 2>&1 || true
 fi
 
 # 5. Zigbee coordinator: form ON THE PTY if the NCP has no network. EZSP `form` is a latency-sensitive
