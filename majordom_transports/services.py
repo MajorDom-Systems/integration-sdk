@@ -72,7 +72,7 @@ otbr = Service(
         "network_mode": "host",
         "devices": ["{links.thread.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
         "volumes": ["{data}:/data"],
-        "tmpfs": ["/run:mode=1777", "/tmp:mode=1777"],
+        "tmpfs": ["/run:exec,mode=1777", "/tmp:mode=1777"],  # s6-overlay runs its init from /run
         "environment": {
             "OT_RCP_DEVICE": "spinel+hdlc+uart:///dev/ttyRCP?uart-baudrate=460800&uart-flow-control",
             "OT_INFRA_IF": "{host.interface}",
