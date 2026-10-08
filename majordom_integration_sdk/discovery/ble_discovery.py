@@ -1,28 +1,96 @@
+"""Bluetooth LE for integrations: one service that hears every radio and reaches every device.
+
+Sources feed advertisements in: the hub's own adapters and proxies (e.g. ESPHome ``bluetooth_proxy``).
+Listeners register `BLEMatcher`s and hear about matching devices whichever source saw them.
+`BLEService.connect` opens a GATT connection through the source that hears the device best.
+"""
+
 import asyncio
+import contextlib
 import logging
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable, Iterable
+from dataclasses import dataclass, field
+from pathlib import Path
 from time import monotonic
 from typing import Protocol
 from uuid import UUID
 
-from bleak import BleakScanner
+from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
 logger = logging.getLogger(__name__)
+
+OnAdvertisement = Callable[[BLEDevice, AdvertisementData], None]
+
+
+@dataclass(frozen=True)
+class BLEMatcher:
+    """What a listener wants to hear about; every field that is set must match."""
+
+    service_uuid: UUID | None = None  # advertised as a service or in the service data
+    manufacturer_id: int | None = None
+    manufacturer_data_start: bytes = b""
+    local_name_prefix: str | None = None
+
+    def matches(self, adv: AdvertisementData) -> bool:
+        if self.service_uuid and str(self.service_uuid) not in {*adv.service_uuids, *adv.service_data}:
+            return False
+        if self.manufacturer_id is not None:
+            data = adv.manufacturer_data.get(self.manufacturer_id)
+            if data is None or not bytes(data).startswith(self.manufacturer_data_start):
+                return False
+        return not self.local_name_prefix or (adv.local_name or "").startswith(self.local_name_prefix)
 
 
 @dataclass
 class BLEDiscoveryInfo:
     device: BLEDevice
     advertisement: AdvertisementData
+    source: str = "local"  # the source that hears it best: "hci0", "esphome:<mac>", …
 
 
 class BLEDiscoveryListener(Protocol):
-    async def ble_did_discover_device(self, ble: "BLEDiscoveryService", info: BLEDiscoveryInfo): ...
-    async def ble_did_update_device(self, ble: "BLEDiscoveryService", info: BLEDiscoveryInfo): ...
-    async def ble_did_remove_device(self, ble: "BLEDiscoveryService", info: BLEDiscoveryInfo): ...
+    async def ble_did_discover_device(self, ble: "BLEService", info: BLEDiscoveryInfo): ...
+    async def ble_did_update_device(self, ble: "BLEService", info: BLEDiscoveryInfo): ...
+    async def ble_did_remove_device(self, ble: "BLEService", info: BLEDiscoveryInfo): ...
+
+
+@dataclass(frozen=True)
+class GattCharacteristic:
+    uuid: str
+    handle: int
+    properties: tuple[str, ...]  # "read", "write", "write-without-response", "notify", "indicate", …
+
+
+@dataclass(frozen=True)
+class GattService:
+    uuid: str
+    handle: int
+    characteristics: tuple[GattCharacteristic, ...]
+
+
+class BLEConnection(Protocol):
+    """An open GATT connection; characteristics are addressed by handle."""
+
+    @property
+    def mtu(self) -> int: ...
+    async def services(self) -> list[GattService]: ...
+    async def read(self, handle: int) -> bytes: ...
+    async def write(self, handle: int, data: bytes, response: bool = True) -> None: ...
+    async def start_notify(self, handle: int, callback: Callable[[bytes], None]) -> None: ...
+    async def stop_notify(self, handle: int) -> None: ...
+    async def disconnect(self) -> None: ...
+
+
+class BLESource(Protocol):
+    """A radio that hears advertisements and can connect to devices: a local adapter or a proxy."""
+
+    name: str
+
+    async def start(self, on_advertisement: OnAdvertisement) -> None: ...
+    async def stop(self) -> None: ...
+    async def connect(self, address: str, on_disconnect: Callable[[], None]) -> BLEConnection: ...
 
 
 def _adv_signature(adv: AdvertisementData) -> tuple:
@@ -35,96 +103,169 @@ def _adv_signature(adv: AdvertisementData) -> tuple:
     )
 
 
+def _matches(matchers: list[BLEMatcher], adv: AdvertisementData) -> bool:
+    return any(m.matches(adv) for m in matchers)
+
+
 @dataclass
 class _BLETrackedDevice:
     info: BLEDiscoveryInfo
-    last_seen_at: float  # monotonic
-    signature: tuple = ()
+    heard: dict[str, tuple[int, float]] = field(default_factory=dict)  # source -> (rssi, monotonic last seen)
+
+    def sources(self, grace: float) -> list[str]:
+        """Sources that heard it within ``grace`` seconds, the strongest signal first."""
+        now = monotonic()
+        recent = [(rssi, source) for source, (rssi, seen) in self.heard.items() if now - seen < grace]
+        return [source for _, source in sorted(recent, reverse=True)]
 
 
-class BLEDiscoveryService:
-    """Bleak-based BLE device discovery."""
+class BLEService:
+    """Bluetooth LE across all sources: discovery for listeners, GATT connections on demand."""
 
-    def __init__(self):
-        self._services: dict[frozenset[UUID], BLEDiscoveryListener] = {}
+    def __init__(self, sources: Iterable[BLESource] | None = None):
+        """``sources`` default to every local adapter (each BlueZ ``hciN``) found on start."""
+        self._listeners: list[tuple[BLEDiscoveryListener, list[BLEMatcher]]] = []
+        self._sources: dict[str, BLESource] = {s.name: s for s in sources or ()}
+        self._use_local_adapters = sources is None
         self._is_running: bool = False
-        self._removal_grace_sec: float = 11.0  # seconds since last seen before did_remove is fired
+        self._pauses = 0
+        self._removal_grace_sec: float = 11.0  # seconds unheard by every source before did_remove is fired
         self._eviction_interval_sec: float = 10.0
         self._tracked: dict[str, _BLETrackedDevice] = {}  # address -> tracked device
-        self._scanner: BleakScanner | None = None
-        self._tasks: list[asyncio.Task] = []
+        self._tasks: set[asyncio.Task] = set()
 
-    # FUTURE: filter type
-    def register(self, listener: BLEDiscoveryListener, service_ids: set[UUID]) -> Callable[[], None]:
+    @property
+    def is_running(self) -> bool:
+        return self._is_running
+
+    def register(self, listener: BLEDiscoveryListener, matchers: Iterable[BLEMatcher | UUID]) -> Callable[[], None]:
         """
-        Registers a listener for BLE devices advertising any of the given service UUIDs.
-        `ble_did_discover_device` is called on each advertisement received matching the service UUIDs.
+        Registers a listener for BLE devices matching any of ``matchers`` (a UUID matches that service).
+        `ble_did_discover_device` is called when a device first matches, `ble_did_update_device` when its
+        advertisement changes, `ble_did_remove_device` when no source has heard it for a while.
         Returns a cancel function — call it on stop to deregister.
         """
-        key = frozenset(service_ids)
-        self._services[key] = listener
+        entry = (listener, [m if isinstance(m, BLEMatcher) else BLEMatcher(service_uuid=m) for m in matchers])
+        self._listeners.append(entry)
 
         def cancel():
-            self._services.pop(key, None)
+            if entry in self._listeners:
+                self._listeners.remove(entry)
 
         return cancel
 
+    async def add_source(self, source: BLESource):
+        """Listen with one more radio, e.g. a proxy that came online."""
+        await self.remove_source(source.name)
+        self._sources[source.name] = source
+        if self._is_running and not self._pauses:
+            await source.start(self._advertisement_handler(source.name))
+
+    async def remove_source(self, name: str):
+        if source := self._sources.pop(name, None):
+            await source.stop()
+
     async def start(self):
+        if self._use_local_adapters:
+            self._sources = {a.name: a for a in _local_adapters()} | self._sources
         self._is_running = True
-        self._scanner = BleakScanner(detection_callback=self._on_advertisement)
-        # FUTURE: add support for BLE proxies
-        await self._scanner.start()
-        eviction_task = asyncio.create_task(self._eviction_loop())
-        eviction_task.add_done_callback(self._on_task_done)
-        self._tasks = [eviction_task]
-        logger.debug(f"BLE scanner started, {len(self._services)} service(s) registered")
+        await self._start_sources()
+        self._spawn(self._eviction_loop())
+        logger.debug(f"BLE started with sources {list(self._sources)}, {len(self._listeners)} listener(s)")
 
     async def stop(self):
         self._is_running = False
-        if self._scanner:
-            await self._scanner.stop()
-            self._scanner = None
-        for task in self._tasks:
+        await self._stop_sources()
+        for task in list(self._tasks):
             task.cancel()
-        self._tasks.clear()
-        logger.debug(f"BLE scanner stopped, {len(self._services)} service(s) registered")
+        logger.debug(f"BLE stopped, {len(self._listeners)} listener(s) registered")
+
+    @contextlib.asynccontextmanager
+    async def paused(self) -> AsyncIterator[None]:
+        """Stops listening while something else needs the radios to itself (e.g. a commissioning
+        process with its own BlueZ client). Nested pauses resume when the last one ends."""
+        self._pauses += 1
+        if self._pauses == 1:
+            await self._stop_sources()
+        try:
+            yield
+        finally:
+            self._pauses -= 1
+            if not self._pauses and self._is_running:
+                await self._start_sources()
+
+    async def connect(self, address: str, on_disconnect: Callable[[], None] = lambda: None) -> BLEConnection:
+        """Opens a GATT connection to ``address`` through the source hearing it best, falling back to
+        the others. ``on_disconnect`` is called when the connection drops."""
+        tracked = self._tracked.get(address)
+        candidates = (tracked and tracked.sources(self._removal_grace_sec)) or list(self._sources)
+        errors = []
+        for name in candidates:
+            try:
+                return await self._sources[name].connect(address, on_disconnect)
+            except Exception as e:
+                errors.append(f"{name}: {e}")
+        raise ConnectionError(f"Can't connect to {address}: {'; '.join(errors) or 'no Bluetooth sources'}")
+
+    def devices(self) -> list[BLEDiscoveryInfo]:
+        """Every device heard recently, as the source hearing it best sees it."""
+        return [tracked.info for tracked in self._tracked.values()]
+
+    # Internals
+
+    async def _start_sources(self):
+        names = list(self._sources)
+        starts = [self._sources[name].start(self._advertisement_handler(name)) for name in names]
+        for name, result in zip(names, await asyncio.gather(*starts, return_exceptions=True), strict=True):
+            if isinstance(result, Exception):
+                logger.warning(f"BLE source {name} failed to start: {result}")
+
+    async def _stop_sources(self):
+        await asyncio.gather(*(s.stop() for s in self._sources.values()), return_exceptions=True)
+
+    def _advertisement_handler(self, source: str) -> OnAdvertisement:
+        return lambda device, adv: self._spawn(self._handle_advertisement(source, device, adv))
+
+    def _spawn(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._on_task_done)
 
     def _on_task_done(self, task: asyncio.Task):
+        self._tasks.discard(task)
         if not task.cancelled() and (exc := task.exception()):
             logger.error(f"BLE task crashed: {exc}")
 
-    def _on_advertisement(self, device: BLEDevice, adv_data: AdvertisementData):
-        asyncio.create_task(self._handle_advertisement(device, adv_data))
-
-    async def _handle_advertisement(self, device: BLEDevice, adv_data: AdvertisementData):
+    async def _handle_advertisement(self, source: str, device: BLEDevice, adv_data: AdvertisementData):
         address = device.address
-        info = BLEDiscoveryInfo(device, adv_data)
-        sig = _adv_signature(adv_data)
-        now = monotonic()
         prev = self._tracked.get(address)
-        adv_changed = prev is not None and prev.signature != sig
+        before = prev.info.advertisement if prev else None
 
         # update tracking before awaiting listeners — guards against concurrent advertisements
         # for the same address both appearing as new
-        self._tracked[address] = _BLETrackedDevice(info=info, last_seen_at=now, signature=sig)
+        tracked = prev or _BLETrackedDevice(BLEDiscoveryInfo(device, adv_data, source))
+        tracked.heard[source] = (adv_data.rssi, monotonic())
+        self._tracked[address] = tracked
+        # a weaker source only keeps the device alive: sources hear different subsets of the
+        # advertisement (e.g. no scan response), so mixing them would report false updates
+        if tracked.sources(self._removal_grace_sec)[0] != source:
+            return
+        tracked.info = info = BLEDiscoveryInfo(device, adv_data, source)
+        adv_changed = before is not None and _adv_signature(before) != _adv_signature(adv_data)
 
         tasks = []
-        for service_ids, listener in self._services.items():
-            if not any(str(sid) in adv_data.service_data or str(sid) in adv_data.service_uuids for sid in service_ids):
+        for listener, matchers in list(self._listeners):
+            if not _matches(matchers, adv_data):
                 continue
             # is_new is per-subscriber match: first time this device matched this filter
-            matched_before = prev is not None and any(
-                str(sid) in prev.info.advertisement.service_data or str(sid) in prev.info.advertisement.service_uuids
-                for sid in service_ids
-            )
-            if not matched_before:
+            if before is None or not _matches(matchers, before):
                 tasks.append((True, listener.ble_did_discover_device(self, info)))
             elif adv_changed:
                 tasks.append((False, listener.ble_did_update_device(self, info)))
 
         if tasks:
             is_new = tasks[0][0]
-            logger.debug(f"BLE {'discovered' if is_new else 'updated'}: {device.name} ({address})")
+            logger.debug(f"BLE {'discovered' if is_new else 'updated'}: {device.name} ({address}) via {source}")
             await asyncio.gather(*(coro for _, coro in tasks))
 
     async def _eviction_loop(self):
@@ -133,23 +274,96 @@ class BLEDiscoveryService:
             await self._evict_stale()
 
     async def _evict_stale(self):
-        now = monotonic()
         for address, tracked in list(self._tracked.items()):
-            if now - tracked.last_seen_at < self._removal_grace_sec:
+            if tracked.sources(self._removal_grace_sec):
                 continue
             del self._tracked[address]
-            tasks = []
-            for service_ids, listener in self._services.items():
-                adv_data = tracked.info.advertisement
-                if any(str(sid) in adv_data.service_data or str(sid) in adv_data.service_uuids for sid in service_ids):
-                    tasks.append(listener.ble_did_remove_device(self, tracked.info))
+            adv_data = tracked.info.advertisement
+            tasks = [
+                listener.ble_did_remove_device(self, tracked.info)
+                for listener, matchers in list(self._listeners)
+                if _matches(matchers, adv_data)
+            ]
             if tasks:
                 logger.debug(f"BLE removed: {tracked.info.device.name} ({address})")
                 await asyncio.gather(*tasks)
 
     async def perform_scan(self):
-        """Triggers an immediate eviction check. Scanner runs continuously — no manual scan needed."""
+        """Triggers an immediate eviction check. Sources listen continuously — no manual scan needed."""
         await self._evict_stale()
+
+
+#: The previous name, kept while integrations move to `BLEService`.
+BLEDiscoveryService = BLEService
+
+
+class LocalAdapter:
+    """A Bluetooth adapter of this machine, through bleak (BlueZ on Linux)."""
+
+    def __init__(self, adapter: str | None = None):
+        self.name = adapter or "local"
+        self._options = {"bluez": {"adapter": adapter}} if adapter else {}
+        self._scanner: BleakScanner | None = None
+        self._devices: dict[str, BLEDevice] = {}  # address -> last seen; connecting by it skips a scan
+
+    async def start(self, on_advertisement: OnAdvertisement):
+        def on_detection(device: BLEDevice, adv_data: AdvertisementData):
+            self._devices[device.address] = device
+            on_advertisement(device, adv_data)
+
+        self._scanner = BleakScanner(detection_callback=on_detection, **self._options)
+        await self._scanner.start()
+
+    async def stop(self):
+        if self._scanner:
+            await self._scanner.stop()
+            self._scanner = None
+
+    async def connect(self, address: str, on_disconnect: Callable[[], None]) -> BLEConnection:
+        device = self._devices.get(address, address)
+        client = BleakClient(device, disconnected_callback=lambda _: on_disconnect(), **self._options)
+        await client.connect()
+        return _BleakConnection(client)
+
+
+class _BleakConnection:
+    def __init__(self, client: BleakClient):
+        self._client = client
+
+    @property
+    def mtu(self) -> int:
+        return self._client.mtu_size
+
+    async def services(self) -> list[GattService]:
+        return [
+            GattService(
+                service.uuid,
+                service.handle,
+                tuple(GattCharacteristic(c.uuid, c.handle, tuple(c.properties)) for c in service.characteristics),
+            )
+            for service in self._client.services
+        ]
+
+    async def read(self, handle: int) -> bytes:
+        return bytes(await self._client.read_gatt_char(handle))
+
+    async def write(self, handle: int, data: bytes, response: bool = True):
+        await self._client.write_gatt_char(handle, data, response=response)
+
+    async def start_notify(self, handle: int, callback: Callable[[bytes], None]):
+        await self._client.start_notify(handle, lambda _, data: callback(bytes(data)))
+
+    async def stop_notify(self, handle: int):
+        await self._client.stop_notify(handle)
+
+    async def disconnect(self):
+        await self._client.disconnect()
+
+
+def _local_adapters() -> list[LocalAdapter]:
+    """One source per BlueZ adapter (hci0, a USB dongle as hci1, …); the default adapter elsewhere."""
+    names = sorted(path.name for path in Path("/sys/class/bluetooth").glob("hci*") if ":" not in path.name)
+    return [LocalAdapter(name) for name in names] or [LocalAdapter()]
 
 
 # Example usage
