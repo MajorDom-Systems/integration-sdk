@@ -147,6 +147,9 @@ class BLEService:
         """
         entry = (listener, [m if isinstance(m, BLEMatcher) else BLEMatcher(service_uuid=m) for m in matchers])
         self._listeners.append(entry)
+        for tracked in self._tracked.values():  # devices heard before it registered are new to it
+            if _matches(entry[1], tracked.info.advertisement):
+                self._spawn(listener.ble_did_discover_device(self, tracked.info))
 
         def cancel():
             if entry in self._listeners:
