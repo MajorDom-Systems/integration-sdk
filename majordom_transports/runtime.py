@@ -137,8 +137,9 @@ class Runtime:
 
     async def _follow_thread(self, url: str, provider: str):
         """Learn the Thread network once the border router has one; integrations then get it in their context."""
-        network = self.settings(provider) or ThreadNetwork()
-        self._dataset = await thread_dataset(url, network, form=provider not in SELF_FORMING)
+        runs_it = provider in self.services and provider not in SELF_FORMING  # a pinned router has its owner
+        network = (runs_it and self.settings(provider)) or ThreadNetwork()
+        self._dataset = await thread_dataset(url, network, form=runs_it)
         if self.on_change:
             await self.on_change()
 

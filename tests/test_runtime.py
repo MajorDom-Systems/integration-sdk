@@ -158,3 +158,17 @@ async def test_firmware_options_name_what_each_firmware_would_serve(tmp_path, st
     assert rt.radios()[0].options == {}  # stable channel: nothing verified to flash yet
     await rt.update_settings("hub", {"firmware": "dev"})
     assert rt.radios()[0].options == {"zigbee": ["zigbee"], "thread": ["thread"], "multipan": ["thread", "zigbee"]}
+
+
+async def test_forms_thread_networks_only_on_border_routers_it_runs(tmp_path, monkeypatch):
+    forms = []
+
+    async def dataset(url, network, form=True, patience=15):
+        forms.append(form)
+        return "0e08"
+
+    monkeypatch.setattr("majordom_transports.runtime.thread_dataset", dataset)
+    rt = runtime(tmp_path)
+    for provider in ("pinned", "multiprotocol", "otbr"):
+        await rt._follow_thread("http://border-router", provider)
+    assert forms == [False, False, True]  # yours stays yours; multiprotocol forms its own
