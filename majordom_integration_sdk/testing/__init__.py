@@ -14,13 +14,16 @@ instead of reinventing them, so every integration is exercised through the same 
 from __future__ import annotations
 
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from bleak.backends.device import BLEDevice
+from bleak.backends.scanner import AdvertisementData
+
 from majordom_integration_sdk.controller.abstract_controller import AbstractController, ControllerOutput
-from majordom_integration_sdk.discovery.ble_discovery import BLEDiscoveryService
+from majordom_integration_sdk.discovery.ble_discovery import BLEConnection, BLEDiscoveryService, OnAdvertisement
 from majordom_integration_sdk.discovery.ssdp_discovery import SSDPDiscoveryService
 from majordom_integration_sdk.discovery.zeroconf_discovery import ZeroconfDiscoveryService
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
@@ -96,6 +99,44 @@ class FakeBLEDiscoveryService(BLEDiscoveryService):
         pass
 
 
+class FakeBLESource:
+    """A Bluetooth radio for tests: ``advertise`` feeds the service it serves, ``connect`` returns
+    ``connection`` (or fails when there is none). Use with ``BLEService(sources=[...])``."""
+
+    def __init__(self, name: str = "fake", connection: BLEConnection | None = None):
+        self.name = name
+        self.connection = connection
+        self.on_advertisement: OnAdvertisement | None = None
+        self.connected: list[str] = []
+
+    async def start(self, on_advertisement: OnAdvertisement):
+        self.on_advertisement = on_advertisement
+
+    async def stop(self):
+        self.on_advertisement = None
+
+    async def connect(self, address: str, on_disconnect: Callable[[], None]) -> BLEConnection:
+        if self.connection is None:
+            raise ConnectionError(f"{self.name} can't reach {address}")
+        self.connected.append(address)
+        return self.connection
+
+    def advertise(
+        self,
+        address: str,
+        rssi: int = -60,
+        local_name: str | None = None,
+        service_uuids: list[str] | None = None,
+        service_data: dict[str, bytes] | None = None,
+        manufacturer_data: dict[int, bytes] | None = None,
+    ):
+        assert self.on_advertisement, f"{self.name} isn't listening"
+        adv = AdvertisementData(
+            local_name, manufacturer_data or {}, service_data or {}, service_uuids or [], None, rssi, ()
+        )
+        self.on_advertisement(BLEDevice(address, local_name, None), adv)
+
+
 def build_test_dependencies(
     documents_folder: Path | None = None,
     integration: str | None = None,
@@ -125,5 +166,6 @@ __all__ = [
     "FakeZeroconfDiscoveryService",
     "FakeSSDPDiscoveryService",
     "FakeBLEDiscoveryService",
+    "FakeBLESource",
     "build_test_dependencies",
 ]
