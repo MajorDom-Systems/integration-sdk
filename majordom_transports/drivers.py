@@ -105,10 +105,17 @@ class ZWave(RadioDriver):
 
 def _zwave_answers(path: str) -> bool:
     # Serial API request frame for FUNC_ID_ZW_GET_VERSION: SOF, length, REQ, 0x15, checksum.
-    # A controller ACKs and replies with its library version string, "Z-Wave x.y".
+    # A controller replies with its library version string, "Z-Wave x.y", and repeats any reply
+    # the host didn't ACK (answering CAN to new requests meanwhile): NAK first, ACK the answer.
     with serial.Serial(path, 115200, timeout=1) as port:
-        port.write(bytes([0x01, 0x03, 0x00, 0x15, 0xE9]))
-        return b"Z-Wave" in port.read(64)
+        port.write(b"\x15")
+        for _ in range(3):
+            port.reset_input_buffer()
+            port.write(bytes([0x01, 0x03, 0x00, 0x15, 0xE9]))
+            if b"Z-Wave" in port.read(64):
+                port.write(b"\x06")
+                return True
+    return False
 
 
 async def _flasher(path: str, *args: str) -> str:
