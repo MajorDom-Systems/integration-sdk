@@ -131,6 +131,8 @@ class BLEService:
         self._pauses = 0
         self._removal_grace_sec: float = 11.0  # seconds unheard by every source before did_remove is fired
         self._eviction_interval_sec: float = 10.0
+        self._silence_sec: float = 60.0  # a source unheard this long is restarted
+        self._heard_at: dict[str, float] = {}  # source -> monotonic time it last heard anything
         self._tracked: dict[str, _BLETrackedDevice] = {}  # address -> tracked device
         self._tasks: set[asyncio.Task] = set()
 
@@ -162,7 +164,7 @@ class BLEService:
         await self.remove_source(source.name)
         self._sources[source.name] = source
         if self._is_running and not self._pauses:
-            await source.start(self._advertisement_handler(source.name))
+            await self._start_source(source.name)
 
     async def remove_source(self, name: str):
         if source := self._sources.pop(name, None):
@@ -217,17 +219,24 @@ class BLEService:
     # Internals
 
     async def _start_sources(self):
-        names = list(self._sources)
-        starts = [self._sources[name].start(self._advertisement_handler(name)) for name in names]
-        for name, result in zip(names, await asyncio.gather(*starts, return_exceptions=True), strict=True):
-            if isinstance(result, Exception):
-                logger.warning(f"BLE source {name} failed to start: {result}")
+        await asyncio.gather(*(self._start_source(name) for name in self._sources))
+
+    async def _start_source(self, name: str):
+        self._heard_at[name] = monotonic()  # one that fails to start is retried once it counts as silent
+        try:
+            await self._sources[name].start(self._advertisement_handler(name))
+        except Exception as e:
+            logger.warning(f"BLE source {name} failed to start: {e}")
 
     async def _stop_sources(self):
         await asyncio.gather(*(s.stop() for s in self._sources.values()), return_exceptions=True)
 
     def _advertisement_handler(self, source: str) -> OnAdvertisement:
-        return lambda device, adv: self._spawn(self._handle_advertisement(source, device, adv))
+        def on_advertisement(device: BLEDevice, adv_data: AdvertisementData):
+            self._heard_at[source] = monotonic()
+            self._spawn(self._handle_advertisement(source, device, adv_data))
+
+        return on_advertisement
 
     def _spawn(self, coroutine):
         task = asyncio.create_task(coroutine)
@@ -275,6 +284,19 @@ class BLEService:
         while self._is_running:
             await asyncio.sleep(self._eviction_interval_sec)
             await self._evict_stale()
+            await self._revive_silent()
+
+    async def _revive_silent(self):
+        """Restarts sources that heard nothing for a while: their radio went away under them without a word
+        (bluetoothd restarted, the adapter reset) and they won't come back by themselves."""
+        if self._pauses:
+            return
+        for name, source in list(self._sources.items()):
+            if monotonic() - self._heard_at.get(name, 0) > self._silence_sec:
+                logger.info(f"BLE source {name} heard nothing for {self._silence_sec:.0f} s, restarting it")
+                with contextlib.suppress(Exception):
+                    await source.stop()
+                await self._start_source(name)
 
     async def _evict_stale(self):
         for address, tracked in list(self._tracked.items()):
@@ -318,9 +340,9 @@ class LocalAdapter:
         await self._scanner.start()
 
     async def stop(self):
-        if self._scanner:
-            await self._scanner.stop()
-            self._scanner = None
+        scanner, self._scanner = self._scanner, None
+        if scanner:
+            await scanner.stop()
 
     async def connect(self, address: str, on_disconnect: Callable[[], None]) -> BLEConnection:
         device = self._devices.get(address, address)
