@@ -333,7 +333,10 @@ class LocalAdapter:
 
     async def start(self, on_advertisement: OnAdvertisement):
         def on_detection(device: BLEDevice, adv_data: AdvertisementData):
+            self._devices.pop(device.address, None)  # re-added last: the dict stays oldest first
             self._devices[device.address] = device
+            if len(self._devices) > 1024:  # phones rotate their address: drop the oldest
+                del self._devices[next(iter(self._devices))]
             on_advertisement(device, adv_data)
 
         self._scanner = BleakScanner(detection_callback=on_detection, **self._options)
