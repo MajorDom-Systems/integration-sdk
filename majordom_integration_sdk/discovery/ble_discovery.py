@@ -350,7 +350,14 @@ class LocalAdapter:
     async def connect(self, address: str, on_disconnect: Callable[[], None]) -> BLEConnection:
         device = self._devices.get(address, address)
         client = BleakClient(device, disconnected_callback=lambda _: on_disconnect(), **self._options)
-        await client.connect()
+        scanner = self._scanner
+        if scanner:  # many adapters (the Raspberry Pi's included) stall a connect while discovering
+            await scanner.stop()
+        try:
+            await client.connect()
+        finally:
+            if scanner and scanner is self._scanner:
+                await scanner.start()
         return _BleakConnection(client)
 
 

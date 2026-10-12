@@ -153,3 +153,35 @@ async def test_a_silent_radio_is_restarted(radios):
     far.advertise("AA")
     await ble._revive_silent()
     assert near.on_advertisement is not None  # listening again
+
+
+async def test_a_local_adapter_stops_scanning_while_it_connects(monkeypatch):
+    from majordom_integration_sdk.discovery import LocalAdapter
+    from majordom_integration_sdk.discovery import ble_discovery as module
+
+    scanning = []
+
+    class Scanner:
+        def __init__(self, **kwargs):
+            pass
+
+        async def start(self):
+            scanning.append(True)
+
+        async def stop(self):
+            scanning.append(False)
+
+    class Client:
+        def __init__(self, device, **kwargs):
+            pass
+
+        async def connect(self):
+            assert scanning[-1] is False, "connecting while discovering: many adapters stall"
+
+    monkeypatch.setattr(module, "BleakScanner", Scanner)
+    monkeypatch.setattr(module, "BleakClient", Client)
+    adapter = LocalAdapter("hci0")
+    await adapter.start(lambda device, adv: None)
+
+    await adapter.connect("AA", lambda: None)
+    assert scanning == [True, False, True]
