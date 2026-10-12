@@ -17,11 +17,14 @@
 #   ZIGBEE_FORM    1                form a Zigbee network if the NCP has none
 #   THREAD_FORM    1                form a Thread network if OTBR has none
 #   THREAD_DATASET                  join this network (active dataset, hex) instead of forming one
+#   CHANNEL        15               Zigbee and Thread form on it: one multi-PAN radio listens on one channel,
+#                                   networks on two channels lose frames (a Thread device then can't attach)
 set -euo pipefail
 
 RADIO_DEVICE=${RADIO_DEVICE:-/dev/ttyRCP}
 RADIO_BAUD=${RADIO_BAUD:-460800}
 EZSP_TCP_PORT=${EZSP_TCP_PORT:-9999}
+CHANNEL=${CHANNEL:-15}
 OTBR_REST_PORT=${OTBR_REST_PORT:-8081}
 BACKBONE_IF=${BACKBONE_IF:-eth0}
 ZIGBEE_FORM=${ZIGBEE_FORM:-1}
@@ -83,6 +86,7 @@ if [ "${THREAD_FORM}" = "1" ]; then
   else
     log "forming Thread network"
     ot-ctl dataset init new     >/dev/null 2>&1 || true
+    ot-ctl dataset channel "${CHANNEL}" >/dev/null 2>&1 || true
     ot-ctl dataset commit active >/dev/null 2>&1 || true
   fi
   ot-ctl ifconfig up          >/dev/null 2>&1 || true
@@ -111,7 +115,7 @@ if [ "${ZIGBEE_FORM}" = "1" ]; then
     formed=0
     for attempt in 1 2 3 4; do
       : > /tmp/zbform.db
-      timeout 120 bellows -d "${ZB_HOST_PTY}" form --database /tmp/zbform.db >/var/log/zigbee-form.log 2>&1
+      timeout 120 bellows -d "${ZB_HOST_PTY}" form --channel "${CHANNEL}" --database /tmp/zbform.db >/var/log/zigbee-form.log 2>&1
       rc=$?
       if [ "${rc}" != 124 ] && grep -q "has no attribute 'join'" /var/log/zigbee-form.log; then
         touch "${ZB_MARKER}"; formed=1; break
