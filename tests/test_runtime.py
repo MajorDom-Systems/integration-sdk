@@ -80,7 +80,7 @@ async def test_multipan_stick_serves_zigbee_and_matter_through_one_service(tmp_p
     assert rt.links("matter")["matter"].url == "ws://127.0.0.1:5580/ws"
     services = compose(tmp_path)
     assert set(services) == {"multiprotocol", "matter-server"}
-    assert services["multiprotocol"]["devices"][0] == f"{path}:/dev/ttyACM0"
+    assert services["multiprotocol"]["devices"][0] == f"{path}:/dev/ttyRCP"
     assert services["matter-server"]["environment"]["OTBR"] == "http://127.0.0.1:8081"
     assert "depends_on" not in services["matter-server"]  # its border router coming and going doesn't restart it
     assert rt.radios()[0].used_by == ["zigbee", "matter"]

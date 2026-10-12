@@ -9,7 +9,7 @@
 # the mounted OTBR datadir, so a restart re-adopts the existing networks instead of re-forming.
 #
 # Env (with defaults):
-#   RADIO_DEVICE   /dev/ttyACM0     the RCP as mapped into the container
+#   RADIO_DEVICE   /dev/ttyRCP      the RCP as mapped into the container
 #   RADIO_BAUD     460800           multi-PAN RCP UART baud
 #   EZSP_TCP_PORT  9999             bellows connects to socket://<host>:9999
 #   OTBR_REST_PORT 8081             Matter server reads the Thread dataset here
@@ -19,7 +19,7 @@
 #   THREAD_DATASET                  join this network (active dataset, hex) instead of forming one
 set -euo pipefail
 
-RADIO_DEVICE=${RADIO_DEVICE:-/dev/ttyACM0}
+RADIO_DEVICE=${RADIO_DEVICE:-/dev/ttyRCP}
 RADIO_BAUD=${RADIO_BAUD:-460800}
 EZSP_TCP_PORT=${EZSP_TCP_PORT:-9999}
 OTBR_REST_PORT=${OTBR_REST_PORT:-8081}

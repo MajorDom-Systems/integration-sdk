@@ -37,7 +37,8 @@ multiprotocol = Service(
         "userns_mode": "host",
         "network_mode": "host",
         "hostname": "majordom-thread",  # its mDNS daemon announces this, not the hub's own name
-        "devices": ["{links.cpc.url}:/dev/ttyACM0", "/dev/net/tun:/dev/net/tun"],
+        # a privileged container sees the host's /dev: a common name (ttyACM0) would be the host's own device
+        "devices": ["{links.cpc.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
         "volumes": [
             f"{_IMAGES}/multiprotocol/cpcd.conf:/usr/local/etc/cpcd.conf:ro",
             f"{_IMAGES}/multiprotocol/entrypoint.sh:/entrypoint.sh:ro",
