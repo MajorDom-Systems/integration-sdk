@@ -172,3 +172,27 @@ async def test_forms_thread_networks_only_on_border_routers_it_runs(tmp_path, mo
     for provider in ("pinned", "multiprotocol", "otbr"):
         await rt._follow_thread("http://border-router", provider)
     assert forms == [False, False, True]  # yours stays yours; multiprotocol forms its own
+
+
+async def test_only_known_radios_are_opened_until_asked(tmp_path, monkeypatch):
+    from majordom_transports import runtime as module
+
+    usb = {"sky": ("10c4", "ea60"), "arduino": ("1a86", "7523")}  # an Arduino resets whenever its port opens
+    opened = []
+
+    class Silabs(module.DRIVERS["silabs"].__class__):
+        async def identify(self, path):
+            opened.append(path.rsplit("/", 1)[1])
+            return "multipan" if path.endswith("sky") else None
+
+    monkeypatch.setattr(module, "DRIVERS", {"silabs": Silabs()})
+    monkeypatch.setattr(module, "glob", lambda pattern: [f"/dev/serial/by-id/{name}" for name in usb])
+    monkeypatch.setattr(module, "_usb_id", lambda path: usb[path.rsplit("/", 1)[1]])
+    rt = Runtime(tmp_path / "data", {"zigbee": Zigbee}, docker=False)
+
+    await rt.refresh()
+    assert opened == ["sky"]
+    assert {r.id: r.driver for r in rt.radios()} == {"sky": "silabs", "arduino": None}
+
+    await rt.probe("arduino")  # the user asked: open it after all
+    assert opened == ["sky", "arduino"]

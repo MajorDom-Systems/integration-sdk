@@ -18,7 +18,7 @@ from typing import Any, Literal, Protocol
 from majordom_integration_sdk import Context, Endpoint, Need, Service, WifiCredentials
 from pydantic import BaseModel, Field
 
-from majordom_transports.drivers import DRIVERS
+from majordom_transports.drivers import DRIVERS, RADIO_USB_IDS
 from majordom_transports.services import SELF_FORMING, SERVICES, ThreadNetwork, thread_dataset
 
 log = logging.getLogger(__name__)
@@ -121,7 +121,7 @@ class Runtime:
             self._present = self._find()
             for radio_id, path in self._present.items():
                 if radio_id not in self.state["radios"]:
-                    self.state["radios"][radio_id] = await self._identify(path)
+                    self.state["radios"][radio_id] = await self._identify(path) if self._trusted(radio_id, path) else {}
                 self.state["radios"][radio_id]["path"] = path
             self._save()
             self._resolve()
@@ -233,6 +233,13 @@ class Runtime:
             self._busy.discard(radio_id)
         await self.refresh()
 
+    async def probe(self, radio_id: str):
+        """Identify a radio now, also one whose USB id isn't a known radio's (its port is opened, which
+        may reset what's behind it)."""
+        async with self._lock:
+            self.state["radios"][radio_id] = await self._identify(self._present[radio_id])
+        await self.refresh()
+
     async def forget(self, radio_id: str):
         """Drop what is known about a radio; it is identified again while plugged in."""
         self.state["radios"].pop(radio_id, None)
@@ -252,6 +259,11 @@ class Runtime:
         found = {Path(p).name: p for p in glob("/dev/serial/by-id/*")} if self.scan else {}
         found |= {r["id"]: r["path"] for r in self.board if Path(r["path"]).exists()}
         return found | {i: p for i, p in self.devices.items() if Path(p).exists()}
+
+    def _trusted(self, radio_id: str, path: str) -> bool:
+        """Safe to open unasked: given explicitly, soldered on the board, or a known radio's USB id."""
+        soldered = any(r["id"] == radio_id for r in self.board)
+        return radio_id in self.devices or soldered or _usb_id(path) in RADIO_USB_IDS
 
     async def _identify(self, path: str) -> dict[str, Any]:
         for name, driver in DRIVERS.items():
@@ -377,6 +389,15 @@ def _satisfied(needs: Sequence[Need], families: set[str]) -> bool:
 def fw_endpoints(driver, firmware: str | None, path: str) -> list[Endpoint]:
     endpoints = driver.firmwares.get(firmware, []) if driver else []
     return [Endpoint(e.family, e.dialect, e.url.format(device=path), e.shared) for e in endpoints]
+
+
+def _usb_id(path: str) -> tuple[str, str] | None:
+    """USB vendor and product id of the device behind a serial port; None for a UART."""
+    device = Path("/sys/class/tty", Path(os.path.realpath(path)).name, "device").resolve()
+    for parent in (device, *device.parents):
+        with contextlib.suppress(OSError):
+            return (parent / "idVendor").read_text().strip(), (parent / "idProduct").read_text().strip()
+    return None
 
 
 def _host_endpoints() -> list[Endpoint]:
