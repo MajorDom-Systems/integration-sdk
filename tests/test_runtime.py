@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -196,3 +197,40 @@ async def test_only_known_radios_are_opened_until_asked(tmp_path, monkeypatch):
 
     await rt.probe("arduino")  # the user asked: open it after all
     assert opened == ["sky", "arduino"]
+
+
+async def test_a_radio_is_released_before_it_is_probed_again(tmp_path, stick, monkeypatch):
+    from majordom_transports import runtime as module
+
+    path = stick("sky", driver="silabs", firmware="multipan")
+    running_while_probed = []
+
+    class Silabs(module.DRIVERS["silabs"].__class__):
+        async def identify(self, path):
+            running_while_probed.append(set(compose(tmp_path)))
+            return "multipan"
+
+    monkeypatch.setattr(module, "DRIVERS", {"silabs": Silabs()})
+    rt = runtime(tmp_path, [path])
+    await rt.refresh()
+    assert "multiprotocol" in compose(tmp_path)
+
+    await rt.forget("sky")  # plugged in: identified again, after the multi-PAN service let go of the stick
+    assert running_while_probed == [{"matter-server"}]
+    assert "multiprotocol" in compose(tmp_path)
+
+
+async def test_a_probe_that_never_answers_gives_up(tmp_path, monkeypatch):
+    from majordom_transports import runtime as module
+
+    class Silent(module.DRIVERS["silabs"].__class__):
+        async def identify(self, path):
+            await asyncio.Event().wait()  # e.g. bellows resetting a port someone else holds
+
+    monkeypatch.setattr(module, "DRIVERS", {"silabs": Silent()})
+    monkeypatch.setattr(module, "PROBE_TIMEOUT", 0.01)
+    (tmp_path / "odd").touch()
+    rt = runtime(tmp_path, [str(tmp_path / "odd")])
+    async with asyncio.timeout(1):
+        await rt.refresh()
+    assert rt.radios()[0].driver is None

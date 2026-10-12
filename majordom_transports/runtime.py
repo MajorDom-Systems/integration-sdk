@@ -23,6 +23,8 @@ from majordom_transports.services import SELF_FORMING, SERVICES, ThreadNetwork, 
 
 log = logging.getLogger(__name__)
 
+PROBE_TIMEOUT = 60  # per driver or integration probe: one that hangs (bellows resetting a busy port) is given up
+
 
 class Consumer(Protocol):
     """Anything shaped like an integration controller class."""
@@ -235,15 +237,23 @@ class Runtime:
 
     async def probe(self, radio_id: str):
         """Identify a radio now, also one whose USB id isn't a known radio's (its port is opened, which
-        may reset what's behind it)."""
-        async with self._lock:
-            self.state["radios"][radio_id] = await self._identify(self._present[radio_id])
+        may reset what's behind it). Whatever uses it lets go of it first."""
+        self._busy.add(radio_id)
+        try:
+            await self.refresh()
+            async with self._lock:
+                self.state["radios"][radio_id] = await self._identify(self._present[radio_id])
+        finally:
+            self._busy.discard(radio_id)
         await self.refresh()
 
     async def forget(self, radio_id: str):
-        """Drop what is known about a radio; it is identified again while plugged in."""
-        self.state["radios"].pop(radio_id, None)
-        await self.refresh()
+        """Drop what is known about a radio; one that is plugged in is identified again."""
+        if radio_id in self._present:
+            await self.probe(radio_id)
+        else:
+            self.state["radios"].pop(radio_id, None)
+            await self.refresh()
 
     async def pin(self, family: str, provider: str | None):
         """Prefer ``provider`` (a radio id or service name) for ``family``; None goes back to automatic."""
@@ -268,12 +278,14 @@ class Runtime:
     async def _identify(self, path: str) -> dict[str, Any]:
         for name, driver in DRIVERS.items():
             with contextlib.suppress(Exception):
-                if firmware := await driver.identify(path):
-                    return {"driver": name, "firmware": firmware}
+                async with asyncio.timeout(PROBE_TIMEOUT):
+                    if firmware := await driver.identify(path):
+                        return {"driver": name, "firmware": firmware}
         for consumer in self.consumers.values():
             with contextlib.suppress(Exception):
-                if endpoint := await consumer.probe(path):
-                    return {"family": endpoint.family, "dialect": endpoint.dialect}
+                async with asyncio.timeout(PROBE_TIMEOUT):
+                    if endpoint := await consumer.probe(path):
+                        return {"family": endpoint.family, "dialect": endpoint.dialect}
         log.info(f"No driver or integration recognised {path}")
         return {}
 
