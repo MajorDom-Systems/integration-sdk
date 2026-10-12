@@ -375,8 +375,8 @@ class Runtime:
         if compose == self._compose:
             return False
         (self.data / "compose.json").write_text(compose)
-        self._compose = compose
         if not self.docker:
+            self._compose = compose
             return True
         args = ["up", "-d", "--remove-orphans"] if services else ["down"]  # integrations retry while services start
         process = await asyncio.create_subprocess_exec(
@@ -386,6 +386,8 @@ class Runtime:
         output = (await process.communicate())[0].decode(errors="replace")
         if process.returncode:
             log.error(f"docker compose {args[0]} failed:\n{output[-3000:]}")
+        else:
+            self._compose = compose  # only what actually runs; a failure is retried on the next refresh
         return True
 
     def _save(self):

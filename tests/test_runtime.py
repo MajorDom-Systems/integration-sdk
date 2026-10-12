@@ -234,3 +234,27 @@ async def test_a_probe_that_never_answers_gives_up(tmp_path, monkeypatch):
     async with asyncio.timeout(1):
         await rt.refresh()
     assert rt.radios()[0].driver is None
+
+
+async def test_a_failed_compose_up_is_retried_on_the_next_refresh(tmp_path, stick, monkeypatch):
+    calls = []
+
+    class Process:
+        returncode = 1
+
+        async def communicate(self):
+            return b"Conflict. The container name is already in use", b""
+
+    async def docker(*args, **kwargs):
+        calls.append(args)
+        return Process()
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", docker)
+    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan")])
+    rt.docker = True
+
+    await rt.refresh()
+    Process.returncode = 0
+    await rt.refresh()
+    await rt.refresh()
+    assert len(calls) == 2  # retried once after the failure, then nothing left to do
