@@ -99,6 +99,7 @@ class Runtime:
         self._links: dict[str, dict[str, Endpoint]] = {}  # consumer or service -> family -> endpoint
         self._providers: dict[str, dict[str, str]] = {}  # consumer or service -> family -> provider
         self._present: dict[str, str] = {}
+        self._nodes: dict[str, str] = {}  # radio id -> device node its path resolves to (a ttyUSB*)
         self._busy: set[str] = set()  # radios being flashed
         self._compose = ""
         self._router: tuple[str, str] | None = None  # border router in use: URL and provider
@@ -121,6 +122,7 @@ class Runtime:
     async def refresh(self):
         async with self._lock:
             self._present = self._find()
+            self._nodes = _nodes(self._present)
             for radio_id, path in self._present.items():
                 if radio_id not in self.state["radios"]:
                     self.state["radios"][radio_id] = await self._identify(path) if self._trusted(radio_id, path) else {}
@@ -146,13 +148,13 @@ class Runtime:
             await self.on_change()
 
     async def _watch(self):
-        seen = self._present
+        seen = self._nodes
         while True:
             await asyncio.sleep(self.poll)
-            found = self._find()
+            found = _nodes(self._find())
             if found != seen:  # act once the change held for one more poll (a stick re-enumerating)
                 seen = found
-            elif found != self._present:
+            elif found != self._nodes:
                 try:
                     await self.refresh()
                 except Exception:
@@ -292,9 +294,10 @@ class Runtime:
     def _radio_endpoints(self, radio_id: str, entry: Mapping[str, Any]) -> list[Endpoint]:
         if radio_id not in self._present or radio_id in self._busy:
             return []
+        node = self._nodes.get(radio_id, entry["path"])
         if "family" in entry:
-            return [Endpoint(entry["family"], entry["dialect"], entry["path"])]
-        return fw_endpoints(DRIVERS.get(entry.get("driver", "")), entry.get("firmware"), entry["path"])
+            return [Endpoint(entry["family"], entry["dialect"], node)]
+        return fw_endpoints(DRIVERS.get(entry.get("driver", "")), entry.get("firmware"), node)
 
     def _offers(self) -> list[tuple[str, Endpoint]]:
         offers = [("pinned", e) for e in self.pinned.values()] + [("host", e) for e in _host_endpoints()]
@@ -402,6 +405,12 @@ def _satisfied(needs: Sequence[Need], families: set[str]) -> bool:
 def fw_endpoints(driver, firmware: str | None, path: str) -> list[Endpoint]:
     endpoints = driver.firmwares.get(firmware, []) if driver else []
     return [Endpoint(e.family, e.dialect, e.url.format(device=path), e.shared) for e in endpoints]
+
+
+def _nodes(paths: Mapping[str, str]) -> dict[str, str]:
+    """The device node behind each path. After a USB reset a stick keeps its by-id name but may come back
+    on another tty; a container keeps the node it was created with, which may then be another device."""
+    return {radio_id: os.path.realpath(path) for radio_id, path in paths.items()}
 
 
 def _usb_id(path: str) -> tuple[str, str] | None:

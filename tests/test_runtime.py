@@ -258,3 +258,26 @@ async def test_a_failed_compose_up_is_retried_on_the_next_refresh(tmp_path, stic
     await rt.refresh()
     await rt.refresh()
     assert len(calls) == 2  # retried once after the failure, then nothing left to do
+
+
+async def test_a_stick_that_comes_back_on_another_tty_is_followed(tmp_path):
+    """A USB bus reset re-enumerates sticks onto new ttys under the same by-id name, faster than the
+    watcher's debounce: services must not keep the old device node (it may be another device now)."""
+    (tmp_path / "ttyUSB0").touch()
+    (tmp_path / "ttyUSB4").touch()
+    link = tmp_path / "usb-SkyConnect"
+    link.symlink_to(tmp_path / "ttyUSB0")
+    state = tmp_path / "data" / "state.json"
+    state.parent.mkdir()
+    entry = {"path": str(link), "driver": "silabs", "firmware": "multipan"}
+    state.write_text(json.dumps({"radios": {link.name: entry}}))
+    rt = runtime(tmp_path, [str(link)], poll=0.01)
+    await rt.start()
+    assert compose(tmp_path)["multiprotocol"]["devices"][0].startswith(f"{(tmp_path / 'ttyUSB0').resolve()}:")
+
+    link.unlink()
+    link.symlink_to(tmp_path / "ttyUSB4")
+    async with asyncio.timeout(2):
+        while not compose(tmp_path)["multiprotocol"]["devices"][0].startswith(f"{(tmp_path / 'ttyUSB4').resolve()}:"):
+            await asyncio.sleep(0.01)
+    await rt.stop()
