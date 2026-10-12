@@ -356,10 +356,9 @@ class Runtime:
             data.mkdir(parents=True, exist_ok=True)
             values = {"data": data, "links": _Links(self._links[name]), "settings": self.settings(name)}
             values |= {"context": self.context(), "host": _Host()}
-            spec = {"restart": "unless-stopped", **_render(self.services[name].compose, values)}
-            if depends := sorted(set(self._providers[name].values()) & self.services.keys()):
-                spec["depends_on"] = depends
-            services[name] = spec
+            # no depends_on: everything retries until its links answer, and a dependency would recreate
+            # a service whenever an optional provider (matter-server's border router) comes or goes
+            services[name] = {"restart": "unless-stopped", **_render(self.services[name].compose, values)}
         compose = json.dumps({"name": "majordom", "services": services}, indent=2)
         if compose == self._compose:
             return False

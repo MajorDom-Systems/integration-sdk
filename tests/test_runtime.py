@@ -81,7 +81,7 @@ async def test_multipan_stick_serves_zigbee_and_matter_through_one_service(tmp_p
     assert set(services) == {"multiprotocol", "matter-server"}
     assert services["multiprotocol"]["devices"][0] == f"{path}:/dev/ttyACM0"
     assert services["matter-server"]["environment"]["OTBR"] == "http://127.0.0.1:8081"
-    assert services["matter-server"]["depends_on"] == ["multiprotocol"]
+    assert "depends_on" not in services["matter-server"]  # its border router coming and going doesn't restart it
     assert rt.radios()[0].used_by == ["zigbee", "matter"]
     assert rt.radios()[0].offers == ["thread", "zigbee"]
 
@@ -131,10 +131,10 @@ async def test_user_pin_picks_between_two_providers(tmp_path, stick):
     rcp = stick("rcp", driver="silabs", firmware="thread")
     rt = runtime(tmp_path, [sky, rcp])
     await rt.refresh()
-    assert compose(tmp_path)["matter-server"]["depends_on"] == ["multiprotocol"]
+    assert rt.providers("matter-server")["thread"] == "multiprotocol"
 
     await rt.pin("thread", "otbr")
-    assert compose(tmp_path)["matter-server"]["depends_on"] == ["otbr"]
+    assert rt.providers("matter-server")["thread"] == "otbr"
 
 
 async def test_settings_persist_and_feed_context(tmp_path):
