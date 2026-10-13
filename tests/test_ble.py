@@ -209,3 +209,79 @@ async def test_a_service_data_matcher_needs_the_data(radios):
     near.advertise("BB", service_data={str(MATTER): b"\x00"})
     await settle()
     assert [i.device.address for i in listener.found] == ["BB"]
+
+
+@pytest.fixture
+def scanners(monkeypatch):
+    """The scanners local adapters open: their arguments, in order."""
+    from majordom_integration_sdk.discovery import ble_discovery as module
+
+    opened: list[dict] = []
+
+    class Scanner:
+        def __init__(self, detection_callback=None, scanning_mode="active", bluez=None, **kwargs):
+            self.args = {"mode": scanning_mode, "patterns": (bluez or {}).get("or_patterns")}
+
+        async def start(self):
+            if self.args["mode"] == "passive" and opened and opened[-1].get("refuse_passive"):
+                raise RuntimeError("passive scanning needs BlueZ's advertisement monitor")
+            opened.append(self.args)
+
+        async def stop(self):
+            pass
+
+    monkeypatch.setattr(module, "BleakScanner", Scanner)
+    return opened
+
+
+def test_matchers_become_bluez_filters():
+    from bleak.assigned_numbers import AdvertisementDataType as T
+
+    from majordom_integration_sdk.discovery.ble_discovery import _patterns
+
+    matter = _patterns(BLEMatcher(service_uuid=MATTER))
+    assert (0, T.SERVICE_DATA_UUID16, b"\xf6\xff") in [tuple(p) for p in matter]
+    assert (4, T.COMPLETE_LIST_SERVICE_UUID16, b"\xf6\xff") in [tuple(p) for p in matter]  # anywhere in a list
+    homekit = _patterns(BLEMatcher(manufacturer_id=APPLE, manufacturer_data_start=b"\x06"))
+    assert [tuple(p) for p in homekit] == [(0, T.MANUFACTURER_SPECIFIC_DATA, b"\x4c\x00\x06")]
+    assert _patterns(BLEMatcher()) is None  # everything: no filter can say so
+
+
+async def test_local_adapters_scan_passively_and_actively_in_bursts(scanners):
+    from majordom_integration_sdk.discovery import LocalAdapter
+
+    ble = BLEService(sources=[LocalAdapter("hci0")])
+    await ble.start()
+    assert scanners[-1]["mode"] == "active"  # nobody listens yet: nothing to filter by
+    ble.register(Listener(), {MATTER})
+    await settle()
+    assert scanners[-1]["mode"] == "passive" and scanners[-1]["patterns"]
+
+    await ble.scan_actively(0.05)  # a pairing window: names come in scan responses
+    assert scanners[-1]["mode"] == "active"
+    await asyncio.sleep(0.1)
+    assert scanners[-1]["mode"] == "passive"
+    await ble.stop()
+
+
+async def test_a_matcher_no_filter_expresses_keeps_the_scan_active(scanners):
+    from majordom_integration_sdk.discovery import LocalAdapter
+
+    ble = BLEService(sources=[LocalAdapter("hci0")])
+    await ble.start()
+    ble.register(Listener(), [BLEMatcher(service_uuid=MATTER), BLEMatcher()])
+    await settle()
+    assert scanners[-1]["mode"] == "active"
+    await ble.stop()
+
+
+async def test_an_adapter_without_passive_scanning_scans_actively(scanners):
+    from majordom_integration_sdk.discovery import LocalAdapter
+
+    ble = BLEService(sources=[LocalAdapter("hci0")])
+    await ble.start()
+    scanners[-1]["refuse_passive"] = True
+    ble.register(Listener(), {MATTER})
+    await settle()
+    assert scanners[-1]["mode"] == "active"
+    await ble.stop()
