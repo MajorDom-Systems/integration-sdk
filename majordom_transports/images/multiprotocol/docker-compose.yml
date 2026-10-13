@@ -1,0 +1,46 @@
+# Lab/CI harness: the stack the runtime runs for a multi-PAN stick (services.py `multiprotocol`) and
+# integration-matter's matter-server (its config.py), as static services for a host without the hub, such as
+# the cage's lab-pi5, where the hardware tests connect to them. Keep both in step with those definitions.
+#   RADIO_BY_ID=/dev/serial/by-id/<stick> docker compose up -d --build
+services:
+  silabs-multiprotocol:
+    image: majordom/silabs-multiprotocol:gsdk-4.4.6-arm64
+    build: .
+    container_name: silabs-multiprotocol
+    restart: unless-stopped
+    privileged: true
+    userns_mode: host
+    network_mode: host
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./cpcd.conf:/usr/local/etc/cpcd.conf:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - /dev/serial:/dev/serial:ro # the by-id link is followed at every start, not pinned to a tty at creation
+      - otbr-data:/var/lib/thread
+      - zigbee-data:/var/lib/zigbee
+    tmpfs:
+      - /run:exec,mode=1777
+    environment:
+      RADIO_DEVICE: ${RADIO_BY_ID:?set RADIO_BY_ID to the stick's /dev/serial/by-id path}
+      HARNESS_TX_DBM: ${HARNESS_TX_DBM:-}
+    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f tcp-listen && ot-ctl state | grep -qE 'leader|router|child'"]
+      interval: 10s
+      start_period: 120s
+      retries: 3
+  matter-server:
+    image: ghcr.io/matter-js/matterjs-server@sha256:bcaacf6b2b2df9ce2b929ad7469d5380a4d627f05f790e201d127e8b65af5b0e
+    container_name: matter-server
+    restart: unless-stopped
+    network_mode: host
+    userns_mode: host
+    environment:
+      STORAGE_PATH: /data
+      BLE_PROXY: "true" # Bluetooth comes from the hub (integration-matter's ble_proxy), as in production
+    volumes:
+      - ${MATTER_DATA_DIR:-/var/lib/majordom/matter-data}:/data
+volumes:
+  otbr-data:
+  zigbee-data:

@@ -11,20 +11,34 @@ coordinator runs concurrently on the same radio.
    ┌────┴─────┐  CPC multiplexing
    │  cpcd    │  iid=1 ─ zigbeed ─ EZSP pty ─ socat ─ tcp:9999
    │ (cpcd_0) │  iid=2 ─ otbr-agent ─ Thread ─ REST :8081 ──── matter-server (ws :5580)
-   └──────────┘                                              (BLE commissioning via host BlueZ)
+   └──────────┘                                              (BLE through the hub's proxy, BLE_PROXY)
 ```
 
 ## Layout
 | File | Purpose |
 |---|---|
-| `docker-compose.yml` | the `silabs-multiprotocol` + `matter-server` services |
+| `docker-compose.yml` | the lab/CI harness: the same services, static, for a host without the hub |
 | `Dockerfile` | thin derived image over the SiLabs base — bakes in the Zigbee forming tool (bellows) |
 | `entrypoint.sh` | brings the daemons up in order (dbus → cpcd → zigbeed → **form Zigbee on the pty** → otbr), idempotent + supervised |
 | `cpcd.conf` | cpcd config (device, 460800 baud) |
-| `flash-rcp.sh` | idempotently flashes the stick to the multi-PAN RCP firmware |
-| `../majordom-multiprotocol.service` | systemd unit: flash-then-`compose up`, ordered `Before=majordom-hub` |
 
-`system/setup.sh` installs Docker, enables the service, and appends the endpoints to `.env`.
+On a hub the runtime runs these services (`services.py`) and flashes the stick (`drivers.py`); the old
+`flash-rcp.sh` and systemd unit are gone. On a lab host:
+`RADIO_BY_ID=/dev/serial/by-id/<stick> docker compose up -d --build`.
+
+- **One channel.** A multi-PAN radio listens on one channel: networks on two lose frames (a Thread device then
+  can't attach). Zigbee forms on `CHANNEL` and the marker in its state volume records it; at every start our
+  Thread network moves to that channel if it is elsewhere (a pending dataset, so attached devices follow). A
+  joined network (`THREAD_DATASET`) is only warned about.
+- **The stick's tty is not pinned.** `RADIO_DEVICE` may be a `/dev/serial/by-id` path: it is resolved at every
+  start, and a USB re-enumeration kills cpcd, so the container restarts onto the stick's new tty.
+- **Transmit power.** The radio sends at Zigbee's power; `ot-ctl txpower` reads back but isn't applied.
+- **No energy scans.** Don't run `ot-ctl scan energy` on this stack: it wedges otbr-agent, and only restarting
+  it helps. The host waits for a result the multi-PAN RCP never sends, with no timeout, and RCP recovery doesn't
+  reset a multi-PAN RCP (openthread [#13702](https://github.com/openthread/openthread/pull/13702),
+  [#11273](https://github.com/orgs/openthread/discussions/11273),
+  [#11277](https://github.com/openthread/openthread/pull/11277)). Nothing here runs one; if one is ever needed,
+  scan a single channel briefly under a timeout: `timeout 15 ot-ctl scan energy 10 15`.
 
 ## Multiprotocol options (evaluated) — and what this uses
 1. **RCP host-stack multiprotocol** — dumb multi-PAN RCP on the stick; cpcd + zigbeed + otbr run on
