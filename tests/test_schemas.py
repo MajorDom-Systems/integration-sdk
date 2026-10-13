@@ -53,3 +53,11 @@ def test_value_valid_values_and_default_share_one_type():
 def test_single_default_value_stays_scalar():
     s = _state(ParameterDataType.integer, default_value=5)
     assert s.default_value == 5  # a lone value is the scalar branch of `set[V] | V`, not a set
+
+
+def test_a_parameter_compares_with_other_values_without_raising():
+    """Its equality is by id among parameters; anything else (a stored raw value, as an ORM compares it) is unequal."""
+    parameter = _state(ParameterDataType.integer, value=7)
+
+    assert parameter == parameter.model_copy(update={"value": 8})
+    assert parameter != 7

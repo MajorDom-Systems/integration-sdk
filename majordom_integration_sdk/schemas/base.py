@@ -52,6 +52,8 @@ class UUIdentifable(Base):  # TODO: review
         return hash(self.id)
 
     def __eq__(self, other):
+        if not isinstance(other, UUIdentifable):
+            return NotImplemented
         return self.id == other.id
 
 
