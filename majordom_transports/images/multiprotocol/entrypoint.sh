@@ -9,7 +9,8 @@
 # the mounted OTBR datadir, so a restart re-adopts the existing networks instead of re-forming.
 #
 # Env (with defaults):
-#   RADIO_DEVICE   /dev/ttyRCP      the RCP as mapped into the container
+#   RADIO_DEVICE   /dev/ttyRCP      the RCP as mapped into the container, or its /dev/serial/by-id path
+#                                   (resolved at every start: the stick's tty changes when USB re-enumerates)
 #   RADIO_BAUD     460800           multi-PAN RCP UART baud
 #   EZSP_TCP_PORT  9999             bellows connects to socket://<host>:9999
 #   OTBR_REST_PORT 8081             Matter server reads the Thread dataset here
@@ -18,7 +19,8 @@
 #   THREAD_FORM    1                form a Thread network if OTBR has none
 #   THREAD_DATASET                  join this network (active dataset, hex) instead of forming one
 #   CHANNEL        15               Zigbee and Thread form on it: one multi-PAN radio listens on one channel,
-#                                   networks on two channels lose frames (a Thread device then can't attach)
+#                                   networks on two channels lose frames (a Thread device then can't attach).
+#                                   Our Thread network is moved to Zigbee's channel when they differ
 set -euo pipefail
 
 RADIO_DEVICE=${RADIO_DEVICE:-/dev/ttyRCP}
@@ -46,6 +48,7 @@ mkdir -p /run/dbus
 mdnsd 2>/dev/null || true
 
 # 2. cpcd owns the serial RCP and multiplexes it (CPC). Config is mounted at the image's path.
+[ "${RADIO_DEVICE}" = /dev/ttyRCP ] || ln -sf "$(readlink -f "${RADIO_DEVICE}")" /dev/ttyRCP
 log "starting cpcd on ${RADIO_DEVICE} @ ${RADIO_BAUD}"
 cpcd >/var/log/cpcd.log 2>&1 &
 # wait for the secondary (RCP) to attach
@@ -118,11 +121,33 @@ if [ "${ZIGBEE_FORM}" = "1" ]; then
       timeout 120 bellows -d "${ZB_HOST_PTY}" form --channel "${CHANNEL}" --database /tmp/zbform.db >/var/log/zigbee-form.log 2>&1
       rc=$?
       if [ "${rc}" != 124 ] && grep -q "has no attribute 'join'" /var/log/zigbee-form.log; then
-        touch "${ZB_MARKER}"; formed=1; break
+        echo "${CHANNEL}" > "${ZB_MARKER}"; formed=1; break
       fi
       log "Zigbee form attempt ${attempt} unconfirmed (rc=${rc}) — retrying"; sleep 8
     done
     if [ "${formed}" = 1 ]; then log "Zigbee coordinator formed"; else log "WARN: Zigbee form unconfirmed after retries — see /var/log/zigbee-form.log"; fi
+  fi
+fi
+
+# 5b. Our Thread network follows Zigbee's channel (one restored from before CHANNEL changed would sit on
+# another). Through a pending dataset with a delay, so attached Thread devices move along.
+ZB_CHANNEL=$(cat "${ZB_MARKER}" 2>/dev/null || true)  # empty from older images: formed on CHANNEL
+ZB_CHANNEL=${ZB_CHANNEL:-${CHANNEL}}
+TH_CHANNEL=$(ot-ctl channel 2>/dev/null | head -1 | tr -dc 0-9 || true)
+if [ "${THREAD_FORM}" = "1" ] && [ -n "${TH_CHANNEL}" ] && [ "${TH_CHANNEL}" != "${ZB_CHANNEL}" ]; then
+  if [ -n "${THREAD_DATASET:-}" ]; then
+    log "WARN: the joined Thread network is on channel ${TH_CHANNEL}, Zigbee on ${ZB_CHANNEL}: both will lose frames"
+  else
+    for _ in $(seq 1 30); do ot-ctl state 2>/dev/null | grep -qE "leader|router|child" && break; sleep 1; done
+    log "moving Thread from channel ${TH_CHANNEL} to ${ZB_CHANNEL}, Zigbee's"
+    now=$(date +%s)
+    if ot-ctl dataset init active >/dev/null && ot-ctl dataset channel "${ZB_CHANNEL}" >/dev/null \
+      && ot-ctl dataset activetimestamp "${now}" >/dev/null && ot-ctl dataset pendingtimestamp "${now}" >/dev/null \
+      && ot-ctl dataset delay 10000 >/dev/null && ot-ctl dataset commit pending >/dev/null; then
+      log "Thread changes channel in 10 s"
+    else
+      log "WARN: the Thread channel change was refused"
+    fi
   fi
 fi
 
@@ -131,10 +156,9 @@ fi
 socat "tcp-listen:${EZSP_TCP_PORT},reuseaddr,fork" file:/dev/ttyZigbeeNCP,raw,echo=0 &
 log "zigbeed up; EZSP exposed on tcp:${EZSP_TCP_PORT} (bellows: socket://<host>:${EZSP_TCP_PORT})"
 
-# Minimise RF for cage testing (see HARNESS_TX_DBM). Thread TX is set here; the radio clamps to its
-# floor (~-26 dBm on the EFR32MG21). Zigbee coordinator TX is set by the integration/test via
-# zigpy's set_tx_power (no daemon-side knob), and BLE TX / receiver sensitivity are not tunable
-# through standard BlueZ / the 802.15.4 stacks — so those are best-effort / not applicable.
+# Thread TX power (HARNESS_TX_DBM). On a multi-PAN RCP the radio transmits at Zigbee's power: `ot-ctl
+# txpower` reads back but isn't applied (cage, 2026-10-13). Lower Zigbee's tx_power instead (zigpy's -10 dBm
+# minimum gives about -11 dBm). BLE TX and receiver sensitivity are not tunable.
 if [ -n "${HARNESS_TX_DBM:-}" ]; then
   log "setting Thread TX power to ${HARNESS_TX_DBM} dBm (clamps to radio min)"
   ot-ctl txpower "${HARNESS_TX_DBM}" >/dev/null 2>&1 || true
