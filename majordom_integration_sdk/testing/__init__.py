@@ -134,7 +134,7 @@ class FakeBLESource:
         adv = AdvertisementData(
             local_name, manufacturer_data or {}, service_data or {}, service_uuids or [], None, rssi, ()
         )
-        self.on_advertisement(BLEDevice(address, local_name, None), adv)
+        self.on_advertisement(BLEDevice(address, local_name, self.name), adv)  # details: the radio
 
 
 def build_test_dependencies(
