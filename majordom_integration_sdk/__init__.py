@@ -13,6 +13,8 @@ The names an integration author reaches for most are re-exported here for conven
 ``from majordom_integration_sdk import AbstractController, Device``.
 """
 
+from importlib.metadata import version
+
 from majordom_integration_sdk.controller import AbstractController, ControllerOutput
 from majordom_integration_sdk.repository import (
     DeviceRepositoryMemory,
@@ -23,7 +25,7 @@ from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.schemas.event import DeviceParameterChange, Event
 
-__version__ = "0.1.0"
+__version__ = version("majordom-integration-sdk")
 
 __all__ = [
     "AbstractController",
