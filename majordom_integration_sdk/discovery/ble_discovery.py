@@ -421,6 +421,8 @@ class LocalAdapter:
                 del self._devices[next(iter(self._devices))]
             on_advertisement(device, adv_data)
 
+        # BlueZ refuses a filtered passive scan without --experimental (Raspberry Pi OS's default): then it scans
+        # actively. With it, a Pi 5 (BlueZ 5.82) started one that heard nothing (2026-10-13): don't enable it there.
         if self.patterns and not self._passive_refused:
             bluez = {**self._options.get("bluez", {}), "or_patterns": self.patterns}
             self._scanner = BleakScanner(detection_callback=on_detection, scanning_mode="passive", bluez=bluez)
