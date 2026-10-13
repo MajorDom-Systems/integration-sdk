@@ -185,3 +185,27 @@ async def test_a_local_adapter_stops_scanning_while_it_connects(monkeypatch):
 
     await adapter.connect("AA", lambda: None)
     assert scanning == [True, False, True]
+
+
+async def test_a_device_is_seen_as_the_strongest_radio_hears_it(radios):
+    ble, near, far = radios
+    far.advertise("AA", rssi=-90, service_uuids=[str(MATTER)])
+    near.advertise("AA", rssi=-50, service_uuids=[str(MATTER)])
+    await settle()
+
+    info = ble.devices()[0]
+    assert (info.source, info.rssi) == ("near", -50)
+    assert info.last_seen > 0
+    assert ble.best_device("AA").details == "near"  # bleak's device, for connecting through that radio
+    assert ble.best_device("BB") is None
+
+
+async def test_a_service_data_matcher_needs_the_data(radios):
+    ble, near, _ = radios
+    listener = Listener()
+    ble.register(listener, [BLEMatcher(service_data_uuid=MATTER)])
+
+    near.advertise("AA", service_uuids=[str(MATTER)])  # only listed: no data to read
+    near.advertise("BB", service_data={str(MATTER): b"\x00"})
+    await settle()
+    assert [i.device.address for i in listener.found] == ["BB"]

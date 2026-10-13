@@ -29,12 +29,15 @@ class BLEMatcher:
     """What a listener wants to hear about; every field that is set must match."""
 
     service_uuid: UUID | None = None  # advertised as a service or in the service data
+    service_data_uuid: UUID | None = None  # in the service data only (what the listener reads)
     manufacturer_id: int | None = None
     manufacturer_data_start: bytes = b""
     local_name_prefix: str | None = None
 
     def matches(self, adv: AdvertisementData) -> bool:
         if self.service_uuid and str(self.service_uuid) not in {*adv.service_uuids, *adv.service_data}:
+            return False
+        if self.service_data_uuid and str(self.service_data_uuid) not in adv.service_data:
             return False
         if self.manufacturer_id is not None:
             data = adv.manufacturer_data.get(self.manufacturer_id)
@@ -48,6 +51,8 @@ class BLEDiscoveryInfo:
     device: BLEDevice
     advertisement: AdvertisementData
     source: str = "local"  # the source that hears it best: "hci0", "esphome:<mac>", …
+    rssi: int | None = None  # as that source hears it
+    last_seen: float = 0.0  # monotonic
 
 
 class BLEDiscoveryListener(Protocol):
@@ -186,9 +191,10 @@ class BLEService:
         logger.debug(f"BLE stopped, {len(self._listeners)} listener(s) registered")
 
     @contextlib.asynccontextmanager
-    async def paused(self) -> AsyncIterator[None]:
+    async def paused(self, reason: str = "") -> AsyncIterator[None]:
         """Stops listening while something else needs the radios to itself (e.g. a commissioning
         process with its own BlueZ client). Nested pauses resume when the last one ends."""
+        logger.debug(f"BLE paused: {reason or 'no reason given'}")
         self._pauses += 1
         if self._pauses == 1:
             await self._stop_sources()
@@ -215,6 +221,11 @@ class BLEService:
     def devices(self) -> list[BLEDiscoveryInfo]:
         """Every device heard recently, as the source hearing it best sees it."""
         return [tracked.info for tracked in self._tracked.values()]
+
+    def best_device(self, address: str) -> BLEDevice | None:
+        """bleak's device as the source hearing it best has it, for libraries that connect through bleak."""
+        tracked = self._tracked.get(address)
+        return tracked.info.device if tracked else None
 
     # Internals
 
@@ -255,14 +266,14 @@ class BLEService:
 
         # update tracking before awaiting listeners — guards against concurrent advertisements
         # for the same address both appearing as new
-        tracked = prev or _BLETrackedDevice(BLEDiscoveryInfo(device, adv_data, source))
+        tracked = prev or _BLETrackedDevice(BLEDiscoveryInfo(device, adv_data, source, adv_data.rssi, monotonic()))
         tracked.heard[source] = (adv_data.rssi, monotonic())
         self._tracked[address] = tracked
         # a weaker source only keeps the device alive: sources hear different subsets of the
         # advertisement (e.g. no scan response), so mixing them would report false updates
         if tracked.sources(self._removal_grace_sec)[0] != source:
             return
-        tracked.info = info = BLEDiscoveryInfo(device, adv_data, source)
+        tracked.info = info = BLEDiscoveryInfo(device, adv_data, source, adv_data.rssi, monotonic())
         adv_changed = before is not None and _adv_signature(before) != _adv_signature(adv_data)
 
         tasks = []
