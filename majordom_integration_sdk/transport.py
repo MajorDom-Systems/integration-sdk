@@ -29,6 +29,12 @@ class Endpoint:
 
 @dataclass(frozen=True)
 class Need:
+    """What the integration requires from its environment: a dependency something else must provide.
+
+    The runtime binds it to an `Endpoint` and hands that over, to a controller in ``dependencies.links``
+    and to a `Service` as ``{links.<family>.url}``.
+    """
+
     family: str
     dialects: Sequence[str] = ()  # empty: any dialect of the family
     required: bool = True
@@ -39,7 +45,9 @@ class Need:
 
 @dataclass(frozen=True)
 class Service:
-    """A container the runtime starts only while something is bound to one of its endpoints.
+    """What the integration provides to its environment: a companion server it brings along, such as
+    Matter's matter-server. The runtime runs it as a container only while something is bound to one
+    of its endpoints.
 
     ``compose`` is its Docker Compose service definition (image, environment, volumes, …); its strings
     may hold ``{data}``, ``{links.<family>.url}``, ``{settings.<field>}``, ``{context.<field>}`` and
