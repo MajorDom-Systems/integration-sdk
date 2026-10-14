@@ -152,6 +152,38 @@ async def test_a_lease_stops_only_its_radio_scanning_until_released(radios):
     assert near.on_advertisement is not None
 
 
+class PausableFakeBLESource(FakeBLESource):
+    def __init__(self, name: str):
+        super().__init__(name)
+        self.calls: list[str] = []
+
+    async def start(self, on_advertisement):
+        self.calls.append("start")
+        await super().start(on_advertisement)
+
+    async def stop(self):
+        self.calls.append("stop")
+        await super().stop()
+
+    async def pause_scanning(self):
+        self.calls.append("pause")
+
+    async def resume_scanning(self):
+        self.calls.append("resume")
+
+
+async def test_a_lease_pauses_a_radio_that_can_pause_instead_of_stopping_it(radios):
+    ble, _, _ = radios
+    await ble.add_source(proxy := PausableFakeBLESource("proxy"))
+    proxy.advertise("AA", rssi=-10)
+    await settle()
+
+    async with ble.exclusive("AA", owner="matter") as lease:
+        assert lease.source == "proxy"
+        assert proxy.calls == ["start", "pause"]
+    assert proxy.calls == ["start", "pause", "resume"]
+
+
 async def test_a_second_lease_waits_then_takes_the_next_radio(radios):
     ble, near, far = radios
     far.advertise("AA", rssi=-90)

@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from bleak import BleakClient, BleakScanner
@@ -99,6 +99,15 @@ class BLESource(Protocol):
     async def start(self, on_advertisement: OnAdvertisement) -> None: ...
     async def stop(self) -> None: ...
     async def connect(self, address: str, on_disconnect: Callable[[], None]) -> BLEConnection: ...
+
+
+@runtime_checkable
+class PausableBLESource(BLESource, Protocol):
+    """A source that can stop hearing without letting go of its radio, e.g. a proxy whose connections only
+    work while it stays subscribed; a lease pauses one rather than stopping it."""
+
+    async def pause_scanning(self) -> None: ...
+    async def resume_scanning(self) -> None: ...
 
 
 class BLEBusyError(ConnectionError):
@@ -223,8 +232,9 @@ class BLEService:
         seconds before the next best is tried, round after round, until ``timeout`` raises `BLEBusyError`."""
         name = await self._acquire(address, owner, timeout, wait)
         try:
+            source = self._sources[name]
             with contextlib.suppress(Exception):
-                await self._sources[name].stop()
+                await (source.pause_scanning() if isinstance(source, PausableBLESource) else source.stop())
             yield BLELease(address, name, owner, self._sources[name])
         finally:
             await asyncio.shield(self._release(name, owner))
@@ -292,10 +302,20 @@ class BLEService:
     async def _release(self, name: str, owner: str):
         try:
             if self._is_running and name in self._sources:
-                await self._start_source(name)
+                await self._resume_source(name)
         finally:
             self._leases[name].release()
             logger.info(f"BLE source {name} released by {owner}")
+
+    async def _resume_source(self, name: str):
+        source = self._sources[name]
+        if not isinstance(source, PausableBLESource):
+            return await self._start_source(name)
+        self._heard_at[name] = monotonic()
+        try:
+            await source.resume_scanning()
+        except Exception as e:
+            logger.warning(f"BLE source {name} failed to resume: {e}")
 
     async def _start_sources(self):
         await asyncio.gather(*(self._start_source(name) for name in self._sources if not self._is_leased(name)))
