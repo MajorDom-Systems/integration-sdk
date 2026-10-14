@@ -168,11 +168,14 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
     """
 
     needs: ClassVar[Sequence[Need]] = ()
-    """Capabilities the controller connects to, e.g. ``[Need("zigbee")]``. Bound ones arrive in
-    ``dependencies.links`` keyed by family; in library mode pass them yourself."""
+    """What the integration requires from its environment: dependencies something else must provide,
+    e.g. ``[Need("zigbee")]``. Bound ones arrive in ``dependencies.links`` keyed by family; in library
+    mode pass them yourself."""
 
     services: ClassVar[Sequence[Service]] = ()
-    """Containers the integration brings along (Matter: matter-server), run by the runtime only when needed."""
+    """What the integration provides to its environment: companion servers it brings along (Matter:
+    matter-server), run by the runtime only while something is bound to them. The controller then
+    `Need`s what they provide."""
 
     settings: ClassVar[type[BaseModel] | None] = None
     """User-facing options as a pydantic model; the validated instance arrives in ``dependencies.settings``."""
