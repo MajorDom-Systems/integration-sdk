@@ -70,13 +70,16 @@ user for one and passes it back to `pair_device` as `ProvidedCredentials`.
 Discovery(
     ...,
     expected_credentials_options=[
-        CredentialsOption(type=CredentialsType.code, mask="DDDD-DDD-DDDD"),  # D = digit
-        CredentialsOption(type=CredentialsType.button, hint="Press the button on the device"),
-        CredentialsType.qr,  # a bare type is shorthand for an option without mask/hint
+        CredentialsType.code.with_mask("DDDD-DDD-DDDD").with_hint("On the label"),  # D = digit
+        CredentialsType.button.with_hint("Press the button on the device"),
+        CredentialsType.qr,  # a bare type is an option without mask/hint
     ],
 )
-# serialized: [{"type": "code", "mask": "DDDD-DDD-DDDD", "hint": null}, ...]
+# serialized: [{"type": "code", "mask": "DDDD-DDD-DDDD", "hint": "On the label"}, ...]
 ```
+
+`with_mask()` and `with_hint()` are the short form of `CredentialsOption(type=..., mask=..., hint=...)`:
+they chain in any order and return a new option, leaving the type and earlier options untouched.
 
 | Type     | The user...                                           | `ProvidedCredentials.value` |
 |----------|-------------------------------------------------------|-----------------------------|
@@ -87,8 +90,7 @@ Discovery(
 | `none`   | does nothing; pairing needs no input                  | none                        |
 
 In `pair_device`, check the supplied type with `discovery.accepts(credentials)` (no credentials
-count as `none`). `CredentialsType.with_mask()` is deprecated: it returns a `CredentialsOption`
-now and will be removed in the next release.
+count as `none`).
 
 ### Missing Hub credentials
 

@@ -1,5 +1,7 @@
 """Pairing credentials: what a discovery expects (CredentialsOption) vs. what a pairing supplies."""
 
+import warnings
+from collections.abc import Callable
 from uuid import uuid4
 
 import pytest
@@ -49,12 +51,46 @@ def test_a_stored_legacy_discovery_loads_from_json():
 
 
 def test_with_mask_no_longer_mutates_the_shared_enum_member():
-    with pytest.deprecated_call():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         option = CredentialsType.code.with_mask("DDD-DD-DDD")
     assert option == CredentialsOption(type=CredentialsType.code, mask="DDD-DD-DDD")
     assert not hasattr(CredentialsType.code, "code_mask")
     # the mask now survives the trip to the Hub
     assert _discovery([option]).model_dump(mode="json")["expected_credentials_options"][0]["mask"] == "DDD-DD-DDD"
+
+
+def test_with_hint_returns_an_option_with_the_hint():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        option = CredentialsType.button.with_hint("Press the button")
+    assert option == CredentialsOption(type=CredentialsType.button, hint="Press the button")
+    assert not hasattr(CredentialsType.button, "hint")
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: CredentialsType.code.with_mask("DDD-DD-DDD").with_hint("On the box"),
+        lambda: CredentialsType.code.with_hint("On the box").with_mask("DDD-DD-DDD"),
+    ],
+    ids=["mask_then_hint", "hint_then_mask"],
+)
+def test_mask_and_hint_chain_in_any_order(build: Callable[[], CredentialsOption]):
+    option = build()
+    assert option == CredentialsOption(type=CredentialsType.code, mask="DDD-DD-DDD", hint="On the box")
+    dumped = _discovery([option]).model_dump(mode="json")["expected_credentials_options"]
+    assert dumped == [{"type": "code", "mask": "DDD-DD-DDD", "hint": "On the box"}]
+
+
+def test_chaining_leaves_the_original_option_unchanged():
+    original = CredentialsType.code.with_mask("DDD-DD-DDD")
+    chained = original.with_hint("On the box").with_mask("DDDD")
+    assert original == CredentialsOption(type=CredentialsType.code, mask="DDD-DD-DDD")
+    assert chained == CredentialsOption(type=CredentialsType.code, mask="DDDD", hint="On the box")
+    assert chained is not original
+    assert CredentialsType.code.with_hint("x") is not CredentialsType.code.with_hint("x")
+    assert CredentialsType.code == "code"
 
 
 def test_existing_membership_checks_against_bare_types_keep_working():

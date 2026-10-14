@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from datetime import datetime
 from enum import Enum
 from typing import Any
@@ -26,18 +25,12 @@ class CredentialsType(str, Enum):
     button = "button"
     none = "none"  # like yeelight classic LAN
 
-    def with_mask(self, code_mask: str) -> CredentialsOption:
-        """Deprecated: use `CredentialsOption(type=..., mask=...)`. Kept for one release.
+    # Shorthand for `CredentialsOption(type=..., mask=/hint=...)`; chain the other on the result.
+    def with_mask(self, mask: str) -> CredentialsOption:
+        return CredentialsOption(type=self, mask=mask)
 
-        It used to set the mask on the shared enum member (so every discovery saw the last mask)
-        and the mask was never serialized; it now returns a new option instead.
-        """
-        warnings.warn(
-            "CredentialsType.with_mask() is deprecated; use CredentialsOption(type=..., mask=...)",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return CredentialsOption(type=self, mask=code_mask)
+    def with_hint(self, hint: str) -> CredentialsOption:
+        return CredentialsOption(type=self, hint=hint)
 
 
 class CredentialsOption(Base):
@@ -55,6 +48,12 @@ class CredentialsOption(Base):
         if isinstance(other, str):
             return self.type == other
         return super().__eq__(other)
+
+    def with_mask(self, mask: str) -> CredentialsOption:
+        return self.model_copy(update={"mask": mask})
+
+    def with_hint(self, hint: str) -> CredentialsOption:
+        return self.model_copy(update={"hint": hint})
 
 
 # FUTURE:
