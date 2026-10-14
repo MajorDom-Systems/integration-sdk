@@ -90,6 +90,29 @@ In `pair_device`, check the supplied type with `discovery.accepts(credentials)` 
 count as `none`). `CredentialsType.with_mask()` is deprecated: it returns a `CredentialsOption`
 now and will be removed in the next release.
 
+### Missing Hub credentials
+
+When the Hub itself lacks something a pairing needs (a Hub on Ethernet has no Wi-Fi to give a
+node set up over BLE), raise `MissingCredentialsError(type)` from `pair_device` before touching the
+device, and set the discovery's `last_error` to `str(error)`. The app asks the user for them, the Hub
+saves them, and the user pairs again.
+
+```python
+error = MissingCredentialsError(MissingCredentialsError.WIFI)  # "wifi" is the default
+str(error)                                                     # "Missing credentials: wifi"
+MissingCredentialsError.parse(device.last_error).type          # "wifi"; parse() is None for other errors
+```
+
+`type` is a lower_snake_case string, so an integration can add its own; the app maps it to an enum
+to pick the screen to show.
+
+| `type`   | The Hub lacks...                                   |
+|----------|----------------------------------------------------|
+| `wifi`   | a Wi-Fi network (SSID and password) to give a device |
+| `thread` | a Thread network (dataset) to give a device        |
+
+An integration that raises any other type documents it in its own README.
+
 ## License
 
 See [LICENSE](LICENSE). For commercial licensing or partnership inquiries, contact us via

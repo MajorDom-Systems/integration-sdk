@@ -8,12 +8,14 @@ Public submodules:
 - ``majordom_integration_sdk.discovery``   — zeroconf / SSDP / BLE discovery services
 - ``majordom_integration_sdk.testing``     — shared test doubles for integration test suites
 - ``majordom_integration_sdk.dev``         — standalone runner for developing an integration without the Hub
+- ``majordom_integration_sdk.errors``      — errors an integration raises for the Hub to act on
 
 The names an integration author reaches for most are re-exported here for convenience, e.g.
 ``from majordom_integration_sdk import AbstractController, Device``.
 """
 
 from majordom_integration_sdk.controller import AbstractController, ControllerOutput
+from majordom_integration_sdk.errors import MissingCredentialsError
 from majordom_integration_sdk.repository import (
     DeviceRepositoryMemory,
     DeviceRepositoryProtocol,
@@ -38,4 +40,5 @@ __all__ = [
     "ProvidedCredentials",
     "Event",
     "DeviceParameterChange",
+    "MissingCredentialsError",
 ]
