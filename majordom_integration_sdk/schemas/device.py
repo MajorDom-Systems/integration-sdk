@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Any
 from uuid import UUID
 
-from pydantic import Field, SerializeAsAny
+from pydantic import Field, SerializeAsAny, field_validator
 
 from .base import Base, NonEmptyStr
 from .parameter import Parameter, ParameterState
@@ -18,15 +19,43 @@ class CredentialsType(str, Enum):
     code = "code"  # e.g. 1234-123-1234 (matter) or 123-45-678 (homekit) # TODO: rename to pin
     qr = "qr"  # raw qr data; TODO: decode to see what data is inside some protocols
     secret = "secret"  # AES key like in esphome
+    # The user physically confirms on the device (ESPHome Improv authorizer, a Matter/HomeKit
+    # setup button). A confirmation step that carries no value — unlike `none`, which means
+    # pairing needs nothing from the user at all.
+    button = "button"
     none = "none"  # like yeelight classic LAN
 
-    def with_mask(self, code_mask: str) -> CredentialsType:
+    def with_mask(self, mask: str, hint: str | None = None) -> CredentialsOption:
         """
+        Returns a CredentialsOption of this type with the mask (and optionally a hint).
         mask format: D as digit placeholder, other symbols remain unchanged e.g. dashes,
         for example "DDD-DD-DDD" for "123-45-678"
         """
-        self.code_mask = code_mask
-        return self
+        return CredentialsOption(type=self, mask=mask, hint=hint)
+
+    def with_hint(self, hint: str) -> CredentialsOption:
+        """
+        Returns a CredentialsOption of this type with the hint: a short UI prompt,
+        for example "Press the button on the device"
+        """
+        return CredentialsOption(type=self, hint=hint)
+
+
+class CredentialsOption(Base):
+    """One way a discovered device can be paired, with what the UI needs to ask for it."""
+
+    type: CredentialsType
+    # D is a digit placeholder, other symbols stay as they are: "DDD-DD-DDD" for "123-45-678"
+    mask: str | None = None
+    # a short UI prompt, e.g. "Press the button on the device" or "Printed on the label"
+    hint: str | None = None
+
+    def __eq__(self, other: object) -> bool:
+        # Compat: integrations check `credentials.type in discovery.expected_credentials_options`;
+        # a bare type (or its str value) matches the option of that type.
+        if isinstance(other, str):
+            return self.type == other
+        return super().__eq__(other)
 
 
 # FUTURE:
@@ -56,7 +85,7 @@ class Discovery(Base):
     # technical
     id: UUID
     integration: NonEmptyStr
-    expected_credentials_options: list[CredentialsType]  # TODO: pass code mask and other things
+    expected_credentials_options: list[CredentialsOption]
     expiration: datetime | None = None
     # for UX
     transport: NonEmptyStr
@@ -70,6 +99,19 @@ class Discovery(Base):
     # TODO: integration_data
 
     # TODO: handle devices with multiple transports or multiple integrations, show options, add priority, allow choosing
+
+    @field_validator("expected_credentials_options", mode="before")
+    @classmethod
+    def _accept_bare_types(cls, options: Any) -> Any:
+        # stored discoveries and older integrations pass bare types: ["code"] / [CredentialsType.code]
+        if not isinstance(options, list):
+            return options
+        return [{"type": option} if isinstance(option, str) else option for option in options]
+
+    def accepts(self, credentials: ProvidedCredentials | None) -> bool:
+        """Whether `credentials` match one of the advertised options; no credentials count as `none`."""
+        provided = credentials.type if credentials else CredentialsType.none
+        return any(option.type == provided for option in self.expected_credentials_options)
 
 
 # Device

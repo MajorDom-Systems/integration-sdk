@@ -275,7 +275,7 @@ async def run_cli(
         if not found:
             _print("(no discoveries yet)")
         for id, d in found.items():
-            expects = ", ".join(c.value for c in d.expected_credentials_options)
+            expects = ", ".join(o.type.value for o in d.expected_credentials_options)
             _print(f"{id}  {d.device_name}  transport={d.transport}  expects=[{expects}]")
 
     @app.command()
