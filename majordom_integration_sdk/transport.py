@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 
@@ -78,6 +78,22 @@ class Service:
         """`Context` fields to read from a bound endpoint of the kind this service provides, once known:
         a border router's Thread network. Also called for such an endpoint someone else runs (pinned)."""
         return {}
+
+
+class ServiceControl(Protocol):
+    """What an integration may do to the services it brings (its ``services``), through the runtime."""
+
+    async def restart(self, service: str) -> None:
+        """Restart one of them, e.g. after reconfiguring it. The integration keeps running: reconnect."""
+        ...
+
+
+@dataclass(frozen=True)
+class NoServiceControl:
+    """No runtime runs services here: library mode, the standalone runner."""
+
+    async def restart(self, service: str) -> None:
+        raise NotImplementedError(f"Nothing runs {service} here: restart it yourself")
 
 
 @dataclass(frozen=True)
