@@ -8,7 +8,7 @@ you by hand in library mode) binds them and hands every consumer a concrete `End
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel
@@ -18,13 +18,16 @@ from pydantic import BaseModel
 class Endpoint:
     """What a radio, a service or the host offers — and, once bound, what a consumer connects to.
 
-    A radio firmware's ``url`` may hold ``{device}``, the stick's path; a service's is used as written.
+    A radio firmware's ``url`` may hold ``{device}``, the stick's path; a service's ``{ports.<name>}``.
+    ``params`` says how to talk to it, e.g. a serial port's ``baud`` and ``flow_control`` as the radio's
+    firmware sets them; a service reads them as ``{links.<family>.params[baud]}``.
     """
 
     family: str
     dialect: str = ""
     url: str = ""
     shared: bool = False  # several consumers may bind it (one Thread network); otherwise exactly one
+    params: Mapping[str, Any] = field(default_factory=dict, hash=False)
 
 
 @dataclass(frozen=True)
@@ -50,8 +53,11 @@ class Service:
     of its endpoints.
 
     ``compose`` is its Docker Compose service definition (image, environment, volumes, …); its strings
-    may hold ``{data}``, ``{links.<family>.url}``, ``{settings.<field>}``, ``{context.<field>}`` and
-    ``{host.interface|uid|gid}``.
+    may hold ``{data}``, ``{links.<family>.url}``, ``{settings.<field>}``, ``{context.<field>}``,
+    ``{host.interface|uid|gid}`` and ``{ports.<name>}``.
+
+    ``ports`` names the host ports it listens on, with the one it prefers. The runtime picks a free one
+    per name and keeps it; ``{ports.<name>}`` hands it to ``compose`` and to the ``provides`` URLs.
 
     Subclass it to hook into the runtime: `provision` sets up what it runs, `learn` reads `Context`
     facts from what it provides.
@@ -62,6 +68,7 @@ class Service:
     needs: Sequence[Need] = ()
     provides: Sequence[Endpoint] = ()
     settings: type[BaseModel] | None = None
+    ports: Mapping[str, int] = field(default_factory=dict)
 
     async def provision(self, endpoint: Endpoint, settings: BaseModel | None) -> None:
         """Set up one of its bound endpoints once it answers, e.g. form a network. Called each time the

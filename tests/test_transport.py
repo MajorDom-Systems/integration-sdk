@@ -18,3 +18,14 @@ async def test_service_hooks_default_to_nothing():
     service = Service("server", compose={})
     assert await service.provision(Endpoint("matter", "ws", "ws://127.0.0.1:5580/ws"), None) is None
     assert await service.learn(Endpoint("matter", "ws", "ws://127.0.0.1:5580/ws")) == {}
+
+
+def test_services_name_no_host_ports_by_default():
+    assert Service("server", compose={}).ports == {}
+
+
+def test_endpoint_params_say_how_to_talk_to_it():
+    stick = Endpoint("zigbee", "ezsp", "/dev/ttyUSB0", params={"baud": 115200, "flow_control": True})
+    assert stick.params["baud"] == 115200
+    assert Endpoint("zigbee").params == {}
+    assert hash(stick) == hash(Endpoint("zigbee", "ezsp", "/dev/ttyUSB0"))
