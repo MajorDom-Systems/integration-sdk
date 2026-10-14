@@ -70,7 +70,7 @@ user for one and passes it back to `pair_device` as `ProvidedCredentials`.
 Discovery(
     ...,
     expected_credentials_options=[
-        CredentialsType.code.with_mask("DDDD-DDD-DDDD").with_hint("On the label"),  # D = digit
+        CredentialsType.code.with_mask("DDDD-DDD-DDDD", hint="On the label"),  # D = digit
         CredentialsType.button.with_hint("Press the button on the device"),
         CredentialsType.qr,  # a bare type is an option without mask/hint
     ],
@@ -79,7 +79,7 @@ Discovery(
 ```
 
 `with_mask()` and `with_hint()` are the short form of `CredentialsOption(type=..., mask=..., hint=...)`:
-they chain in any order and return a new option, leaving the type and earlier options untouched.
+each returns a new option and leaves the type untouched.
 
 | Type     | The user...                                           | `ProvidedCredentials.value` |
 |----------|-------------------------------------------------------|-----------------------------|

@@ -25,11 +25,19 @@ class CredentialsType(str, Enum):
     button = "button"
     none = "none"  # like yeelight classic LAN
 
-    # Shorthand for `CredentialsOption(type=..., mask=/hint=...)`; chain the other on the result.
-    def with_mask(self, mask: str) -> CredentialsOption:
-        return CredentialsOption(type=self, mask=mask)
+    def with_mask(self, mask: str, hint: str | None = None) -> CredentialsOption:
+        """
+        Returns a CredentialsOption of this type with the mask (and optionally a hint).
+        mask format: D as digit placeholder, other symbols remain unchanged e.g. dashes,
+        for example "DDD-DD-DDD" for "123-45-678"
+        """
+        return CredentialsOption(type=self, mask=mask, hint=hint)
 
     def with_hint(self, hint: str) -> CredentialsOption:
+        """
+        Returns a CredentialsOption of this type with the hint: a short UI prompt,
+        for example "Press the button on the device"
+        """
         return CredentialsOption(type=self, hint=hint)
 
 
@@ -48,12 +56,6 @@ class CredentialsOption(Base):
         if isinstance(other, str):
             return self.type == other
         return super().__eq__(other)
-
-    def with_mask(self, mask: str) -> CredentialsOption:
-        return self.model_copy(update={"mask": mask})
-
-    def with_hint(self, hint: str) -> CredentialsOption:
-        return self.model_copy(update={"hint": hint})
 
 
 # FUTURE:
