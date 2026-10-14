@@ -264,6 +264,21 @@ class Runtime:
         await self.refresh()
         return self.settings(scope)
 
+    async def restart(self, service: str):
+        """Restart a running service's container; nothing else changes, so integrations aren't told."""
+        if service not in self._links.keys() & self.services.keys():
+            raise LookupError(f"{service} isn't running")
+        if not self.docker:
+            return  # you run the services
+        async with self._lock:  # not while compose is recreating it
+            process = await asyncio.create_subprocess_exec(
+                "docker", "compose", "-f", str(self.data / "compose.json"), "restart", service,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            )  # fmt: skip
+            output = (await process.communicate())[0].decode(errors="replace")
+        if process.returncode:
+            raise RuntimeError(f"Restarting {service} failed:\n{output[-3000:]}")
+
     async def set_firmware(self, radio_id: str, firmware: str):
         entry = self.state["radios"][radio_id]
         self._busy.add(radio_id)

@@ -190,6 +190,29 @@ async def test_settings_persist_and_feed_context(tmp_path):
     assert rt.settings_scopes("matter") == []
 
 
+async def test_a_service_setting_recreates_only_that_service(tmp_path, stick, monkeypatch):
+    """Integrations keep running: what they are handed doesn't change, only the service's container does."""
+    changes = []
+
+    async def changed():
+        changes.append({c: (rt.links(c), rt.settings(c)) for c in rt.consumers} | {"context": rt.context()})
+
+    async def dataset(url):
+        return "0e08"
+
+    monkeypatch.setattr("majordom_transports.services.active_dataset", dataset)
+    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan")], on_change=changed)
+    await rt.refresh()
+    await settle(rt)
+    before = compose(tmp_path)
+
+    await rt.update_settings("multiprotocol", {"tx_power": -10})
+    await settle(rt)
+    after = compose(tmp_path)
+    assert {name for name in before if before[name] != after[name]} == {"multiprotocol"}
+    assert changes[-1] == changes[-2]  # nothing an integration sees changed: none restarts
+
+
 async def test_firmware_options_name_what_each_firmware_would_serve(tmp_path, stick):
     stick("usb-Nabu_Casa_SkyConnect_v1.0_1-if00", driver="silabs", firmware="thread")
     rt = runtime(tmp_path)
@@ -473,3 +496,31 @@ async def test_a_stick_that_comes_back_on_another_tty_is_followed(tmp_path):
         while not compose(tmp_path)["multiprotocol"]["devices"][0].startswith(f"{(tmp_path / 'ttyUSB4').resolve()}:"):
             await asyncio.sleep(0.01)
     await rt.stop()
+
+
+async def test_restarting_a_service_restarts_only_its_container(tmp_path, stick, monkeypatch):
+    calls, changes = [], []
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+    async def docker(*args, **kwargs):
+        calls.append(args)
+        return Process()
+
+    async def changed():
+        changes.append(1)
+
+    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan")], on_change=changed)
+    await rt.refresh()
+    monkeypatch.setattr("asyncio.create_subprocess_exec", docker)
+    rt.docker = True
+
+    await rt.restart("multiprotocol")
+    assert calls[-1][-2:] == ("restart", "multiprotocol")
+    assert changes == [1]  # integrations aren't told: they reconnect on their own
+    with pytest.raises(LookupError):
+        await rt.restart("otbr")  # not running
