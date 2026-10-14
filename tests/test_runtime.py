@@ -1,5 +1,6 @@
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,6 +15,9 @@ MATTER_SERVER = Service(
     needs=[Need("ip"), Need("thread", ["otbr-rest"], required=False)],
     provides=[Endpoint("matter", "ws", "ws://127.0.0.1:5580/ws")],
 )
+
+
+NCP = {"baud": 115200, "flow_control": True}  # the firmware's serial settings
 
 
 class ZigbeeSettings(BaseModel):
@@ -38,6 +42,22 @@ class Matter:
     @classmethod
     async def probe(cls, path):
         return None
+
+
+@pytest.fixture(autouse=True)
+def listening(monkeypatch):
+    """Host ports something else listens on; none unless a test says so."""
+    ports: set[int] = set()
+    monkeypatch.setattr("majordom_transports.runtime._listening", lambda port: port in ports)
+    return ports
+
+
+@pytest.fixture(autouse=True)
+def held(monkeypatch):
+    """Other programs holding a stick open, by its file name; none unless a test says so."""
+    holders: dict[str, str] = {}
+    monkeypatch.setattr("majordom_transports.runtime._holder", lambda path, open_it=False: holders.get(Path(path).name))
+    return holders
 
 
 @pytest.fixture
@@ -94,9 +114,25 @@ async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp
     rt = runtime(tmp_path, [ncp, rcp])
     await rt.refresh()
 
-    assert rt.links("zigbee") == {"zigbee": Endpoint("zigbee", "ezsp", ncp)}
+    assert rt.links("zigbee") == {"zigbee": Endpoint("zigbee", "ezsp", ncp, params=NCP)}
     assert set(compose(tmp_path)) == {"otbr", "matter-server"}
     assert compose(tmp_path)["otbr"]["devices"][0] == f"{rcp}:/dev/ttyRCP"
+    rcp_url = "spinel+hdlc+uart:///dev/ttyRCP?uart-baudrate=460800&uart-flow-control"
+    assert compose(tmp_path)["otbr"]["environment"]["OT_RCP_DEVICE"] == rcp_url
+
+
+async def test_serial_settings_come_from_the_firmware_or_the_board(tmp_path, stick):
+    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan")])
+    await rt.refresh()
+    environment = compose(tmp_path)["multiprotocol"]["environment"]
+    assert (environment["RADIO_BAUD"], environment["RADIO_FLOW_CONTROL"]) == ("460800", "True")
+
+    (tmp_path / "ttyAMA3").touch()  # soldered: its board wires the UART without flow control
+    board = {"id": "mg26", "path": str(tmp_path / "ttyAMA3"), "driver": "silabs", "firmware": "thread"}
+    rt = runtime(tmp_path / "board", board=[board | {"params": {"baud": 115200, "flow_control": False}}])
+    await rt.refresh()
+    rcp_url = "spinel+hdlc+uart:///dev/ttyRCP?uart-baudrate=115200"
+    assert compose(tmp_path / "board")["otbr"]["environment"]["OT_RCP_DEVICE"] == rcp_url
 
 
 async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
@@ -160,6 +196,62 @@ async def test_firmware_options_name_what_each_firmware_would_serve(tmp_path, st
     assert rt.radios()[0].options == {}  # stable channel: nothing verified to flash yet
     await rt.update_settings("hub", {"firmware": "dev"})
     assert rt.radios()[0].options == {"zigbee": ["zigbee"], "thread": ["thread"], "multipan": ["thread", "zigbee"]}
+
+
+async def test_services_get_free_host_ports_and_keep_them(tmp_path, stick, listening):
+    sky = stick("sky", driver="silabs", firmware="multipan")
+    rt = runtime(tmp_path, [sky])
+    await rt.refresh()
+    assert rt.links("zigbee")["zigbee"].url == "socket://127.0.0.1:9999"  # the preferred port, free
+    assert compose(tmp_path)["multiprotocol"]["environment"]["EZSP_TCP_PORT"] == "9999"
+
+    listening.add(9999)  # after a reboot something else took it before our container came up
+    rt = runtime(tmp_path, [sky])
+    await rt.refresh()
+    moved = rt.links("zigbee")["zigbee"].url
+    assert moved != "socket://127.0.0.1:9999"
+    assert compose(tmp_path)["multiprotocol"]["environment"]["EZSP_TCP_PORT"] == moved.rsplit(":", 1)[1]
+
+    listening.clear()  # the preferred port is free again: the service stays where it is now
+    rt = runtime(tmp_path, [sky])
+    await rt.refresh()
+    assert rt.links("zigbee")["zigbee"].url == moved
+
+
+async def test_a_port_held_by_our_own_running_container_is_kept(tmp_path, stick, listening, monkeypatch):
+    sky = stick("sky", driver="silabs", firmware="multipan")
+    rt = runtime(tmp_path, [sky])
+    await rt.refresh()
+    listening.update({9999, 8081})  # our multiprotocol container is up and holds them
+
+    async def running(self):
+        return {"multiprotocol"}
+
+    monkeypatch.setattr(Runtime, "_running", running)
+    rt = runtime(tmp_path, [sky])
+    await rt.refresh()
+    assert rt.links("zigbee")["zigbee"].url == "socket://127.0.0.1:9999"
+
+
+async def test_services_preferring_the_same_port_get_different_ones(tmp_path, stick):
+    bridge = Service(
+        "bridge",
+        {"image": "bridge", "command": ["--port", "{ports.api}"]},
+        provides=[Endpoint("matter", "ws", "ws://127.0.0.1:{ports.api}/ws")],
+        ports={"api": 9999},
+    )
+
+    class Bridged(Matter):
+        services = [bridge]
+
+    consumers: dict[str, Any] = {"zigbee": Zigbee, "matter": Bridged}
+    path = stick("sky", driver="silabs", firmware="multipan")
+    rt = Runtime(tmp_path / "data", consumers, docker=False, scan=False, devices={"sky": path})
+    await rt.refresh()
+    zigbee, matter = rt.links("zigbee") or {}, rt.links("matter") or {}
+    api = compose(tmp_path)["bridge"]["command"][1]
+    assert zigbee["zigbee"].url.rsplit(":", 1)[1] != api
+    assert matter["matter"].url == f"ws://127.0.0.1:{api}/ws"
 
 
 async def settle(rt):
@@ -243,6 +335,60 @@ async def test_only_known_radios_are_opened_until_asked(tmp_path, monkeypatch):
 
     await rt.probe("arduino")  # the user asked: open it after all
     assert opened == ["sky", "arduino"]
+
+
+async def test_a_stick_another_program_holds_is_left_alone_until_claimed(tmp_path, monkeypatch, held):
+    from majordom_transports import drivers
+    from majordom_transports import runtime as module
+
+    opened = []
+
+    class Silabs(drivers.Silabs):
+        async def identify(self, path):
+            opened.append(path)
+            return "zigbee"
+
+    monkeypatch.setattr(module, "DRIVERS", {"silabs": Silabs()})
+    monkeypatch.setattr(module, "glob", lambda pattern: ["/dev/serial/by-id/sky"] if "serial" in pattern else [])
+    monkeypatch.setattr(module, "_usb_id", lambda path: ("10c4", "ea60"))
+    held["sky"] = "zigbee2mqtt"
+    consumers: dict[str, Any] = {"zigbee": Zigbee}
+    rt = Runtime(tmp_path / "data", consumers, docker=False)
+
+    await rt.refresh()
+    assert opened == []  # never opened: probing would reset the radio under zigbee2mqtt
+    assert [(r.id, r.held_by, r.driver) for r in rt.radios()] == [("sky", "zigbee2mqtt", None)]
+
+    await rt.probe("sky")  # the user claims it anyway
+    assert opened == ["/dev/serial/by-id/sky"]
+    assert rt.links("zigbee") == {"zigbee": Endpoint("zigbee", "ezsp", "/dev/serial/by-id/sky", params=NCP)}
+    assert rt.radios()[0].held_by is None
+
+
+async def test_a_known_stick_another_program_took_is_not_bound(tmp_path, stick, held):
+    path = stick("ncp", driver="silabs", firmware="zigbee")
+    held["ncp"] = "node"
+    rt = runtime(tmp_path, [path])
+    await rt.refresh()
+    assert rt.links("zigbee") is None
+    assert rt.radios()[0].held_by == "node"
+
+    await rt.pin("zigbee", "ncp")  # choosing it for Zigbee claims it
+    assert rt.links("zigbee") == {"zigbee": Endpoint("zigbee", "ezsp", path, params=NCP)}
+
+
+async def test_a_stick_is_used_once_the_other_program_lets_go(tmp_path, stick, held):
+    path = stick("ncp", driver="silabs", firmware="zigbee")
+    held["ncp"] = "node"
+    rt = runtime(tmp_path, [path], poll=0.01)
+    await rt.start()
+    assert rt.links("zigbee") is None
+
+    held.clear()
+    async with asyncio.timeout(2):
+        while rt.links("zigbee") is None:
+            await asyncio.sleep(0.01)
+    await rt.stop()
 
 
 async def test_a_radio_is_released_before_it_is_probed_again(tmp_path, stick, monkeypatch):

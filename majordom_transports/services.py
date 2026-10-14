@@ -25,7 +25,7 @@ class ThreadNetwork(BaseModel):
     tx_power: int | None = Field(None, title="Thread transmit power, dBm", description="Empty uses the radio default.")
 
 
-_OTBR_REST = Endpoint("thread", "otbr-rest", "http://127.0.0.1:8081", shared=True)
+_OTBR_REST = Endpoint("thread", "otbr-rest", "http://127.0.0.1:{ports.rest}", shared=True)
 FORM_PATIENCE = 15  # seconds a border router answers without a network before one is formed on it
 
 
@@ -48,8 +48,9 @@ class _FormingBorderRouter(_BorderRouter):
 multiprotocol = _BorderRouter(
     "multiprotocol",
     needs=[Need("cpc", ["uart"])],
-    provides=[Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999"), _OTBR_REST],
+    provides=[Endpoint("zigbee", "ezsp", "socket://127.0.0.1:{ports.ezsp}"), _OTBR_REST],
     settings=ThreadNetwork,
+    ports={"ezsp": 9999, "rest": 8081},
     compose={
         "image": "majordom/silabs-multiprotocol:gsdk-4.4.6-arm64",
         "build": str(_IMAGES / "multiprotocol"),
@@ -68,7 +69,11 @@ multiprotocol = _BorderRouter(
         "tmpfs": ["/run:exec,mode=1777"],
         "entrypoint": ["/bin/bash", "/entrypoint.sh"],
         "environment": {
+            "RADIO_BAUD": "{links.cpc.params[baud]}",
+            "RADIO_FLOW_CONTROL": "{links.cpc.params[flow_control]}",
             "BACKBONE_IF": "{host.interface}",
+            "EZSP_TCP_PORT": "{ports.ezsp}",
+            "OTBR_REST_PORT": "{ports.rest}",
             "THREAD_DATASET": "{settings.dataset}",
             "HARNESS_TX_DBM": "{settings.tx_power}",
         },
@@ -87,6 +92,7 @@ otbr = _FormingBorderRouter(
     needs=[Need("thread", ["spinel"])],
     provides=[_OTBR_REST],
     settings=ThreadNetwork,
+    ports={"rest": 8081},
     compose={
         # Pinned: a moved :latest once shipped a broken RCP serial init (no wpan0). Bump on purpose.
         "image": "openthread/border-router@sha256:acc612303d3bd5aea28621ec8f3d2cc154cdc94c370398285dc828d08c5a5cf9",
@@ -98,10 +104,12 @@ otbr = _FormingBorderRouter(
         "volumes": ["{data}:/data"],
         "tmpfs": ["/run:exec,mode=1777", "/tmp:mode=1777"],  # s6-overlay runs its init from /run
         "environment": {
-            "OT_RCP_DEVICE": "spinel+hdlc+uart:///dev/ttyRCP?uart-baudrate=460800&uart-flow-control",
+            "OT_RCP_DEVICE": "spinel+hdlc+uart:///dev/ttyRCP?uart-baudrate={links.thread.params[baud]}"
+            "{links.thread.params[flow_control]:&uart-flow-control}",
             "OT_INFRA_IF": "{host.interface}",
             "OT_THREAD_IF": "wpan0",
             "OT_REST_LISTEN_ADDR": "0.0.0.0",
+            "OT_REST_LISTEN_PORT": "{ports.rest}",
         },
         "healthcheck": {
             "test": ["CMD-SHELL", "ot-ctl state | grep -qE 'leader|router|child'"],

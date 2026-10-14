@@ -5,14 +5,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
+import fcntl
 import json
 import logging
 import os
+import socket
 import string
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from glob import glob
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal, Protocol
 
 from majordom_integration_sdk import Context, Endpoint, Need, Service, WifiCredentials
@@ -23,6 +27,7 @@ from majordom_transports.services import SERVICES
 
 log = logging.getLogger(__name__)
 
+PORTS = range(45800, 46000)  # where a service goes when the port it prefers is taken
 PROBE_TIMEOUT = 60  # per driver or integration probe: one that hangs (bellows resetting a busy port) is given up
 
 
@@ -63,6 +68,7 @@ class Radio:
     options: dict[str, list[str]]  # firmware it can be switched to -> families that firmware would serve
     used_by: list[str] = field(default_factory=list)
     busy: bool = False  # being flashed
+    held_by: str | None = None  # another program has it open: left alone until claimed (probe, or a pin)
 
 
 class Runtime:
@@ -84,14 +90,15 @@ class Runtime:
         consumers: integration controller classes by slug.
         docker: run the bound services; False leaves them to you (pin their endpoints).
         scan: look for USB sticks in /dev/serial/by-id; `devices` adds paths by id.
-        board: soldered radios, ``{"id", "path", "driver", "firmware"}``, used without asking.
+        board: soldered radios, ``{"id", "path", "driver", "firmware"}``, used without asking; ``"params"``
+            overrides the firmware's serial settings where the board wires its UART differently.
         pinned: endpoints you provide yourself by family; they win over anything found.
         """
         self.data, self.consumers, self.docker, self.scan = data, dict(consumers), docker, scan
         self.devices, self.board, self.pinned = dict(devices), list(board), dict(pinned)
         self.default_wifi, self.on_change, self.poll = default_wifi, on_change, poll
         self.services = {s.name: s for c in self.consumers.values() for s in c.services} | {s.name: s for s in SERVICES}
-        self.state: dict[str, Any] = {"radios": {}, "pins": {}, "settings": {}}
+        self.state: dict[str, Any] = {"radios": {}, "pins": {}, "settings": {}, "ports": {}}
         with contextlib.suppress(FileNotFoundError):
             self.state |= json.loads((data / "state.json").read_text())
         for radio in self.board:
@@ -101,6 +108,7 @@ class Runtime:
         self._present: dict[str, str] = {}
         self._nodes: dict[str, str] = {}  # radio id -> device node its path resolves to (a ttyUSB*)
         self._busy: set[str] = set()  # radios being flashed
+        self._held: dict[str, str] = {}  # radio id -> the other program that has it open
         self._compose = ""
         self._learned: dict[tuple[str, str], Mapping[str, Any]] = {}  # bound (provider, url) -> context facts
         self._tasks: list[asyncio.Task] = []  # services setting up and learning
@@ -122,12 +130,19 @@ class Runtime:
         async with self._lock:
             self._present = self._find()
             self._nodes = _nodes(self._present)
+            self._held = {}
             for radio_id, path in self._present.items():
-                if radio_id not in self.state["radios"]:
-                    self.state["radios"][radio_id] = await self._identify(path) if self._trusted(radio_id, path) else {}
+                known, trusted = radio_id in self.state["radios"], self._trusted(radio_id, path)
+                if holder := self._holder(radio_id, open_it=not known and trusted):
+                    self._held[radio_id] = holder
+                if not known and (holder or radio_id in self._busy):
+                    continue  # identified once the other program lets go of it, or by the probe that holds it
+                if not known:
+                    self.state["radios"][radio_id] = await self._identify(path) if trusted else {}
                 self.state["radios"][radio_id]["path"] = path
             self._save()
             self._resolve()
+            await self._allocate()
             recreated = await self._apply()
             self._follow(recreated)
         if self.on_change:
@@ -176,7 +191,7 @@ class Runtime:
             found = _nodes(self._find())
             if found != seen:  # act once the change held for one more poll (a stick re-enumerating)
                 seen = found
-            elif found != self._nodes:
+            elif found != self._nodes or any(not self._holder(i, i not in self.state["radios"]) for i in self._held):
                 try:
                     await self.refresh()
                 except Exception:
@@ -199,7 +214,8 @@ class Runtime:
 
     def radios(self) -> list[Radio]:
         result = []
-        for radio_id, entry in self.state["radios"].items():
+        unknown = {radio_id: {"path": self._present[radio_id]} for radio_id in self._held}
+        for radio_id, entry in (unknown | self.state["radios"]).items():
             path, driver = entry.get("path", ""), DRIVERS.get(entry.get("driver", ""))
             firmwares = driver.flashable(path, self.settings("hub").firmware) if driver else []
             result.append(
@@ -213,6 +229,7 @@ class Runtime:
                     options={fw: self._reach(fw_endpoints(driver, fw, path)) for fw in firmwares},
                     used_by=[c for c in self.consumers if radio_id in self._roots(c)],
                     busy=radio_id in self._busy,
+                    held_by=self._held.get(radio_id),
                 )
             )
         return result
@@ -266,7 +283,7 @@ class Runtime:
         try:
             await self.refresh()
             async with self._lock:
-                self.state["radios"][radio_id] = await self._identify(self._present[radio_id])
+                self.state["radios"][radio_id] = await self._identify(self._present[radio_id]) | {"claimed": True}
         finally:
             self._busy.discard(radio_id)
         await self.refresh()
@@ -294,6 +311,13 @@ class Runtime:
         found |= {r["id"]: r["path"] for r in self.board if Path(r["path"]).exists()}
         return found | {i: p for i, p in self.devices.items() if Path(p).exists()}
 
+    def _holder(self, radio_id: str, open_it: bool) -> str | None:
+        """The other program that has a radio open, unless the user claimed it or it is being flashed."""
+        claimed = self.state["radios"].get(radio_id, {}).get("claimed") or radio_id in self.state["pins"].values()
+        if claimed or radio_id in self._busy or (path := self._present.get(radio_id)) is None:
+            return None
+        return _holder(path, open_it=open_it)
+
     def _trusted(self, radio_id: str, path: str) -> bool:
         """Safe to open unasked: given explicitly, soldered on the board, or a known radio's USB id."""
         soldered = any(r["id"] == radio_id for r in self.board)
@@ -314,12 +338,12 @@ class Runtime:
         return {}
 
     def _radio_endpoints(self, radio_id: str, entry: Mapping[str, Any]) -> list[Endpoint]:
-        if radio_id not in self._present or radio_id in self._busy:
+        if radio_id not in self._present or radio_id in self._busy or radio_id in self._held:
             return []
         node = self._nodes.get(radio_id, entry["path"])
         if "family" in entry:
             return [Endpoint(entry["family"], entry["dialect"], node)]
-        return fw_endpoints(DRIVERS.get(entry.get("driver", "")), entry.get("firmware"), node)
+        return fw_endpoints(DRIVERS.get(entry.get("driver", "")), entry.get("firmware"), node, entry.get("params", {}))
 
     def _offers(self) -> list[tuple[str, Endpoint]]:
         offers = [("pinned", e) for e in self.pinned.values()] + [("host", e) for e in _host_endpoints()]
@@ -360,6 +384,43 @@ class Runtime:
         self._links = {o: v for o, v in links.items() if v is not None}
         self._providers = providers
 
+    async def _allocate(self):
+        """Host ports for the bound services, then the links to them. A service keeps its ports across
+        restarts; it gets the preferred one when free and moves only when something else took it."""
+        allocated: dict[str, dict[str, int]] = self.state["ports"]
+        running: set[str] | None = None
+        for name in sorted(self._links.keys() & self.services.keys()):
+            mine = allocated.setdefault(name, {})
+            for port_name, preferred in self.services[name].ports.items():
+                others = {p for s, ports in allocated.items() for n, p in ports.items() if (s, n) != (name, port_name)}
+                port = mine.get(port_name)
+                if port in others:
+                    port = None
+                elif port and _listening(port):
+                    running = await self._running() if running is None else running
+                    port = port if name in running else None  # ours holds it, or something else took it
+                if not port:
+                    port = next(p for p in (preferred, *PORTS) if p not in others and not _listening(p))
+                mine[port_name] = port
+        self._save()
+        for owner, providers in self._providers.items():
+            for family, provider in providers.items():
+                if provider in self.services and (endpoint := self._links.get(owner, {}).get(family)):
+                    self._links[owner][family] = replace(endpoint, url=_render(endpoint.url, self._templates(provider)))
+
+    async def _running(self) -> set[str]:
+        """Our services whose containers are up."""
+        if not self.docker:
+            return set()
+        process = await asyncio.create_subprocess_exec(
+            "docker", "compose", "-p", "majordom", "ps", "--status", "running", "--services",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )  # fmt: skip
+        return set((await process.communicate())[0].decode().split())
+
+    def _templates(self, service: str) -> dict[str, Any]:
+        return {"ports": SimpleNamespace(**self.state["ports"].get(service, {}))}
+
     def _roots(self, owner: str) -> set[str]:
         """Every provider ``owner`` depends on, directly or through services."""
         direct = set(self._providers.get(owner, {}).values())
@@ -398,7 +459,7 @@ class Runtime:
             data = self.data / "services" / name
             data.mkdir(parents=True, exist_ok=True)
             values = {"data": data, "links": _Links(self._links[name]), "settings": self.settings(name)}
-            values |= {"context": self.context(), "host": _Host()}
+            values |= {"context": self.context(), "host": _Host()} | self._templates(name)
             # no depends_on: everything retries until its links answer, and a dependency would recreate
             # a service whenever an optional provider (matter-server's border router) comes or goes
             services[name] = {"restart": "unless-stopped", **_render(self.services[name].compose, values)}
@@ -430,9 +491,9 @@ def _satisfied(needs: Sequence[Need], families: set[str]) -> bool:
     return all(need.family in families for need in needs if need.required)
 
 
-def fw_endpoints(driver, firmware: str | None, path: str) -> list[Endpoint]:
+def fw_endpoints(driver, firmware: str | None, path: str, params: Mapping[str, Any] = {}) -> list[Endpoint]:
     endpoints = driver.firmwares.get(firmware, []) if driver else []
-    return [Endpoint(e.family, e.dialect, e.url.format(device=path), e.shared) for e in endpoints]
+    return [replace(e, url=e.url.format(device=path), params={**e.params, **params}) for e in endpoints]
 
 
 def _nodes(paths: Mapping[str, str]) -> dict[str, str]:
@@ -450,16 +511,61 @@ def _usb_id(path: str) -> tuple[str, str] | None:
     return None
 
 
+def _holder(path: str, open_it: bool = False) -> str | None:
+    """The other program that has a serial port open: one whose open files we may read, or with ``open_it``
+    (it opens the port) one that locked it, whoever runs it. Our own containers see the port under another
+    name (/dev/ttyRCP), so they don't count."""
+    names = {path, os.path.realpath(path)}
+    for fd in glob("/proc/[0-9]*/fd/*"):
+        with contextlib.suppress(OSError):
+            if (pid := fd.split("/")[2]) != str(os.getpid()) and os.readlink(fd) in names:
+                return Path(f"/proc/{pid}/comm").read_text().strip()
+    if not open_it:
+        return None
+    try:
+        port = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    except OSError as error:
+        return "another program" if error.errno == errno.EBUSY else None  # EBUSY: opened exclusively (TIOCEXCL)
+    try:
+        fcntl.flock(port, fcntl.LOCK_EX | fcntl.LOCK_NB)  # pyserial's and node-serialport's exclusive lock
+    except OSError:
+        return "another program"
+    finally:
+        os.close(port)
+    return None
+
+
+def _listening(port: int) -> bool:
+    """Whether something on the host listens on a TCP port (all services run on the host network)."""
+    with socket.socket() as probe:
+        probe.settimeout(0.5)
+        if probe.connect_ex(("127.0.0.1", port)) == 0:  # also one on loopback only, which BSDs let a bind pass
+            return True
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # a closed connection in TIME_WAIT is no one's
+        try:
+            probe.bind(("", port))
+        except OSError:
+            return True
+    return False
+
+
 def _host_endpoints() -> list[Endpoint]:
     ble = [Endpoint("ble", "bluez", Path(p).name, shared=True) for p in glob("/sys/class/bluetooth/hci*")[:1]]
     return [Endpoint("ip", shared=True), *ble]
 
 
 class _Links(dict):
-    """Template access ``{links.thread.url}``; an unbound optional link renders empty."""
+    """Template access ``{links.thread.url}``; an unbound optional link, or a param it lacks, renders empty."""
 
     def __getattr__(self, family: str) -> Endpoint:
-        return self.get(family, Endpoint(""))
+        endpoint = self.get(family, Endpoint(""))
+        return replace(endpoint, params=_Params(endpoint.params))
+
+
+class _Params(dict):
+    def __missing__(self, name: str) -> None:
+        return None
 
 
 class _Host:
@@ -482,7 +588,11 @@ class _Host:
 
 
 class _Formatter(string.Formatter):
+    """None renders empty; a flag with a format spec renders the spec when set: ``{x:&uart-flow-control}``."""
+
     def format_field(self, value: Any, format_spec: str) -> str:
+        if isinstance(value, bool) and format_spec:
+            return format_spec if value else ""
         return "" if value is None else super().format_field(value, format_spec)
 
 

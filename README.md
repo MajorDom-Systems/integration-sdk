@@ -61,10 +61,16 @@ runtime.links("matter")  # {"matter": Endpoint("matter", "ws", "ws://my-matter:5
 
 Pin only `thread` (`Endpoint("thread", "otbr-rest", "http://my-otbr:8081", shared=True)`) to keep matter-server running here, but behind your border router.
 
-Service templates can use `{device}`, `{data}`, `{links.<family>.url}`, `{settings.<field>}`,
-`{context.region}`, `{host.interface}`, `{host.uid}` and `{host.gid}`.
+Service templates can use `{device}`, `{data}`, `{links.<family>.url}`, `{links.<family>.params[baud]}`,
+`{settings.<field>}`, `{context.region}`, `{host.interface}`, `{host.uid}`, `{host.gid}` and `{ports.<name>}`.
+A service names its host ports with the one it prefers (`ports={"api": 5580}`); the runtime picks a free one,
+keeps it in `state.json`, and fills `{ports.<name>}` in the compose and the `provides` URLs.
 
 Soldered radios come from a board profile: `board=[{"id": "mg26", "path": "/dev/ttyAMA3", "driver": "silabs", "firmware": "multipan"}]`.
+Add `"params": {"baud": 115200, "flow_control": false}` where the board wires the UART unlike the firmware's default.
+
+A stick another program has open (zigbee2mqtt, Home Assistant) is not opened or bound; `radios()` shows it
+`held_by` that program. Probing it, or pinning a family to it, claims it anyway.
 
 ## Firmware
 

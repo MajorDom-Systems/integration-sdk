@@ -11,7 +11,8 @@
 # Env (with defaults):
 #   RADIO_DEVICE   /dev/ttyRCP      the RCP as mapped into the container, or its /dev/serial/by-id path
 #                                   (resolved at every start: the stick's tty changes when USB re-enumerates)
-#   RADIO_BAUD     460800           multi-PAN RCP UART baud
+#   RADIO_BAUD     460800           multi-PAN RCP UART baud, as its firmware sets it
+#   RADIO_FLOW_CONTROL True         hardware flow control (RTS/CTS) on that UART: True or False
 #   EZSP_TCP_PORT  9999             bellows connects to socket://<host>:9999
 #   OTBR_REST_PORT 8081             Matter server reads the Thread dataset here
 #   BACKBONE_IF    eth0             OTBR backbone interface
@@ -25,6 +26,7 @@ set -euo pipefail
 
 RADIO_DEVICE=${RADIO_DEVICE:-/dev/ttyRCP}
 RADIO_BAUD=${RADIO_BAUD:-460800}
+RADIO_FLOW_CONTROL=${RADIO_FLOW_CONTROL:-True}
 EZSP_TCP_PORT=${EZSP_TCP_PORT:-9999}
 CHANNEL=${CHANNEL:-15}
 OTBR_REST_PORT=${OTBR_REST_PORT:-8081}
@@ -49,8 +51,11 @@ mdnsd 2>/dev/null || true
 
 # 2. cpcd owns the serial RCP and multiplexes it (CPC). Config is mounted at the image's path.
 [ "${RADIO_DEVICE}" = /dev/ttyRCP ] || ln -sf "$(readlink -f "${RADIO_DEVICE}")" /dev/ttyRCP
-log "starting cpcd on ${RADIO_DEVICE} @ ${RADIO_BAUD}"
-cpcd >/var/log/cpcd.log 2>&1 &
+log "starting cpcd on ${RADIO_DEVICE} @ ${RADIO_BAUD}, flow control ${RADIO_FLOW_CONTROL}"
+case "${RADIO_FLOW_CONTROL}" in [Tt]rue | 1) hardflow=true ;; *) hardflow=false ;; esac
+sed -e "s/^uart_device_baud:.*/uart_device_baud: ${RADIO_BAUD}/" -e "s/^uart_hardflow:.*/uart_hardflow: ${hardflow}/" \
+  /usr/local/etc/cpcd.conf > /run/cpcd.conf
+cpcd --conf /run/cpcd.conf >/var/log/cpcd.log 2>&1 &
 # wait for the secondary (RCP) to attach
 for _ in $(seq 1 30); do grep -q "Secondary APP" /var/log/cpcd.log 2>/dev/null && break; sleep 1; done
 grep -q "Secondary APP" /var/log/cpcd.log || { log "cpcd never reached the RCP"; cat /var/log/cpcd.log; exit 1; }

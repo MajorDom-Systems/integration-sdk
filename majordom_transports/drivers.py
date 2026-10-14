@@ -17,7 +17,8 @@ from majordom_integration_sdk import Endpoint
 
 
 class RadioDriver(ABC):
-    """One family of sticks. ``firmwares`` maps a firmware id to what it offers; ``{device}`` is the stick's path."""
+    """One family of sticks. ``firmwares`` maps a firmware id to what it offers; ``{device}`` is the stick's path,
+    ``params`` the firmware's serial settings (a board profile may override them)."""
 
     firmwares: ClassVar[Mapping[str, Sequence[Endpoint]]]
 
@@ -47,9 +48,9 @@ class Silabs(RadioDriver):
     """Silicon Labs EFR32 sticks: Zigbee NCP (EZSP), Thread RCP (Spinel) or multi-PAN RCP (CPC)."""
 
     firmwares = {
-        "zigbee": [Endpoint("zigbee", "ezsp", "{device}")],
-        "thread": [Endpoint("thread", "spinel", "{device}")],
-        "multipan": [Endpoint("cpc", "uart", "{device}")],
+        "zigbee": [Endpoint("zigbee", "ezsp", "{device}", params={"baud": 115200, "flow_control": True})],
+        "thread": [Endpoint("thread", "spinel", "{device}", params={"baud": 460800, "flow_control": True})],
+        "multipan": [Endpoint("cpc", "uart", "{device}", params={"baud": 460800, "flow_control": True})],
     }
 
     #: Builds per board, keyed by the product name in the stick's /dev/serial/by-id path.
@@ -97,7 +98,7 @@ class Silabs(RadioDriver):
 class ZWave(RadioDriver):
     """Z-Wave controllers speaking the Serial API (any vendor)."""
 
-    firmwares = {"zwave": [Endpoint("zwave", "serial", "{device}")]}
+    firmwares = {"zwave": [Endpoint("zwave", "serial", "{device}", params={"baud": 115200, "flow_control": False})]}
 
     async def identify(self, path: str) -> str | None:
         return "zwave" if await asyncio.to_thread(_zwave_answers, path) else None
