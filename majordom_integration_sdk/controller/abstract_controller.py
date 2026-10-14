@@ -195,6 +195,20 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
         """
         return False
 
+    async def settings_did_change(self, before: BaseModel | None) -> bool:
+        """The integration's settings changed; ``dependencies.settings`` already holds the new ones.
+
+        Return True when applied in place; False (the default) has the Hub restart the integration.
+        """
+        return False
+
+    async def context_did_change(self, before: Context) -> bool:
+        """Hub-wide facts changed (region, Wi-Fi, Thread network); ``dependencies.context`` holds the new ones.
+
+        Return True when applied in place; False (the default) has the Hub restart the integration.
+        """
+        return False
+
     # TODO: review if these two are needed, test the implementation
 
     @property

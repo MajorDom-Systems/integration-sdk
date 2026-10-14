@@ -4,6 +4,7 @@ from uuid import UUID
 
 from conftest import make_device_state
 
+from majordom_integration_sdk import Context
 from majordom_integration_sdk.controller import AbstractController
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
@@ -100,3 +101,9 @@ async def test_the_pairing_window_opens_without_credentials():
     # the Hub broadcasts `start_pairing_window(duration)`: credentials are only for the one integration that needs them
     controller = _MinimalController(build_test_dependencies(integration="minimal"))
     await controller.start_pairing_window(5)
+
+
+async def test_changed_settings_and_context_ask_for_a_restart_unless_handled():
+    controller = _MinimalController(build_test_dependencies(integration="minimal"))
+    assert await controller.settings_did_change(None) is False
+    assert await controller.context_did_change(Context()) is False
