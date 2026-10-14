@@ -1,8 +1,10 @@
 from .ble_discovery import (
+    BLEBusyError,
     BLEConnection,
     BLEDiscoveryInfo,
     BLEDiscoveryListener,
     BLEDiscoveryService,
+    BLELease,
     BLEMatcher,
     BLEService,
     BLESource,
@@ -14,10 +16,12 @@ from .ssdp_discovery import SSDPDiscoveryInfo, SSDPDiscoveryListener, SSDPDiscov
 from .zeroconf_discovery import ZeroconfDiscoveryInfo, ZeroconfDiscoveryListener, ZeroconfDiscoveryService
 
 __all__ = [
+    "BLEBusyError",
     "BLEConnection",
     "BLEDiscoveryInfo",
     "BLEDiscoveryListener",
     "BLEDiscoveryService",
+    "BLELease",
     "BLEMatcher",
     "BLEService",
     "BLESource",
