@@ -37,6 +37,30 @@ Any layer can be yours instead:
 | to run containers yourself | `docker=False` — the would-be `compose.json` is still written |
 | nothing of this | skip the package; hand the controller `Dependencies(links={...})` |
 
+### Servers you already run
+
+A matter-server or zwave-js-server of your own is a service you define by hand: an `Endpoint` with a fixed URL, pinned by family. It is offered as written, ahead of anything the runtime finds, and no container starts for a need it serves:
+
+```python
+from majordom_integration_sdk import Endpoint
+from majordom_transports import Runtime
+
+runtime = Runtime(
+    data_dir,
+    {"matter": MatterController, "zwave": ZwaveController},
+    pinned={
+        "matter": Endpoint("matter", "ws", "ws://my-matter:5580/ws"),  # your matter-server
+        "zwave": Endpoint("zwave", "ws", "ws://my-zwave:3000"),  # your zwave-js-server
+    },
+    scan=False,  # the sticks live behind those servers
+    docker=False,  # nothing left to run
+)
+await runtime.start()
+runtime.links("matter")  # {"matter": Endpoint("matter", "ws", "ws://my-matter:5580/ws")}
+```
+
+Pin only `thread` (`Endpoint("thread", "otbr-rest", "http://my-otbr:8081", shared=True)`) to keep matter-server running here, but behind your border router.
+
 Service templates can use `{device}`, `{data}`, `{links.<family>.url}`, `{settings.<field>}`,
 `{context.region}`, `{host.interface}`, `{host.uid}` and `{host.gid}`.
 
