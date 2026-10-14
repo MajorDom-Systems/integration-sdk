@@ -52,6 +52,9 @@ class Service:
     ``compose`` is its Docker Compose service definition (image, environment, volumes, …); its strings
     may hold ``{data}``, ``{links.<family>.url}``, ``{settings.<field>}``, ``{context.<field>}`` and
     ``{host.interface|uid|gid}``.
+
+    Subclass it to hook into the runtime: `provision` sets up what it runs, `learn` reads `Context`
+    facts from what it provides.
     """
 
     name: str
@@ -59,6 +62,15 @@ class Service:
     needs: Sequence[Need] = ()
     provides: Sequence[Endpoint] = ()
     settings: type[BaseModel] | None = None
+
+    async def provision(self, endpoint: Endpoint, settings: BaseModel | None) -> None:
+        """Set up one of its bound endpoints once it answers, e.g. form a network. Called each time the
+        runtime (re)creates this service, cancelled when it changes again: keep it idempotent."""
+
+    async def learn(self, endpoint: Endpoint) -> Mapping[str, Any]:
+        """`Context` fields to read from a bound endpoint of the kind this service provides, once known:
+        a border router's Thread network. Also called for such an endpoint someone else runs (pinned)."""
+        return {}
 
 
 @dataclass(frozen=True)
