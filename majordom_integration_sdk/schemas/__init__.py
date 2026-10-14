@@ -9,6 +9,7 @@ protocol) and the automation event bus live in the Hub, not here.
 from .base import Base, NonEmptyStr, StrEnum, StrIdentifiable, UUIdentifable
 from .command import DeviceCommand
 from .device import (
+    CredentialsOption,
     CredentialsType,
     CredentialsValue,
     Device,
@@ -44,6 +45,7 @@ __all__ = [
     "Event",
     "DeviceParameterChange",
     # device
+    "CredentialsOption",
     "CredentialsType",
     "CredentialsValue",
     "Device",

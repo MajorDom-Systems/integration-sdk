@@ -61,6 +61,35 @@ The fastest way to start a new integration is the
 [integration-template](https://github.com/MajorDom-Systems/integration-template) repository
 (**Use this template → Create a new repository**).
 
+### Pairing credentials
+
+A `Discovery` lists every way the device can be paired as `CredentialsOption`s; the Hub asks the
+user for one and passes it back to `pair_device` as `ProvidedCredentials`.
+
+```python
+Discovery(
+    ...,
+    expected_credentials_options=[
+        CredentialsOption(type=CredentialsType.code, mask="DDDD-DDD-DDDD"),  # D = digit
+        CredentialsOption(type=CredentialsType.button, hint="Press the button on the device"),
+        CredentialsType.qr,  # a bare type is shorthand for an option without mask/hint
+    ],
+)
+# serialized: [{"type": "code", "mask": "DDDD-DDD-DDDD", "hint": null}, ...]
+```
+
+| Type     | The user...                                           | `ProvidedCredentials.value` |
+|----------|-------------------------------------------------------|-----------------------------|
+| `code`   | types a setup code, formatted by `mask`               | the code                    |
+| `qr`     | scans a setup QR code                                 | the raw QR payload          |
+| `secret` | enters a key (e.g. an ESPHome API encryption key)     | the key                     |
+| `button` | physically confirms on the device (Improv, a setup button) | none: a confirmation step |
+| `none`   | does nothing; pairing needs no input                  | none                        |
+
+In `pair_device`, check the supplied type with `discovery.accepts(credentials)` (no credentials
+count as `none`). `CredentialsType.with_mask()` is deprecated: it returns a `CredentialsOption`
+now and will be removed in the next release.
+
 ## License
 
 See [LICENSE](LICENSE). For commercial licensing or partnership inquiries, contact us via
