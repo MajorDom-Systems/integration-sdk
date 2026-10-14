@@ -11,6 +11,7 @@ from .ble_discovery import (
     GattCharacteristic,
     GattService,
     LocalAdapter,
+    PausableBLESource,
 )
 from .ssdp_discovery import SSDPDiscoveryInfo, SSDPDiscoveryListener, SSDPDiscoveryService
 from .zeroconf_discovery import ZeroconfDiscoveryInfo, ZeroconfDiscoveryListener, ZeroconfDiscoveryService
@@ -28,6 +29,7 @@ __all__ = [
     "GattCharacteristic",
     "GattService",
     "LocalAdapter",
+    "PausableBLESource",
     "SSDPDiscoveryInfo",
     "SSDPDiscoveryListener",
     "SSDPDiscoveryService",
