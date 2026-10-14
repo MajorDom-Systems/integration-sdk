@@ -25,7 +25,15 @@ from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
-from majordom_integration_sdk.transport import Context, Endpoint, Need, PeripheralChange, Service
+from majordom_integration_sdk.transport import (
+    Context,
+    Endpoint,
+    Need,
+    NoServiceControl,
+    PeripheralChange,
+    Service,
+    ServiceControl,
+)
 
 _NAME_HELP = (
     "The integration name is auto-derived from your controller class name; set a class-level "
@@ -128,6 +136,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
         links: Mapping[str, Endpoint] = field(default_factory=dict)  # bound `needs`, by family
         settings: BaseModel | None = None  # validated instance of the controller's `settings` model
         context: Context = field(default_factory=Context)
+        services: ServiceControl = field(default_factory=NoServiceControl)  # restarts the integration's `services`
 
         def copy(self, **kwargs) -> AbstractController.Dependencies:
             return replace(self, **kwargs)

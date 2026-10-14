@@ -27,7 +27,15 @@ from majordom_integration_sdk.repository import (
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.schemas.event import DeviceParameterChange, Event
-from majordom_integration_sdk.transport import Context, Endpoint, Need, PeripheralChange, Service, WifiCredentials
+from majordom_integration_sdk.transport import (
+    Context,
+    Endpoint,
+    Need,
+    PeripheralChange,
+    Service,
+    ServiceControl,
+    WifiCredentials,
+)
 
 __version__ = version("majordom-integration-sdk")
 
@@ -48,6 +56,7 @@ __all__ = [
     "Need",
     "Endpoint",
     "Service",
+    "ServiceControl",
     "PeripheralChange",
     "Context",
     "WifiCredentials",

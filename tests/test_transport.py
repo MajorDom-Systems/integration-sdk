@@ -1,3 +1,5 @@
+import pytest
+
 from majordom_integration_sdk import AbstractController, Endpoint, Need, Service
 
 
@@ -29,3 +31,10 @@ def test_endpoint_params_say_how_to_talk_to_it():
     assert stick.params["baud"] == 115200
     assert Endpoint("zigbee").params == {}
     assert hash(stick) == hash(Endpoint("zigbee", "ezsp", "/dev/ttyUSB0"))
+
+
+async def test_without_a_runtime_services_cant_be_restarted():
+    from majordom_integration_sdk.testing import build_test_dependencies
+
+    with pytest.raises(NotImplementedError):
+        await build_test_dependencies().services.restart("matter-server")
