@@ -132,9 +132,9 @@ class Runtime:
             recreated = await self._apply()
             if self._thread:
                 self._thread.cancel()
-            if (router := self._border_router()) != self._router or recreated:
+            if (router := self._border_router()) != self._router:
                 self._router, self._dataset = router, None
-            if router and not self._dataset:
+            if router and (recreated or not self._dataset):  # the known network stays until it's read again
                 self._thread = asyncio.create_task(self._follow_thread(*router))
         if self.on_change:
             await self.on_change()
@@ -143,7 +143,9 @@ class Runtime:
         """Learn the Thread network once the border router has one; integrations then get it in their context."""
         runs_it = provider in self.services and provider not in SELF_FORMING  # a pinned router has its owner
         network = (runs_it and self.settings(provider)) or ThreadNetwork()
-        self._dataset = await thread_dataset(url, network, form=runs_it)
+        if (dataset := await thread_dataset(url, network, form=runs_it)) == self._dataset:
+            return
+        self._dataset = dataset
         if self.on_change:
             await self.on_change()
 

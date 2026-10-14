@@ -175,6 +175,28 @@ async def test_forms_thread_networks_only_on_border_routers_it_runs(tmp_path, mo
     assert forms == [False, False, True]  # yours stays yours; multiprotocol forms its own
 
 
+async def test_recreating_services_keeps_the_thread_network_known(tmp_path, stick, monkeypatch):
+    """A service recreated behind the same border router keeps the Thread network in the context:
+    dropping it meanwhile restarted every integration twice."""
+    reads, seen = [], []
+
+    async def dataset(url, network, form=True, patience=15):
+        reads.append(url)
+        return "0e08"
+
+    async def changed():
+        seen.append(rt.context().thread_dataset)
+
+    monkeypatch.setattr("majordom_transports.runtime.thread_dataset", dataset)
+    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan")], on_change=changed)
+    await rt.refresh()
+    await rt._thread
+    await rt.update_settings("hub", {"region": "Europe"})  # recreates matter-server
+    await rt._thread
+    assert len(reads) == 2  # read again: a recreated border router may hold another network
+    assert seen == [None, "0e08", "0e08"]
+
+
 async def test_only_known_radios_are_opened_until_asked(tmp_path, monkeypatch):
     from majordom_transports import runtime as module
 
