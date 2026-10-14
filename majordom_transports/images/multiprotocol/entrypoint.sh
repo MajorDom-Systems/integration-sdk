@@ -157,7 +157,7 @@ socat "tcp-listen:${EZSP_TCP_PORT},reuseaddr,fork" file:/dev/ttyZigbeeNCP,raw,ec
 log "zigbeed up; EZSP exposed on tcp:${EZSP_TCP_PORT} (bellows: socket://<host>:${EZSP_TCP_PORT})"
 
 # Thread TX power (HARNESS_TX_DBM). On a multi-PAN RCP the radio transmits at Zigbee's power: `ot-ctl
-# txpower` reads back but isn't applied (cage, 2026-10-13). Lower Zigbee's tx_power instead (zigpy's -10 dBm
+# txpower` reads back but isn't applied (observed 2026-10-13). Lower Zigbee's tx_power instead (zigpy's -10 dBm
 # minimum gives about -11 dBm). BLE TX and receiver sensitivity are not tunable.
 if [ -n "${HARNESS_TX_DBM:-}" ]; then
   log "setting Thread TX power to ${HARNESS_TX_DBM} dBm (clamps to radio min)"

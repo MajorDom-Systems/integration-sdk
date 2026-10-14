@@ -1,6 +1,6 @@
-# Lab/CI harness: the stack the runtime runs for a multi-PAN stick (services.py `multiprotocol`) and
-# integration-matter's matter-server (its config.py), as static services for a host without the hub, such as
-# the cage's lab-pi5, where the hardware tests connect to them. Keep both in step with those definitions.
+# Harness: the stack the runtime runs for a multi-PAN stick (services.py `multiprotocol`) and
+# integration-matter's matter-server (its config.py), as static services for a host without the hub.
+# Keep both in step with those definitions.
 #   RADIO_BY_ID=/dev/serial/by-id/<stick> docker compose up -d --build
 services:
   silabs-multiprotocol:

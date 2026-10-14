@@ -1,9 +1,9 @@
 # Multiprotocol radio harness (concurrent Thread + Zigbee on one stick)
 
 Runs **cpcd + zigbeed + OTBR + matter-server** so a single Silicon Labs **multi-PAN RCP** serves
-Zigbee and Thread (Matter) at the same time — no reflash to switch protocols. Proven end-to-end on
-lab-pi5: the Matter cage test commissions and controls an IKEA bulb over Thread while a Zigbee
-coordinator runs concurrently on the same radio.
+Zigbee and Thread (Matter) at the same time — no reflash to switch protocols. Proven end-to-end: a
+Matter device is commissioned and controlled over Thread while a Zigbee coordinator runs concurrently
+on the same radio.
 
 ```
  EFR32 multi-PAN RCP (USB)                     Zigbee integration ── socket://127.0.0.1:9999
@@ -17,13 +17,13 @@ coordinator runs concurrently on the same radio.
 ## Layout
 | File | Purpose |
 |---|---|
-| `docker-compose.yml` | the lab/CI harness: the same services, static, for a host without the hub |
+| `docker-compose.yml` | the same services, static, for a host without the hub |
 | `Dockerfile` | thin derived image over the SiLabs base — bakes in the Zigbee forming tool (bellows) |
 | `entrypoint.sh` | brings the daemons up in order (dbus → cpcd → zigbeed → **form Zigbee on the pty** → otbr), idempotent + supervised |
 | `cpcd.conf` | cpcd config (device, 460800 baud) |
 
 On a hub the runtime runs these services (`services.py`) and flashes the stick (`drivers.py`); the old
-`flash-rcp.sh` and systemd unit are gone. On a lab host:
+`flash-rcp.sh` and systemd unit are gone. On a host without the hub:
 `RADIO_BY_ID=/dev/serial/by-id/<stick> docker compose up -d --build`.
 
 - **One channel.** A multi-PAN radio listens on one channel: networks on two lose frames (a Thread device then
@@ -63,7 +63,7 @@ though version negotiation and steady-state load/commands work fine over it. So 
 forms the coordinator **in-container, on the pty, as the single reader, before exposing TCP** (step
 3a), when the NCP reports `NOT_JOINED`. It's idempotent — the coordinator persists in NCP flash, so
 restarts skip it — and the Hub then just *loads* it over `socket://…:9999`. `bellows` (0.46.2 +
-zigpy 0.84.0 + aiosqlite 0.22.1, the rig-proven combo) is baked into the image so first boot forms
+zigpy 0.84.0 + aiosqlite 0.22.1, the proven combo) is baked into the image so first boot forms
 offline with no runtime `pip`.
 
 ## Review of the current bare-metal setup, and improvements
@@ -83,7 +83,7 @@ assumes a single directly-attached coordinator. Observations / improvements:
   network ops hang while `info` still works. Pin the image tag and the GBL together.
 
 ## Sourcing policy — first-party Silicon Labs, minimal NabuCasa
-Keep NabuCasa out of the shipped/core path; use it only as a lab reference.
+Keep NabuCasa out of the shipped/core path; use it only as a reference.
 - **Daemons:** `siliconlabsinc/multiprotocol` is Silicon Labs' *own* image (cpcd + zigbeed + ot-cli)
   — first-party, fine to ship. The fully-direct alternative is to build the three daemons yourself:
   `github.com/SiliconLabs/cpc-daemon` (cpcd — builds native arm64), `zigbeed` from the Silicon Labs
@@ -91,7 +91,7 @@ Keep NabuCasa out of the shipped/core path; use it only as a lab reference.
 - **RCP firmware:** build the `rcp-uart-802154` sample from the **Silicon Labs GSDK** (slc-cli +
   GCC-ARM) in CI and publish the `.gbl` as a build artifact — the first-party source of truth.
   `flash-rcp.sh` expects that at `RCP_GBL`. The archived NabuCasa GBL is fetched **only** with
-  `ALLOW_NABUCASA=1` (lab convenience, not shipped).
+  `ALLOW_NABUCASA=1` (a convenience, not shipped).
 - **Flasher:** prefer **Simplicity Commander** (`commander`). `universal-silabs-flasher` (NabuCasa)
   is a fallback gated behind `ALLOW_NABUCASA=1`.
 
@@ -131,19 +131,6 @@ short first-boot.
 
 What legitimately can't be baked: the per-device stick firmware (separate hardware → manufacturing
 station) and per-device secrets/keys. Everything else ships in the image.
-
-## Continuous integration
-The lab's `iot` runner is a **Nomad-scheduled, dockerless, non-root, ephemeral** GitHub-App runner
-(home-lab `apps/github-runner`) with USB/serial passthrough only — it does **not** run Docker and is
-already well de-rooted (no `--privileged`, no root, no docker socket). So the harness is **not** run by
-the workflow; it runs as a **node service on the CI node** (this compose via systemd, or a Nomad job
-alongside the runner). `.github/workflows/test_hardware.yaml` only **verifies the endpoints are up**
-(`HARNESS_HOST`, default 127.0.0.1) and runs both hardware suites against them — Zigbee via
-`socket://…:9999`, Matter via `matter-server` (:5580) + OTBR REST (:8081). To deploy on the CI node:
-enable `majordom-multiprotocol.service`, or add a Nomad job (docker driver, `privileged`,
-`network_mode=host`, device passthrough). The runner must be able to reach the harness ports (share the
-host net namespace, or target the node IP via `HARNESS_HOST`). BlueZ cache flush before a Matter run is
-a node/matter-server responsibility (the dockerless runner can't restart host bluetoothd).
 
 ## Production-proof recommendation (hardware/runtime)
 For a shipped product, prefer **robustness over cleverness**:

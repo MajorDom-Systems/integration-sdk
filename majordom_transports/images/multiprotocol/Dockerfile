@@ -6,7 +6,7 @@
 # (entrypoint.sh does this when the NCP reports NOT_JOINED). Baking bellows in keeps first boot
 # offline (no runtime pip), matching the "complete image" build principle.
 #
-# Versions are pinned to the combo proven on the lab rig (py3.10 base caps bellows at 0.46.x):
+# Versions are pinned to the proven combo (py3.10 base caps bellows at 0.46.x):
 #   bellows 0.46.2 + zigpy 0.84.0 + aiosqlite 0.22.1
 # (a cosmetic aiosqlite ".join" AttributeError prints at DB-shutdown AFTER the network is committed;
 # the entrypoint verifies success via `bellows info`, not the exit code.)
