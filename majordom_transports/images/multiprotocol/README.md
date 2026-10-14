@@ -11,7 +11,7 @@ on the same radio.
    ┌────┴─────┐  CPC multiplexing
    │  cpcd    │  iid=1 ─ zigbeed ─ EZSP pty ─ socat ─ tcp:9999
    │ (cpcd_0) │  iid=2 ─ otbr-agent ─ Thread ─ REST :8081 ──── matter-server (ws :5580)
-   └──────────┘                                              (BLE through the hub's proxy, BLE_PROXY)
+   └──────────┘                                              (BLE from the hub's backend, BLE_PROXY)
 ```
 
 ## Layout

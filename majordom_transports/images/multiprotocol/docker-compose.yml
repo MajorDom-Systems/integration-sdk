@@ -38,7 +38,7 @@ services:
     userns_mode: host
     environment:
       STORAGE_PATH: /data
-      BLE_PROXY: "true" # Bluetooth comes from the hub (integration-matter's ble_proxy), as in production
+      BLE_PROXY: "true" # Bluetooth comes from the hub (integration-matter's MatterServerBLEBackend), as in production
     volumes:
       - ${MATTER_DATA_DIR:-/var/lib/majordom/matter-data}:/data
 volumes:
