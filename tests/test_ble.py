@@ -228,15 +228,17 @@ def scanners(monkeypatch):
                 "mode": scanning_mode,
                 "patterns": (bluez or {}).get("or_patterns"),
                 "on_detection": detection_callback,
+                "scanning": False,
             }
 
         async def start(self):
             if self.args["mode"] == "passive" and opened and opened[-1].get("refuse_passive"):
                 raise RuntimeError("passive scanning needs BlueZ's advertisement monitor")
+            self.args["scanning"] = True
             opened.append(self.args)
 
         async def stop(self):
-            pass
+            self.args["scanning"] = False
 
     monkeypatch.setattr(module, "BleakScanner", Scanner)
     return opened
@@ -290,4 +292,34 @@ async def test_an_adapter_without_passive_scanning_scans_actively(scanners, capl
     await asyncio.sleep(0.05)  # the burst ends: back to passive, refused
     assert scanners[-1]["mode"] == "active"
     assert "can't scan passively" in caplog.text
+    await ble.stop()
+
+
+async def test_a_rescan_waits_until_a_local_adapter_has_connected(scanners, monkeypatch):
+    from majordom_integration_sdk.discovery import LocalAdapter
+    from majordom_integration_sdk.discovery import ble_discovery as module
+
+    connecting, connected = asyncio.Event(), asyncio.Event()
+
+    class Client:
+        def __init__(self, device, **kwargs):
+            pass
+
+        async def connect(self):
+            connecting.set()
+            await connected.wait()
+
+    monkeypatch.setattr(module, "BleakClient", Client)
+    ble = BLEService(sources=[LocalAdapter("hci0")])
+    await ble.start()
+    connection = asyncio.create_task(ble.connect("AA"))
+    await connecting.wait()
+    burst = asyncio.create_task(ble.scan_actively(1))  # a pairing window opens meanwhile
+    await settle()
+    assert not any(s["scanning"] for s in scanners), "discovering while connecting: many adapters stall"
+
+    connected.set()
+    await connection
+    await burst
+    assert [s["mode"] for s in scanners if s["scanning"]] == ["active"]
     await ble.stop()
