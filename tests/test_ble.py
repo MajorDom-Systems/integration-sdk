@@ -1,11 +1,12 @@
 """BLEService: what listeners hear from several radios, and which radio connects."""
 
 import asyncio
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
 
-from majordom_integration_sdk.discovery import BLEDiscoveryInfo, BLEMatcher, BLEService
+from majordom_integration_sdk.discovery import BLEConnection, BLEDiscoveryInfo, BLEMatcher, BLEService
 from majordom_integration_sdk.testing import FakeBLESource
 
 MATTER = UUID("0000fff6-0000-1000-8000-00805f9b34fb")
@@ -35,7 +36,10 @@ async def settle():
 
 @pytest.fixture
 async def radios():
-    near, far = FakeBLESource("near", connection=object()), FakeBLESource("far", connection=object())
+    near, far = (
+        FakeBLESource("near", connection=Mock(spec=BLEConnection)),
+        FakeBLESource("far", connection=Mock(spec=BLEConnection)),
+    )
     ble = BLEService(sources=[near, far])
     await ble.start()
     yield ble, near, far
@@ -239,10 +243,10 @@ def test_matchers_become_bluez_filters():
 
     from majordom_integration_sdk.discovery.ble_discovery import _patterns
 
-    matter = _patterns(BLEMatcher(service_uuid=MATTER))
+    matter = _patterns(BLEMatcher(service_uuid=MATTER)) or []
     assert (0, T.SERVICE_DATA_UUID16, b"\xf6\xff") in [tuple(p) for p in matter]
     assert (4, T.COMPLETE_LIST_SERVICE_UUID16, b"\xf6\xff") in [tuple(p) for p in matter]  # anywhere in a list
-    homekit = _patterns(BLEMatcher(manufacturer_id=APPLE, manufacturer_data_start=b"\x06"))
+    homekit = _patterns(BLEMatcher(manufacturer_id=APPLE, manufacturer_data_start=b"\x06")) or []
     assert [tuple(p) for p in homekit] == [(0, T.MANUFACTURER_SPECIFIC_DATA, b"\x4c\x00\x06")]
     assert _patterns(BLEMatcher()) is None  # everything: no filter can say so
 

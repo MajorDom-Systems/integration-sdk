@@ -243,7 +243,7 @@ class BLEService:
         """Opens a GATT connection to ``address`` through the source hearing it best, falling back to
         the others. ``on_disconnect`` is called when the connection drops."""
         tracked = self._tracked.get(address)
-        candidates = (tracked and tracked.sources(self._removal_grace_sec)) or list(self._sources)
+        candidates = (tracked.sources(self._removal_grace_sec) if tracked else []) or list(self._sources)
         errors = []
         for name in candidates:
             try:
