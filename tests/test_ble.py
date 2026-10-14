@@ -224,7 +224,11 @@ def scanners(monkeypatch):
 
     class Scanner:
         def __init__(self, detection_callback=None, scanning_mode="active", bluez=None, **kwargs):
-            self.args = {"mode": scanning_mode, "patterns": (bluez or {}).get("or_patterns")}
+            self.args = {
+                "mode": scanning_mode,
+                "patterns": (bluez or {}).get("or_patterns"),
+                "on_detection": detection_callback,
+            }
 
         async def start(self):
             if self.args["mode"] == "passive" and opened and opened[-1].get("refuse_passive"):
@@ -238,17 +242,28 @@ def scanners(monkeypatch):
     return opened
 
 
-def test_matchers_become_bluez_filters():
+async def test_local_adapters_hear_every_advertiser_and_the_matchers_choose(scanners):
     from bleak.assigned_numbers import AdvertisementDataType as T
+    from bleak.backends.device import BLEDevice
+    from bleak.backends.scanner import AdvertisementData
 
-    from majordom_integration_sdk.discovery.ble_discovery import _patterns
+    from majordom_integration_sdk.discovery import LocalAdapter
 
-    matter = _patterns(BLEMatcher(service_uuid=MATTER)) or []
-    assert (0, T.SERVICE_DATA_UUID16, b"\xf6\xff") in [tuple(p) for p in matter]
-    assert (4, T.COMPLETE_LIST_SERVICE_UUID16, b"\xf6\xff") in [tuple(p) for p in matter]  # anywhere in a list
-    homekit = _patterns(BLEMatcher(manufacturer_id=APPLE, manufacturer_data_start=b"\x06")) or []
-    assert [tuple(p) for p in homekit] == [(0, T.MANUFACTURER_SPECIFIC_DATA, b"\x4c\x00\x06")]
-    assert _patterns(BLEMatcher()) is None  # everything: no filter can say so
+    ble = BLEService(sources=[LocalAdapter("hci0")])
+    matter, everything = Listener(), Listener()
+    ble.register(matter, {MATTER})
+    ble.register(everything, [BLEMatcher()])
+    await ble.start()
+    assert scanners[-1]["mode"] == "passive"
+    assert scanners[-1]["patterns"] == [(0, T.FLAGS, b"\x02"), (0, T.FLAGS, b"\x06"), (0, T.FLAGS, b"\x1a")]
+
+    hear = scanners[-1]["on_detection"]
+    hear(BLEDevice("AA", None, {}), AdvertisementData(None, {APPLE: b"\x10\x05"}, {}, [], None, -60, ()))
+    hear(BLEDevice("BB", None, {}), AdvertisementData(None, {}, {str(MATTER): b"\x00"}, [], None, -60, ()))
+    await settle()
+    assert [i.device.address for i in matter.found] == ["BB"]
+    assert len(everything.found) == 2
+    await ble.stop()
 
 
 async def test_local_adapters_scan_passively_and_actively_in_bursts(scanners):
@@ -256,10 +271,7 @@ async def test_local_adapters_scan_passively_and_actively_in_bursts(scanners):
 
     ble = BLEService(sources=[LocalAdapter("hci0")])
     await ble.start()
-    assert scanners[-1]["mode"] == "active"  # nobody listens yet: nothing to filter by
-    ble.register(Listener(), {MATTER})
-    await settle()
-    assert scanners[-1]["mode"] == "passive" and scanners[-1]["patterns"]
+    assert scanners[-1]["mode"] == "passive"
 
     await ble.scan_actively(0.05)  # a pairing window: names come in scan responses
     assert scanners[-1]["mode"] == "active"
@@ -268,24 +280,14 @@ async def test_local_adapters_scan_passively_and_actively_in_bursts(scanners):
     await ble.stop()
 
 
-async def test_a_matcher_no_filter_expresses_keeps_the_scan_active(scanners):
+async def test_an_adapter_without_passive_scanning_scans_actively(scanners, caplog):
     from majordom_integration_sdk.discovery import LocalAdapter
 
     ble = BLEService(sources=[LocalAdapter("hci0")])
     await ble.start()
-    ble.register(Listener(), [BLEMatcher(service_uuid=MATTER), BLEMatcher()])
-    await settle()
-    assert scanners[-1]["mode"] == "active"
-    await ble.stop()
-
-
-async def test_an_adapter_without_passive_scanning_scans_actively(scanners):
-    from majordom_integration_sdk.discovery import LocalAdapter
-
-    ble = BLEService(sources=[LocalAdapter("hci0")])
-    await ble.start()
+    await ble.scan_actively(0.01)
     scanners[-1]["refuse_passive"] = True
-    ble.register(Listener(), {MATTER})
-    await settle()
+    await asyncio.sleep(0.05)  # the burst ends: back to passive, refused
     assert scanners[-1]["mode"] == "active"
+    assert "can't scan passively" in caplog.text
     await ble.stop()

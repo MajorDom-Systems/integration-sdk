@@ -114,33 +114,7 @@ def _matches(matchers: list[BLEMatcher], adv: AdvertisementData) -> bool:
     return any(m.matches(adv) for m in matchers)
 
 
-def _patterns(matcher: BLEMatcher) -> list[OrPattern] | None:
-    """BlueZ filters that let through at least what ``matcher`` matches (it still decides); None when none can."""
-    if matcher.manufacturer_id is not None:
-        company = matcher.manufacturer_id.to_bytes(2, "little")
-        return [
-            OrPattern(0, AdvertisementDataType.MANUFACTURER_SPECIFIC_DATA, company + matcher.manufacturer_data_start)
-        ]
-    if uuid := matcher.service_data_uuid or matcher.service_uuid:
-        text = str(uuid)
-        short = text.startswith("0000") and text.endswith("-0000-1000-8000-00805f9b34fb")
-        value = int(text[4:8], 16).to_bytes(2, "little") if short else uuid.bytes[::-1]  # advertised little endian
-        T = AdvertisementDataType
-        data = [OrPattern(0, T.SERVICE_DATA_UUID16 if short else T.SERVICE_DATA_UUID128, value)]
-        if matcher.service_data_uuid:
-            return data
-        lists = (
-            (T.INCOMPLETE_LIST_SERVICE_UUID16, T.COMPLETE_LIST_SERVICE_UUID16)
-            if short
-            else (T.INCOMPLETE_LIST_SERVICE_UUID128, T.COMPLETE_LIST_SERVICE_UUID128)
-        )
-        positions = range(0, 26, 2) if short else (0,)  # anywhere in the list an advertisement can hold
-        return data + [OrPattern(position, kind, value) for kind in lists for position in positions]
-    if matcher.local_name_prefix:
-        name = matcher.local_name_prefix.encode()
-        T = AdvertisementDataType
-        return [OrPattern(0, T.COMPLETE_LOCAL_NAME, name), OrPattern(0, T.SHORTENED_LOCAL_NAME, name)]
-    return None
+_EVERY_ADVERTISER = [OrPattern(0, AdvertisementDataType.FLAGS, flags) for flags in (b"\x02", b"\x06", b"\x1a")]
 
 
 @dataclass
@@ -167,7 +141,7 @@ class BLEService:
         self._pauses = 0
         self._removal_grace_sec: float = 11.0  # seconds unheard by every source before did_remove is fired
         self._eviction_interval_sec: float = 10.0
-        self._silence_sec: float = 60.0  # a source unheard this long is restarted (ten times that when filtered)
+        self._silence_sec: float = 60.0  # a source unheard this long is restarted
         self._active_until: float = 0.0  # monotonic end of an active scan burst
         self._heard_at: dict[str, float] = {}  # source -> monotonic time it last heard anything
         self._tracked: dict[str, _BLETrackedDevice] = {}  # address -> tracked device
@@ -193,9 +167,7 @@ class BLEService:
         def cancel():
             if entry in self._listeners:
                 self._listeners.remove(entry)
-                self._spawn(self._rescan())
 
-        self._spawn(self._rescan())  # the passive filters follow what listeners want
         return cancel
 
     async def add_source(self, source: BLESource):
@@ -273,27 +245,17 @@ class BLEService:
     async def _start_sources(self):
         await asyncio.gather(*(self._start_source(name) for name in self._sources))
 
-    def _scan_patterns(self) -> list[OrPattern] | None:
-        """Filters for a passive scan; None to scan actively: in a burst, with nobody listening, or for a
-        matcher no filter expresses."""
-        if monotonic() < self._active_until or not self._listeners:
-            return None
-        patterns = []
-        for _, matchers in self._listeners:
-            for matcher in matchers:
-                if (found := _patterns(matcher)) is None:
-                    return None
-                patterns += found
-        return patterns
+    def _scans_passively(self) -> bool:
+        return monotonic() >= self._active_until
 
     async def _rescan(self, after: float = 0):
-        """Restarts the local adapters whose scan no longer fits (listeners changed, a burst began or ended)."""
+        """Restarts the local adapters whose scan no longer fits (a burst began or ended)."""
         await asyncio.sleep(after)
         if not self._is_running or self._pauses:
             return
-        patterns = self._scan_patterns()
+        passive = self._scans_passively()
         for name, source in list(self._sources.items()):
-            if isinstance(source, LocalAdapter) and source.patterns != patterns:
+            if isinstance(source, LocalAdapter) and source.passive != passive:
                 await source.stop()
                 await self._start_source(name)
 
@@ -301,7 +263,7 @@ class BLEService:
         self._heard_at[name] = monotonic()  # one that fails to start is retried once it counts as silent
         source = self._sources[name]
         if isinstance(source, LocalAdapter):
-            source.patterns = self._scan_patterns()
+            source.passive = self._scans_passively()
         try:
             await source.start(self._advertisement_handler(name))
         except Exception as e:
@@ -371,8 +333,7 @@ class BLEService:
         if self._pauses:
             return
         for name, source in list(self._sources.items()):
-            filtered = isinstance(source, LocalAdapter) and source.patterns  # quiet is normal through a filter
-            if monotonic() - self._heard_at.get(name, 0) > self._silence_sec * (10 if filtered else 1):
+            if monotonic() - self._heard_at.get(name, 0) > self._silence_sec:
                 logger.info(f"BLE source {name} heard nothing for {self._silence_sec:.0f} s, restarting it")
                 with contextlib.suppress(Exception):
                     await source.stop()
@@ -410,7 +371,7 @@ class LocalAdapter:
         self._options = {"bluez": {"adapter": adapter}} if adapter else {}
         self._scanner: BleakScanner | None = None
         self._devices: dict[str, BLEDevice] = {}  # address -> last seen; connecting by it skips a scan
-        self.patterns: list[OrPattern] | None = None  # set: a passive scan through these filters
+        self.passive = False  # set: a passive scan of every advertiser, the listeners' matchers choose
         self._passive_refused = False
 
     async def start(self, on_advertisement: OnAdvertisement):
@@ -421,17 +382,17 @@ class LocalAdapter:
                 del self._devices[next(iter(self._devices))]
             on_advertisement(device, adv_data)
 
-        # BlueZ refuses a filtered passive scan without --experimental (Raspberry Pi OS's default): then it scans
-        # actively. With it, a Pi 5 (BlueZ 5.82) started one that heard nothing (2026-10-13): don't enable it there.
-        if self.patterns and not self._passive_refused:
-            bluez = {**self._options.get("bluez", {}), "or_patterns": self.patterns}
+        # BlueZ refuses a passive scan without --experimental (Raspberry Pi OS's default): then it scans actively. With
+        # it, a Pi 5 (BlueZ 5.82, no offload) passes adverts only through patterns on the flags (2026-10-14), as in HA.
+        if self.passive and not self._passive_refused:
+            bluez = {**self._options.get("bluez", {}), "or_patterns": _EVERY_ADVERTISER}
             self._scanner = BleakScanner(detection_callback=on_detection, scanning_mode="passive", bluez=bluez)
             try:
                 return await self._scanner.start()
             except Exception as e:  # BlueZ's advertisement monitor is missing (an old or non-experimental bluetoothd)
                 logger.warning(f"BLE {self.name} can't scan passively, scanning actively: {e}")
                 self._passive_refused = True
-        self.patterns = None
+        self.passive = False
         self._scanner = BleakScanner(detection_callback=on_detection, **self._options)
         await self._scanner.start()
 
