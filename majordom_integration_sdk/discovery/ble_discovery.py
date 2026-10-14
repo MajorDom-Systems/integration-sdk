@@ -2,7 +2,8 @@
 
 Sources feed advertisements in: the hub's own adapters and proxies (e.g. ESPHome ``bluetooth_proxy``).
 Listeners register `BLEMatcher`s and hear about matching devices whichever source saw them.
-`BLEService.connect` opens a GATT connection through the source that hears the device best.
+`BLEService.connect` opens a GATT connection through the source that hears the device best;
+`BLEService.exclusive` leases that one source to a device for as long as pairing it takes.
 """
 
 import asyncio
@@ -100,6 +101,23 @@ class BLESource(Protocol):
     async def connect(self, address: str, on_disconnect: Callable[[], None]) -> BLEConnection: ...
 
 
+class BLEBusyError(ConnectionError):
+    """Every source that hears the device is leased to someone else."""
+
+
+@dataclass(frozen=True)
+class BLELease:
+    """One source held for one device: it doesn't scan, and only the holder connects through it."""
+
+    address: str
+    source: str
+    owner: str
+    _source: BLESource = field(repr=False)
+
+    async def connect(self, on_disconnect: Callable[[], None] = lambda: None) -> BLEConnection:
+        return await self._source.connect(self.address, on_disconnect)
+
+
 def _adv_signature(adv: AdvertisementData) -> tuple:
     """Stable advertisement fingerprint — avoids false updates from object identity changes."""
     return (
@@ -138,7 +156,7 @@ class BLEService:
         self._sources: dict[str, BLESource] = {s.name: s for s in sources or ()}
         self._use_local_adapters = sources is None
         self._is_running: bool = False
-        self._pauses = 0
+        self._leases: dict[str, asyncio.Lock] = {}  # source -> held while it is leased
         self._removal_grace_sec: float = 11.0  # seconds unheard by every source before did_remove is fired
         self._eviction_interval_sec: float = 10.0
         self._silence_sec: float = 60.0  # a source unheard this long is restarted
@@ -174,7 +192,7 @@ class BLEService:
         """Listen with one more radio, e.g. a proxy that came online."""
         await self.remove_source(source.name)
         self._sources[source.name] = source
-        if self._is_running and not self._pauses:
+        if self._is_running and not self._is_leased(source.name):
             await self._start_source(source.name)
 
     async def remove_source(self, name: str):
@@ -197,27 +215,29 @@ class BLEService:
         logger.debug(f"BLE stopped, {len(self._listeners)} listener(s) registered")
 
     @contextlib.asynccontextmanager
-    async def paused(self, reason: str = "") -> AsyncIterator[None]:
-        """Stops listening while something else needs the radios to itself (e.g. a commissioning
-        process with its own BlueZ client). Nested pauses resume when the last one ends."""
-        logger.debug(f"BLE paused: {reason or 'no reason given'}")
-        self._pauses += 1
-        if self._pauses == 1:
-            await self._stop_sources()
+    async def exclusive(
+        self, address: str, *, owner: str, timeout: float = 30, wait: float = 1
+    ) -> AsyncIterator[BLELease]:
+        """Leases the source hearing ``address`` best to ``owner`` (e.g. while pairing it): that source stops
+        scanning and others' connects avoid it; the rest keep going. A leased source is waited for ``wait``
+        seconds before the next best is tried, round after round, until ``timeout`` raises `BLEBusyError`."""
+        name = await self._acquire(address, owner, timeout, wait)
         try:
-            yield
+            with contextlib.suppress(Exception):
+                await self._sources[name].stop()
+            yield BLELease(address, name, owner, self._sources[name])
         finally:
-            self._pauses -= 1
-            if not self._pauses and self._is_running:
-                await self._start_sources()
+            await asyncio.shield(self._release(name, owner))
 
     async def connect(self, address: str, on_disconnect: Callable[[], None] = lambda: None) -> BLEConnection:
         """Opens a GATT connection to ``address`` through the source hearing it best, falling back to
-        the others. ``on_disconnect`` is called when the connection drops."""
-        tracked = self._tracked.get(address)
-        candidates = (tracked.sources(self._removal_grace_sec) if tracked else []) or list(self._sources)
+        the others; leased sources are skipped. ``on_disconnect`` is called when the connection drops."""
+        candidates = self._candidates(address)
+        free = [name for name in candidates if not self._is_leased(name)]
+        if candidates and not free:
+            raise BLEBusyError(f"all Bluetooth sources that hear {address} are busy")
         errors = []
-        for name in candidates:
+        for name in free:
             try:
                 return await self._sources[name].connect(address, on_disconnect)
             except Exception as e:
@@ -242,8 +262,43 @@ class BLEService:
 
     # Internals
 
+    def _candidates(self, address: str) -> list[str]:
+        tracked = self._tracked.get(address)
+        return (tracked.sources(self._removal_grace_sec) if tracked else []) or list(self._sources)
+
+    def _is_leased(self, name: str) -> bool:
+        return name in self._leases and self._leases[name].locked()
+
+    async def _acquire(self, address: str, owner: str, timeout: float, wait: float) -> str:
+        """Locks the first candidate source that frees up within ``wait``, cycling until ``timeout``."""
+        deadline = monotonic() + timeout
+        while True:
+            if not (candidates := self._candidates(address)):
+                raise ConnectionError(f"Can't reach {address}: no Bluetooth sources")
+            for name in candidates:
+                lock = self._leases.setdefault(name, asyncio.Lock())
+                if (remaining := deadline - monotonic()) <= 0:
+                    raise BLEBusyError(f"all Bluetooth sources that hear {address} are busy")
+                try:
+                    async with asyncio.timeout(min(wait, remaining)):
+                        await lock.acquire()
+                except TimeoutError:
+                    continue
+                if name in self._sources:  # not removed meanwhile
+                    logger.info(f"BLE source {name} leased to {owner} for {address}")
+                    return name
+                lock.release()
+
+    async def _release(self, name: str, owner: str):
+        try:
+            if self._is_running and name in self._sources:
+                await self._start_source(name)
+        finally:
+            self._leases[name].release()
+            logger.info(f"BLE source {name} released by {owner}")
+
     async def _start_sources(self):
-        await asyncio.gather(*(self._start_source(name) for name in self._sources))
+        await asyncio.gather(*(self._start_source(name) for name in self._sources if not self._is_leased(name)))
 
     def _scans_passively(self) -> bool:
         return monotonic() >= self._active_until
@@ -251,11 +306,11 @@ class BLEService:
     async def _rescan(self, after: float = 0):
         """Restarts the local adapters whose scan no longer fits (a burst began or ended)."""
         await asyncio.sleep(after)
-        if not self._is_running or self._pauses:
+        if not self._is_running:
             return
         passive = self._scans_passively()
         for name, source in list(self._sources.items()):
-            if isinstance(source, LocalAdapter) and source.passive != passive:
+            if isinstance(source, LocalAdapter) and source.passive != passive and not self._is_leased(name):
                 await source.stop()
                 await self._start_source(name)
 
@@ -330,10 +385,8 @@ class BLEService:
     async def _revive_silent(self):
         """Restarts sources that heard nothing for a while: their radio went away under them without a word
         (bluetoothd restarted, the adapter reset) and they won't come back by themselves."""
-        if self._pauses:
-            return
         for name, source in list(self._sources.items()):
-            if monotonic() - self._heard_at.get(name, 0) > self._silence_sec:
+            if monotonic() - self._heard_at.get(name, 0) > self._silence_sec and not self._is_leased(name):
                 logger.info(f"BLE source {name} heard nothing for {self._silence_sec:.0f} s, restarting it")
                 with contextlib.suppress(Exception):
                     await source.stop()

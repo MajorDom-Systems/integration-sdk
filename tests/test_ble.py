@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 
 from majordom_integration_sdk.discovery import BLEConnection, BLEDiscoveryInfo, BLEMatcher, BLEService
+from majordom_integration_sdk.discovery.ble_discovery import BLEBusyError
 from majordom_integration_sdk.testing import FakeBLESource
 
 MATTER = UUID("0000fff6-0000-1000-8000-00805f9b34fb")
@@ -123,16 +124,128 @@ async def test_connects_through_the_stronger_radio_and_falls_back(radios):
         await ble.connect("AA")
 
 
-async def test_pauses_nest_and_a_source_added_meanwhile_waits(radios):
-    ble, near, _ = radios
-    async with ble.paused():
-        async with ble.paused():
-            assert near.on_advertisement is None
+async def test_a_lease_takes_the_radio_hearing_the_device_best(radios):
+    ble, near, far = radios
+    far.advertise("AA", rssi=-90)
+    near.advertise("AA", rssi=-50)
+    await settle()
+
+    async with ble.exclusive("AA", owner="matter") as lease:
+        assert lease.source == "near"
+        assert await lease.connect() is near.connection
+        assert (near.connected, far.connected) == (["AA"], [])
+
+
+async def test_a_lease_stops_only_its_radio_scanning_until_released(radios):
+    ble, near, far = radios
+    near.advertise("AA")
+    await settle()
+
+    async with ble.exclusive("AA", owner="matter"):
         assert near.on_advertisement is None
-        proxy = FakeBLESource("proxy")
-        await ble.add_source(proxy)
-        assert proxy.on_advertisement is None
-    assert near.on_advertisement and proxy.on_advertisement
+        assert far.on_advertisement is not None
+        await ble.scan_actively(0)
+        await ble._revive_silent()
+        await ble.add_source(proxy := FakeBLESource("proxy"))
+        assert near.on_advertisement is None
+        assert proxy.on_advertisement is not None
+    assert near.on_advertisement is not None
+
+
+async def test_a_second_lease_waits_then_takes_the_next_radio(radios):
+    ble, near, far = radios
+    far.advertise("AA", rssi=-90)
+    near.advertise("AA", rssi=-50)
+    await settle()
+
+    async with ble.exclusive("AA", owner="matter"):
+        started = asyncio.get_running_loop().time()
+        async with ble.exclusive("AA", owner="improv", wait=0.05) as lease:
+            assert lease.source == "far"
+            assert asyncio.get_running_loop().time() - started >= 0.05
+
+
+async def test_a_connect_skips_leased_radios_and_fails_when_all_are(radios):
+    ble, near, far = radios
+    far.advertise("AA", rssi=-90)
+    near.advertise("AA", rssi=-50)
+    await settle()
+
+    async with ble.exclusive("AA", owner="matter"):
+        assert await ble.connect("AA") is far.connection
+        async with ble.exclusive("AA", owner="improv", wait=0):
+            with pytest.raises(BLEBusyError):
+                await ble.connect("AA")
+
+
+async def test_a_lease_cycles_through_busy_radios_until_it_gives_up(radios):
+    ble, near, far = radios
+    far.advertise("AA", rssi=-90)
+    near.advertise("AA", rssi=-50)
+    await settle()
+
+    async with ble.exclusive("AA", owner="matter"), ble.exclusive("AA", owner="matter", wait=0):
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(BLEBusyError, match="hear AA are busy"):
+            async with ble.exclusive("AA", owner="improv", timeout=0.1, wait=0.02):
+                pass
+        assert asyncio.get_running_loop().time() - started >= 0.1
+
+
+async def test_a_lease_freed_meanwhile_is_taken_on_the_next_round(radios):
+    ble, near, far = radios
+    near.advertise("AA", rssi=-50)
+    await settle()
+
+    held = asyncio.Event()
+
+    async def hold():
+        async with ble.exclusive("AA", owner="matter"):
+            held.set()
+            await asyncio.sleep(0.03)
+
+    task = asyncio.create_task(hold())
+    await held.wait()
+    async with ble.exclusive("AA", owner="improv", wait=0.01) as lease:  # only near hears it
+        assert lease.source == "near"
+    await task
+
+
+async def test_a_cancelled_lease_releases_its_radio(radios):
+    ble, near, _ = radios
+    near.advertise("AA")
+    await settle()
+    held = asyncio.Event()
+
+    async def hold():
+        async with ble.exclusive("AA", owner="matter"):
+            held.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(hold())
+    await held.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert near.on_advertisement is not None
+    async with ble.exclusive("AA", owner="improv", wait=0) as lease:
+        assert lease.source == "near"
+
+
+async def test_a_lease_cancelled_while_waiting_holds_nothing(radios):
+    ble, near, far = radios
+    near.advertise("AA")
+    await settle()
+
+    async with ble.exclusive("AA", owner="matter"):
+        waiting = asyncio.create_task(ble.exclusive("AA", owner="improv", wait=1).__aenter__())
+        await settle()
+        waiting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+    async with ble.exclusive("AA", owner="improv", wait=0) as lease:
+        assert lease.source == "near"
+    assert near.on_advertisement and far.on_advertisement
 
 
 async def test_a_listener_registered_later_hears_devices_already_around(radios):
