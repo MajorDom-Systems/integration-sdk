@@ -19,7 +19,7 @@ from majordom_integration_sdk import Context, Endpoint, Need, Service, WifiCrede
 from pydantic import BaseModel, Field
 
 from majordom_transports.drivers import DRIVERS, RADIO_USB_IDS
-from majordom_transports.services import SELF_FORMING, SERVICES, ThreadNetwork, thread_dataset
+from majordom_transports.services import SERVICES
 
 log = logging.getLogger(__name__)
 
@@ -102,9 +102,8 @@ class Runtime:
         self._nodes: dict[str, str] = {}  # radio id -> device node its path resolves to (a ttyUSB*)
         self._busy: set[str] = set()  # radios being flashed
         self._compose = ""
-        self._router: tuple[str, str] | None = None  # border router in use: URL and provider
-        self._dataset: str | None = None  # its Thread network
-        self._thread: asyncio.Task | None = None
+        self._learned: dict[tuple[str, str], Mapping[str, Any]] = {}  # bound (provider, url) -> context facts
+        self._tasks: list[asyncio.Task] = []  # services setting up and learning
         self._lock = asyncio.Lock()
         self._watcher: asyncio.Task | None = None
 
@@ -115,7 +114,7 @@ class Runtime:
         self._watcher = asyncio.create_task(self._watch(), name="transports.watch")
 
     async def stop(self):
-        for task in (self._watcher, self._thread):
+        for task in (self._watcher, *self._tasks):
             if task:
                 task.cancel()
 
@@ -130,24 +129,45 @@ class Runtime:
             self._save()
             self._resolve()
             recreated = await self._apply()
-            if self._thread:
-                self._thread.cancel()
-            if (router := self._border_router()) != self._router:
-                self._router, self._dataset = router, None
-            if router and (recreated or not self._dataset):  # the known network stays until it's read again
-                self._thread = asyncio.create_task(self._follow_thread(*router))
+            self._follow(recreated)
         if self.on_change:
             await self.on_change()
 
-    async def _follow_thread(self, url: str, provider: str):
-        """Learn the Thread network once the border router has one; integrations then get it in their context."""
-        runs_it = provider in self.services and provider not in SELF_FORMING  # a pinned router has its owner
-        network = (runs_it and self.settings(provider)) or ThreadNetwork()
-        if (dataset := await thread_dataset(url, network, form=runs_it)) == self._dataset:
+    def _follow(self, recreated: bool):
+        """Have services set up what runs and learn facts from what is bound; known facts stay until read
+        again, and go with their provider."""
+        for task in self._tasks:
+            task.cancel()
+        sources = self._sources()
+        self._learned = {key: facts for key, facts in self._learned.items() if key in sources}
+        self._tasks = []
+        for key, (service, endpoint) in sources.items():
+            if recreated or key not in self._learned:
+                self._tasks.append(asyncio.create_task(self._learn(key, service, endpoint)))
+                if key[0] == service.name:  # never someone else's (pinned)
+                    settings = self.settings(service.name)
+                    self._tasks.append(asyncio.create_task(self._provision(service, endpoint, settings)))
+
+    async def _learn(self, key: tuple[str, str], service: Service, endpoint: Endpoint):
+        try:
+            facts = dict(await service.learn(endpoint))
+        except Exception:
+            log.exception(f"{service.name} failed to learn from {endpoint.url}")
             return
-        self._dataset = dataset
-        if self.on_change:
+        before = self._facts()
+        self._learned[key] = facts
+        if self._facts() != before and self.on_change:
             await self.on_change()
+
+    @staticmethod
+    async def _provision(service: Service, endpoint: Endpoint, settings: BaseModel | None):
+        try:
+            await service.provision(endpoint, settings)
+        except Exception:
+            log.exception(f"{service.name} failed to set up {endpoint.url}")
+
+    def _facts(self) -> dict[str, Any]:
+        return {name: value for facts in self._learned.values() for name, value in facts.items()}
 
     async def _watch(self):
         seen = self._nodes
@@ -175,7 +195,7 @@ class Runtime:
     def context(self) -> Context:
         hub = self.settings("hub")
         wifi = next((w for w in hub.wifi if w.ssid == hub.wifi_ssid), None) or self.default_wifi()
-        return Context(region=hub.region, wifi=wifi, thread_dataset=self._dataset)
+        return Context(region=hub.region, wifi=wifi, **self._facts())
 
     def radios(self) -> list[Radio]:
         result = []
@@ -345,12 +365,18 @@ class Runtime:
         direct = set(self._providers.get(owner, {}).values())
         return direct.union(*(self._roots(p) for p in direct if p in self.services))
 
-    def _border_router(self) -> tuple[str, str] | None:
-        """URL and provider of the Thread border router in use, if any."""
+    def _sources(self) -> dict[tuple[str, str], tuple[Service, Endpoint]]:
+        """Bound endpoints by (provider, url) with the service that sets them up or reads them: their own,
+        or for a pinned one any service providing that kind."""
+        readers = {(e.family, e.dialect): s for s in self.services.values() for e in s.provides}
+        sources = {}
         for owner, providers in self._providers.items():
-            if (link := self._links.get(owner, {}).get("thread")) and link.dialect == "otbr-rest":
-                return link.url, providers["thread"]
-        return None
+            for family, provider in providers.items():
+                endpoint = self._links.get(owner, {}).get(family)
+                kind = readers.get((endpoint.family, endpoint.dialect)) if endpoint and provider == "pinned" else None
+                if endpoint and (service := self.services.get(provider) or kind):
+                    sources[provider, endpoint.url] = service, endpoint
+        return sources
 
     def _reach(self, endpoints: list[Endpoint]) -> list[str]:
         """Families a firmware would serve, through services, that some integration asks for."""
@@ -470,4 +496,4 @@ def _render(value: Any, values: Mapping[str, Any]) -> Any:
     return value
 
 
-__all__ = ["Runtime", "Radio", "HubSettings", "ThreadNetwork", "Consumer"]
+__all__ = ["Runtime", "Radio", "HubSettings", "Consumer"]

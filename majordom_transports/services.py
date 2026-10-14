@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from majordom_integration_sdk import Endpoint, Need, Service
 from pydantic import BaseModel, Field
@@ -23,9 +26,26 @@ class ThreadNetwork(BaseModel):
 
 
 _OTBR_REST = Endpoint("thread", "otbr-rest", "http://127.0.0.1:8081", shared=True)
+FORM_PATIENCE = 15  # seconds a border router answers without a network before one is formed on it
+
+
+class _BorderRouter(Service):
+    """Its Thread network reaches integrations as ``context.thread_dataset``; its container forms it."""
+
+    async def learn(self, endpoint: Endpoint) -> Mapping[str, Any]:
+        return {"thread_dataset": await active_dataset(endpoint.url)} if endpoint.dialect == "otbr-rest" else {}
+
+
+class _FormingBorderRouter(_BorderRouter):
+    """A border router that comes up without a network: the runtime joins the configured one or forms one."""
+
+    async def provision(self, endpoint: Endpoint, settings: BaseModel | None) -> None:
+        network = settings if isinstance(settings, ThreadNetwork) else ThreadNetwork()
+        await form_network(endpoint.url, network, FORM_PATIENCE)
+
 
 #: One multi-PAN RCP serving Zigbee (zigbeed, EZSP over TCP) and Thread (OTBR) through cpcd.
-multiprotocol = Service(
+multiprotocol = _BorderRouter(
     "multiprotocol",
     needs=[Need("cpc", ["uart"])],
     provides=[Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999"), _OTBR_REST],
@@ -62,7 +82,7 @@ multiprotocol = Service(
 )
 
 #: OpenThread Border Router on a plain Thread RCP.
-otbr = Service(
+otbr = _FormingBorderRouter(
     "otbr",
     needs=[Need("thread", ["spinel"])],
     provides=[_OTBR_REST],
@@ -94,39 +114,45 @@ otbr = Service(
 
 SERVICES = [multiprotocol, otbr]
 
-#: Services whose container forms its own Thread network (the runtime must not form a second one).
-SELF_FORMING = {multiprotocol.name}
+
+def _call(url: str, method: str, path: str, body: str | None = None, kind: str = "text/plain") -> str:
+    request = urllib.request.Request(
+        url + path, method=method, data=body.encode() if body is not None else None,
+        headers={"Accept": "text/plain", "Content-Type": kind},
+    )  # fmt: skip
+    with urllib.request.urlopen(request, timeout=5) as response:
+        return response.read().decode().strip()
 
 
-async def thread_dataset(url: str, network: ThreadNetwork, form: bool = True, patience: float = 15) -> str:
-    """Wait for the border router at ``url`` and return its active dataset as hex TLVs. When ``form``
-    and it has answered for ``patience`` seconds without one, join ``network.dataset`` or form a new
-    network — once."""
+async def active_dataset(url: str) -> str:
+    """Wait for the border router at ``url`` to have a network; its active dataset as hex TLVs."""
+    while True:
+        with contextlib.suppress(OSError):  # not up yet
+            if active := await asyncio.to_thread(_call, url, "GET", "/node/dataset/active"):
+                return active
+        await asyncio.sleep(1)
 
-    def call(method: str, path: str, body: str | None = None, kind: str = "text/plain") -> str:
-        request = urllib.request.Request(
-            url + path, method=method, data=body.encode() if body is not None else None,
-            headers={"Accept": "text/plain", "Content-Type": kind},
-        )  # fmt: skip
-        with urllib.request.urlopen(request, timeout=5) as response:
-            return response.read().decode().strip()
 
-    def form_network():
+async def form_network(url: str, network: ThreadNetwork, patience: float = FORM_PATIENCE) -> None:
+    """Once the border router at ``url`` has answered for ``patience`` seconds without a network, join
+    ``network.dataset`` or form a new network — once."""
+
+    def form():
         if network.dataset:
-            call("PUT", "/node/dataset/active", network.dataset)
+            _call(url, "PUT", "/node/dataset/active", network.dataset)
         else:
-            call("PUT", "/node/dataset/active", json.dumps({"NetworkName": "MajorDom"}), "application/json")
-        call("PUT", "/node/state", json.dumps("enable"), "application/json")
+            _call(url, "PUT", "/node/dataset/active", json.dumps({"NetworkName": "MajorDom"}), "application/json")
+        _call(url, "PUT", "/node/state", json.dumps("enable"), "application/json")
 
     answered = 0.0
     while True:
         try:
-            if active := await asyncio.to_thread(call, "GET", "/node/dataset/active"):
-                return active
+            if await asyncio.to_thread(_call, url, "GET", "/node/dataset/active"):
+                return
             answered += 1
-            if form and answered > patience:
-                form = False
-                await asyncio.to_thread(form_network)
+            if answered > patience:
+                await asyncio.to_thread(form)
+                return
         except OSError:
             pass  # not up yet
         await asyncio.sleep(1)

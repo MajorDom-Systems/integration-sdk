@@ -5,8 +5,10 @@ from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingTCPServer
 
 import pytest
+from majordom_integration_sdk import Endpoint
 
-from majordom_transports.services import ThreadNetwork, thread_dataset
+from majordom_transports import services
+from majordom_transports.services import ThreadNetwork, active_dataset, form_network, multiprotocol, otbr
 
 
 @pytest.fixture
@@ -41,13 +43,15 @@ def border_router():
 async def test_returns_the_network_someone_else_formed(border_router):
     url, state = border_router
     state["dataset"] = "0e08existing"
-    assert await thread_dataset(url, ThreadNetwork()) == "0e08existing"
+    assert await active_dataset(url) == "0e08existing"
+    await form_network(url, ThreadNetwork())
     assert state["puts"] == []
 
 
 async def test_forms_a_network_when_none_appears(border_router):
     url, state = border_router
-    assert await thread_dataset(url, ThreadNetwork(), patience=0) == "0e08newnetwork"
+    await form_network(url, ThreadNetwork(), patience=0)
+    assert await active_dataset(url) == "0e08newnetwork"
     assert state["puts"] == [
         ("/node/dataset/active", json.dumps({"NetworkName": "MajorDom"})),
         ("/node/state", json.dumps("enable")),
@@ -56,18 +60,31 @@ async def test_forms_a_network_when_none_appears(border_router):
 
 async def test_joins_the_configured_network(border_router):
     url, state = border_router
-    assert await thread_dataset(url, ThreadNetwork(dataset="0e08configured"), patience=0) == "0e08configured"
+    await form_network(url, ThreadNetwork(dataset="0e08configured"), patience=0)
+    assert await active_dataset(url) == "0e08configured"
 
 
-async def test_forms_only_once_and_never_for_a_self_forming_router(border_router):
+async def test_forms_only_once(border_router):
     url, state = border_router
     state["stuck"] = True  # forming takes a while: the dataset doesn't appear yet
-
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(thread_dataset(url, ThreadNetwork(), patience=0), 3)
+    await asyncio.wait_for(form_network(url, ThreadNetwork(), patience=0), 3)
     assert len(state["puts"]) == 2  # one dataset, one enable
-
-    state["puts"].clear()
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(thread_dataset(url, ThreadNetwork(), form=False, patience=0), 2)
+        await asyncio.wait_for(active_dataset(url), 2)
+
+
+async def test_only_a_border_router_that_doesnt_form_itself_is_provisioned(border_router, monkeypatch):
+    url, state = border_router
+    monkeypatch.setattr(services, "FORM_PATIENCE", 0)
+    rest = Endpoint("thread", "otbr-rest", url, shared=True)
+    await asyncio.wait_for(multiprotocol.provision(rest, ThreadNetwork()), 2)  # its container forms the network
     assert state["puts"] == []
+    await asyncio.wait_for(otbr.provision(rest, ThreadNetwork()), 3)
+    assert len(state["puts"]) == 2
+
+
+async def test_border_routers_tell_their_thread_network(border_router):
+    url, state = border_router
+    state["dataset"] = "0e08existing"
+    assert await otbr.learn(Endpoint("thread", "otbr-rest", url)) == {"thread_dataset": "0e08existing"}
+    assert await multiprotocol.learn(Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999")) == {}

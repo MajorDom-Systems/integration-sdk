@@ -1,5 +1,6 @@
 import asyncio
 import json
+from typing import Any
 
 import pytest
 from majordom_integration_sdk import Endpoint, Need, Service, WifiCredentials
@@ -161,18 +162,41 @@ async def test_firmware_options_name_what_each_firmware_would_serve(tmp_path, st
     assert rt.radios()[0].options == {"zigbee": ["zigbee"], "thread": ["thread"], "multipan": ["thread", "zigbee"]}
 
 
-async def test_forms_thread_networks_only_on_border_routers_it_runs(tmp_path, monkeypatch):
-    forms = []
+async def settle(rt):
+    """Let what services set up and learn finish."""
+    await asyncio.gather(*rt._tasks)
 
-    async def dataset(url, network, form=True, patience=15):
-        forms.append(form)
-        return "0e08"
 
-    monkeypatch.setattr("majordom_transports.runtime.thread_dataset", dataset)
-    rt = runtime(tmp_path)
-    for provider in ("pinned", "multiprotocol", "otbr"):
-        await rt._follow_thread("http://border-router", provider)
-    assert forms == [False, False, True]  # yours stays yours; multiprotocol forms its own
+async def test_services_set_up_what_the_runtime_runs_and_teach_it_facts(tmp_path):
+    calls = []
+
+    class Router(Service):
+        async def provision(self, endpoint, settings):
+            calls.append(("provision", endpoint.url))
+
+        async def learn(self, endpoint):
+            calls.append(("learn", endpoint.url))
+            return {"thread_dataset": "0e08"}
+
+    class Thread:
+        needs = [Need("thread")]
+        services = [Router("router", {"image": "router"}, [Need("ip")], [Endpoint("thread", "rest", "http://ours")])]
+        settings = None
+
+    consumers: dict[str, Any] = {"thread": Thread}
+    rt = Runtime(tmp_path / "ours", consumers, docker=False, scan=False)
+    await rt.refresh()
+    await settle(rt)
+    assert sorted(calls) == [("learn", "http://ours"), ("provision", "http://ours")]
+    assert rt.context().thread_dataset == "0e08"
+
+    calls.clear()
+    pinned = {"thread": Endpoint("thread", "rest", "http://theirs")}
+    rt = Runtime(tmp_path / "theirs", consumers, docker=False, scan=False, pinned=pinned)
+    await rt.refresh()
+    await settle(rt)
+    assert calls == [("learn", "http://theirs")]  # someone else's router is read, never set up
+    assert rt.context().thread_dataset == "0e08"
 
 
 async def test_recreating_services_keeps_the_thread_network_known(tmp_path, stick, monkeypatch):
@@ -180,19 +204,19 @@ async def test_recreating_services_keeps_the_thread_network_known(tmp_path, stic
     dropping it meanwhile restarted every integration twice."""
     reads, seen = [], []
 
-    async def dataset(url, network, form=True, patience=15):
+    async def dataset(url):
         reads.append(url)
         return "0e08"
 
     async def changed():
         seen.append(rt.context().thread_dataset)
 
-    monkeypatch.setattr("majordom_transports.runtime.thread_dataset", dataset)
+    monkeypatch.setattr("majordom_transports.services.active_dataset", dataset)
     rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan")], on_change=changed)
     await rt.refresh()
-    await rt._thread
+    await settle(rt)
     await rt.update_settings("hub", {"region": "Europe"})  # recreates matter-server
-    await rt._thread
+    await settle(rt)
     assert len(reads) == 2  # read again: a recreated border router may hold another network
     assert seen == [None, "0e08", "0e08"]
 
