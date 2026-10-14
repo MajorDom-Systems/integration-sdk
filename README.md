@@ -61,60 +61,6 @@ The fastest way to start a new integration is the
 [integration-template](https://github.com/MajorDom-Systems/integration-template) repository
 (**Use this template → Create a new repository**).
 
-### Pairing credentials
-
-A `Discovery` lists every way the device can be paired as `CredentialsOption`s; the Hub asks the
-user for one and passes it back to `pair_device` as `ProvidedCredentials`.
-
-```python
-Discovery(
-    ...,
-    expected_credentials_options=[
-        CredentialsType.code.with_mask("DDDD-DDD-DDDD", hint="On the label"),  # D = digit
-        CredentialsType.button.with_hint("Press the button on the device"),
-        CredentialsType.qr,  # a bare type is an option without mask/hint
-    ],
-)
-# serialized: [{"type": "code", "mask": "DDDD-DDD-DDDD", "hint": "On the label"}, ...]
-```
-
-`with_mask()` and `with_hint()` are the short form of `CredentialsOption(type=..., mask=..., hint=...)`:
-each returns a new option and leaves the type untouched.
-
-| Type     | The user...                                           | `ProvidedCredentials.value` |
-|----------|-------------------------------------------------------|-----------------------------|
-| `code`   | types a setup code, formatted by `mask`               | the code                    |
-| `qr`     | scans a setup QR code                                 | the raw QR payload          |
-| `secret` | enters a key (e.g. an ESPHome API encryption key)     | the key                     |
-| `button` | physically confirms on the device (Improv, a setup button) | none: a confirmation step |
-| `none`   | does nothing; pairing needs no input                  | none                        |
-
-In `pair_device`, check the supplied type with `discovery.accepts(credentials)` (no credentials
-count as `none`).
-
-### Missing Hub credentials
-
-When the Hub itself lacks something a pairing needs (a Hub on Ethernet has no Wi-Fi to give a
-node set up over BLE), raise `MissingCredentialsError(type)` from `pair_device` before touching the
-device, and set the discovery's `last_error` to `str(error)`. The app asks the user for them, the Hub
-saves them, and the user pairs again.
-
-```python
-error = MissingCredentialsError(MissingCredentialsError.WIFI)  # "wifi" is the default
-str(error)                                                     # "Missing credentials: wifi"
-MissingCredentialsError.parse(device.last_error).type          # "wifi"; parse() is None for other errors
-```
-
-`type` is a lower_snake_case string, so an integration can add its own; the app maps it to an enum
-to pick the screen to show.
-
-| `type`   | The Hub lacks...                                   |
-|----------|----------------------------------------------------|
-| `wifi`   | a Wi-Fi network (SSID and password) to give a device |
-| `thread` | a Thread network (dataset) to give a device        |
-
-An integration that raises any other type documents it in its own README.
-
 ## License
 
 See [LICENSE](LICENSE). For commercial licensing or partnership inquiries, contact us via
