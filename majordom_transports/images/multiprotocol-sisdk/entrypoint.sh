@@ -47,10 +47,16 @@ sysctl -w net.ipv4.ip_forward=1          >/dev/null 2>&1 || true
 sysctl -w "net.ipv6.conf.${BACKBONE_IF}.accept_ra=2" >/dev/null 2>&1 || true
 sysctl -w "net.ipv6.conf.${BACKBONE_IF}.accept_ra_rt_info_max_plen=64" >/dev/null 2>&1 || true
 
-# 1. System D-Bus — otbr-agent EMERG-crashes without it.
+# 1. System D-Bus — otbr-agent EMERG-crashes without it. The avahi build (no mdnsd) publishes through the
+# host's avahi-daemon on the host's bus, bind-mounted at /run/dbus (Dockerfile, MDNS).
 mkdir -p /run/dbus
-[ -S /run/dbus/system_bus_socket ] || dbus-daemon --system --fork
-mdnsd 2>/dev/null || true
+if [ -S /run/dbus/system_bus_socket ]; then
+  log "using the host's D-Bus"
+else
+  dbus-daemon --system --fork
+  command -v mdnsd >/dev/null || log "WARN: no host D-Bus at /run/dbus: Thread services won't reach mDNS"
+fi
+if command -v mdnsd >/dev/null; then mdnsd 2>/dev/null || true; fi
 
 # 2. cpcd owns the serial RCP and multiplexes it (CPC). A mounted /etc/cpcd.conf wins over the template.
 [ "${RADIO_DEVICE}" = /dev/ttyRCP ] || ln -sf "$(readlink -f "${RADIO_DEVICE}")" /dev/ttyRCP

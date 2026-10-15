@@ -9,6 +9,10 @@ Silicon Labs SiSDK v2025.6.3 debian-bookworm packages, redistributed unmodified 
 OpenThread and OpenThread Border Router (inside otbr-agent and ot-ctl)
   License: BSD-3-Clause, OPENTHREAD-BSD-3-Clause in this directory
   https://github.com/openthread/openthread  https://github.com/openthread/ot-br-posix
+  The default (MDNS=avahi) build compiles otbr-agent and ot-ctl from the SiSDK v2025.6.3 sources instead,
+  with Silicon Labs' CPC vendor interface (licence in its source headers); they link Debian's libavahi-client.
+
+mDNSResponder below ships only in the MDNS=mdnsresponder build.
 
 mDNSResponder (mdnsd, libdns_sd.so), built from the source shipped in the ot-br-posix package
   License: Apache-2.0 (daemon) and BSD-3-Clause (client library), /usr/share/doc/mDNSResponder/LICENSE
