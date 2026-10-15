@@ -56,8 +56,10 @@ class Service:
     may hold ``{data}``, ``{links.<family>.url}``, ``{settings.<field>}``, ``{context.<field>}``,
     ``{host.interface|uid|gid}`` and ``{ports.<name>}``.
 
-    ``ports`` names the host ports it listens on, with the one it prefers. The runtime picks a free one
-    per name and keeps it; ``{ports.<name>}`` hands it to ``compose`` and to the ``provides`` URLs.
+    ``ports`` names the host ports it listens on, each with the port it *prefers*, not a fixed one: the runtime
+    uses it when free, else assigns another (45800-45999), keeps the choice across restarts, and fills
+    ``{ports.<name>}`` in ``compose`` and in the ``provides`` URLs. Integrations never read a port: they connect
+    through ``dependencies.links[<family>].url``.
 
     Subclass it to hook into the runtime: `provision` sets up what it runs, `learn` reads `Context`
     facts from what it provides.
@@ -68,7 +70,7 @@ class Service:
     needs: Sequence[Need] = ()
     provides: Sequence[Endpoint] = ()
     settings: type[BaseModel] | None = None
-    ports: Mapping[str, int] = field(default_factory=dict)
+    ports: Mapping[str, int] = field(default_factory=dict)  # name -> PREFERRED host port; see the docstring
 
     async def provision(self, endpoint: Endpoint, settings: BaseModel | None) -> None:
         """Set up one of its bound endpoints once it answers, e.g. form a network. Called each time the
