@@ -336,6 +336,18 @@ async def test_a_local_adapter_stops_scanning_while_it_connects(monkeypatch):
     assert scanning == [True, False, True]
 
 
+def test_a_local_connection_reports_the_mtu_bluez_negotiated():
+    from types import SimpleNamespace
+
+    from majordom_integration_sdk.discovery.ble_discovery import _BleakConnection
+
+    # bleak reports BlueZ's MTU as 23 until it is acquired, while every characteristic already knows the real one
+    characteristics = {1: SimpleNamespace(max_write_without_response_size=244)}
+    client = SimpleNamespace(mtu_size=23, services=SimpleNamespace(characteristics=characteristics))
+
+    assert _BleakConnection(client).mtu == 247  # ty: ignore[invalid-argument-type]
+
+
 async def test_a_device_is_seen_as_the_strongest_radio_hears_it(radios):
     ble, near, far = radios
     far.advertise("AA", rssi=-90, service_uuids=[str(MATTER)])
