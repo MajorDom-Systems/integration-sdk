@@ -100,9 +100,8 @@ class BLEConnection(Protocol):
 class PairableBLEConnection(BLEConnection, Protocol):
     """A connection that can encrypt its link by pairing (LE Secure Connections where both ends support it)."""
 
-    async def pair(self, passkey: int | None = None) -> None:
-        """Pairs, encrypting the link: "Just Works", or passkey entry (MITM-protected) with the device's static
-        ``passkey``. Raises `BLEPairingError`."""
+    async def pair(self) -> None:
+        """Pairs "Just Works", encrypting the link. Raises `BLEPairingError`."""
         ...
 
     async def unpair(self) -> None:
@@ -552,16 +551,12 @@ class _BleakConnection:
     async def stop_notify(self, handle: int):
         await self._client.stop_notify(handle)
 
-    async def pair(self, passkey: int | None = None):
+    async def pair(self):
         try:
             if sys.platform == "linux":  # bleak's pair() brings no agent: LE Secure Connections fails without one
-                await bluez_pairing.pair(self._adapter, self._client.address, passkey)
-            elif passkey is None:  # the OS pairs on its own, with its own prompts
+                await bluez_pairing.pair(self._adapter, self._client.address)
+            else:  # the OS pairs on its own, with its own prompts
                 await self._client.pair()
-            else:
-                raise BLEPairingError("Pairing with a passkey needs BlueZ")
-        except BLEPairingError:
-            raise
         except (ConnectionError, BleakError, EOFError) as e:  # org.bluez.Error.AuthenticationFailed, a dropped link
             raise BLEPairingError(f"Pairing failed: {e}") from e
 

@@ -19,7 +19,7 @@ from majordom_integration_sdk.testing import FakeBLESource
 
 def pairable(calls: list[str] | None = None) -> Mock:
     connection = Mock(spec=PairableBLEConnection)
-    connection.pair = AsyncMock(side_effect=lambda passkey=None: calls.append("pair") if calls is not None else None)
+    connection.pair = AsyncMock(side_effect=lambda: calls.append("pair") if calls is not None else None)
     connection.unpair = AsyncMock(side_effect=lambda: calls.append("unpair") if calls is not None else None)
     connection.write = AsyncMock(side_effect=lambda *_, **__: calls.append("write") if calls is not None else None)
     return connection
@@ -52,15 +52,6 @@ async def test_a_failed_pairing_yields_nothing():
         async with LESecureConnections().secure(connection):
             pytest.fail("credentials would cross an unencrypted link")
     connection.write.assert_not_called()
-
-
-async def test_a_passkey_reaches_the_pairing():
-    connection = pairable()
-
-    async with LESecureConnections(passkey=123456).secure(connection):
-        pass
-
-    connection.pair.assert_awaited_once_with(123456)
 
 
 async def test_the_bond_is_kept_when_asked():
@@ -133,8 +124,8 @@ async def test_on_linux_a_local_adapter_pairs_through_its_own_bluez_agent(adapte
 
     connection = await adapter.connect("AA:BB:CC:DD:EE:FF", lambda: None)
     assert isinstance(connection, PairableBLEConnection)
-    await connection.pair(123456)
-    paired.assert_awaited_once_with("hci1", "AA:BB:CC:DD:EE:FF", 123456)
+    await connection.pair()
+    paired.assert_awaited_once_with("hci1", "AA:BB:CC:DD:EE:FF")
     adapter_client.pair.assert_not_called()  # bleak's brings no agent: Secure Connections fails without one
     await connection.unpair()
     adapter_client.unpair.assert_awaited_once()
@@ -144,7 +135,7 @@ async def test_on_linux_a_local_adapter_pairs_through_its_own_bluez_agent(adapte
         await connection.pair()
 
 
-async def test_elsewhere_the_os_pairs_without_a_passkey(adapter_client, monkeypatch):
+async def test_elsewhere_the_os_pairs_on_its_own(adapter_client, monkeypatch):
     from bleak.exc import BleakError
 
     from majordom_integration_sdk.discovery import LocalAdapter
@@ -155,8 +146,6 @@ async def test_elsewhere_the_os_pairs_without_a_passkey(adapter_client, monkeypa
 
     await connection.pair()
     adapter_client.pair.assert_awaited_once()
-    with pytest.raises(BLEPairingError, match="BlueZ"):
-        await connection.pair(123456)
     adapter_client.pair.side_effect = BleakError("refused")
     with pytest.raises(BLEPairingError, match="refused"):
         await connection.pair()
@@ -166,20 +155,19 @@ DEVICE = "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF"
 
 
 @pytest.mark.parametrize(
-    ("member", "body", "passkey", "answer"),
+    ("member", "body", "answer"),
     [
-        ("RequestAuthorization", [DEVICE], None, ("", [])),  # Just Works on LE Secure Connections
-        ("RequestConfirmation", [DEVICE, 1234], None, ("", [])),
-        ("RequestPasskey", [DEVICE], 123456, ("u", [123456])),
-        ("RequestPasskey", [DEVICE], None, "org.bluez.Error.Rejected"),
-        ("RequestAuthorization", ["/org/bluez/hci0/dev_11_22_33_44_55_66"], None, "org.bluez.Error.Rejected"),
-        ("RequestPinCode", [DEVICE], 123456, "org.bluez.Error.Rejected"),
-        ("AuthorizeService", [DEVICE, "0000110b-0000-1000-8000-00805f9b34fb"], None, "org.bluez.Error.Rejected"),
-        ("Release", [], None, ("", [])),
+        ("RequestAuthorization", [DEVICE], ("", [])),  # Just Works on LE Secure Connections
+        ("RequestConfirmation", [DEVICE, 1234], ("", [])),
+        ("RequestPasskey", [DEVICE], "org.bluez.Error.Rejected"),
+        ("RequestAuthorization", ["/org/bluez/hci0/dev_11_22_33_44_55_66"], "org.bluez.Error.Rejected"),
+        ("RequestPinCode", [DEVICE], "org.bluez.Error.Rejected"),
+        ("AuthorizeService", [DEVICE, "0000110b-0000-1000-8000-00805f9b34fb"], "org.bluez.Error.Rejected"),
+        ("Release", [], ("", [])),
     ],
 )
-def test_the_agent_answers_only_for_the_device_being_paired(member, body, passkey, answer):
+def test_the_agent_answers_only_for_the_device_being_paired(member, body, answer):
     from majordom_integration_sdk.discovery import bluez_pairing
 
     assert bluez_pairing.device_path("hci0", "aa:bb:cc:dd:ee:ff") == DEVICE
-    assert bluez_pairing.agent_answer(member, body, DEVICE, passkey) == answer
+    assert bluez_pairing.agent_answer(member, body, DEVICE) == answer

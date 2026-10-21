@@ -5,8 +5,8 @@ they are written to a device. An integration picks one per device and opens it o
         async with channel.secure(await lease.connect()) as connection:
             await connection.write(rpc, credentials)
 
-`LESecureConnections` encrypts the link by pairing. "Just Works" pairing, all a headless Hub can do without a
-passkey, stops passive sniffing but not an active man in the middle during the pairing itself. A channel that
+`LESecureConnections` encrypts the link by pairing. "Just Works" pairing, all a headless Hub can do, stops passive
+sniffing but not an active man in the middle during the pairing itself. A channel that
 authenticates at the application layer (e.g. Improv's proposed SPAKE2+ setup code) would yield a connection that
 encrypts the frames it writes instead, and works through any proxy.
 """
@@ -31,20 +31,19 @@ class SecureChannel(Protocol):
 
 class LESecureConnections:
     """Pairs before anything is written: the link is encrypted, or nothing is yielded. The device decides LE Secure
-    Connections over legacy pairing (firmware built for it accepts nothing else). ``passkey``: the device's static one
-    (printed on it), for MITM-protected passkey entry instead of Just Works. ``forget``: unpair once done, as the
+    Connections over legacy pairing (firmware built for it accepts nothing else). ``forget``: unpair once done, as the
     pairing served only the setup."""
 
     needs_pairing = True
 
-    def __init__(self, passkey: int | None = None, forget: bool = True):
-        self._passkey, self._forget = passkey, forget
+    def __init__(self, forget: bool = True):
+        self._forget = forget
 
     @contextlib.asynccontextmanager
     async def secure(self, connection: BLEConnection) -> AsyncGenerator[BLEConnection]:
         if not isinstance(connection, PairableBLEConnection):
             raise BLEPairingError("This Bluetooth source can't pair, so it can't encrypt the link")
-        await connection.pair(self._passkey)
+        await connection.pair()
         try:
             yield connection
         finally:

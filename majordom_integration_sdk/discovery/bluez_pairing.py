@@ -3,8 +3,7 @@
 LE Secure Connections "Just Works" still asks the host to confirm (the kernel's confirm hint), and bluetoothd turns that
 into an agent call: without an agent the pairing fails ("Numeric comparison failed"), and bleak registers none. So the
 pairing is started from a D-Bus connection that holds an `org.bluez.Agent1` (bluetoothd asks the agent of whoever called
-`Pair`): it confirms only that device, answers a passkey when one is given (MITM-protected passkey entry), and goes
-away with the connection.
+`Pair`): it confirms only that device, and goes away with the connection.
 """
 
 import contextlib
@@ -18,7 +17,7 @@ _agents = itertools.count()
 Answer = tuple[str, list[Any]] | str  # (signature, body) to return, or the name of the error to raise
 
 
-def agent_answer(member: str, body: list[Any], device_path: str, passkey: int | None) -> Answer:
+def agent_answer(member: str, body: list[Any], device_path: str) -> Answer:
     """What the agent answers bluetoothd's ``member`` call; anything not about ``device_path`` is refused."""
     if member in ("Release", "Cancel"):
         return "", []
@@ -26,16 +25,14 @@ def agent_answer(member: str, body: list[Any], device_path: str, passkey: int | 
         return REJECTED
     if member in ("RequestAuthorization", "RequestConfirmation"):  # Just Works: nothing to compare without a display
         return "", []
-    if member == "RequestPasskey" and passkey is not None:
-        return "u", [passkey]
-    return REJECTED  # PIN codes (BR/EDR), service authorization, displays we don't have
+    return REJECTED  # passkeys and PIN codes (BR/EDR), service authorization, displays we don't have
 
 
 def device_path(adapter: str, address: str) -> str:
     return f"/org/bluez/{adapter}/dev_{address.upper().replace(':', '_')}"
 
 
-async def pair(adapter: str, address: str, passkey: int | None = None) -> None:
+async def pair(adapter: str, address: str) -> None:
     """Pairs the connected device ``address`` on ``adapter`` (hci0, …); raises `ConnectionError` with BlueZ's error."""
     # bleak's BlueZ backend brings dbus-fast, on Linux only
     from dbus_fast import BusType, Message, MessageType  # ty: ignore[unresolved-import]
@@ -46,7 +43,7 @@ async def pair(adapter: str, address: str, passkey: int | None = None) -> None:
     def on_message(message: Message) -> Message | None:
         if message.message_type != MessageType.METHOD_CALL or message.path != agent:
             return None
-        answer = agent_answer(message.member or "", list(message.body), path, passkey)
+        answer = agent_answer(message.member or "", list(message.body), path)
         if isinstance(answer, str):
             return Message.new_error(message, answer, "Not the device being paired")
         return Message.new_method_return(message, *answer)
@@ -59,9 +56,8 @@ async def pair(adapter: str, address: str, passkey: int | None = None) -> None:
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     bus.add_message_handler(on_message)
     try:
-        capability = "KeyboardOnly" if passkey is not None else "NoInputNoOutput"
         manager = {"destination": "org.bluez", "path": "/org/bluez", "interface": "org.bluez.AgentManager1"}
-        await call(Message(**manager, member="RegisterAgent", signature="os", body=[agent, capability]))
+        await call(Message(**manager, member="RegisterAgent", signature="os", body=[agent, "NoInputNoOutput"]))
         try:
             await call(Message(destination="org.bluez", path=path, interface="org.bluez.Device1", member="Pair"))
         except ConnectionError as e:
