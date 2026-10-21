@@ -10,6 +10,7 @@ Credentials go to a device only over a link a `SecureChannel` (`ble_security`) h
 import asyncio
 import contextlib
 import logging
+import sys
 from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,8 @@ from bleak.assigned_numbers import AdvertisementDataType
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from bleak.exc import BleakError
+
+from . import bluez_pairing
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +100,9 @@ class BLEConnection(Protocol):
 class PairableBLEConnection(BLEConnection, Protocol):
     """A connection that can encrypt its link by pairing (LE Secure Connections where both ends support it)."""
 
-    async def pair(self) -> None:
-        """Pairs and bonds, encrypting the link; raises `BLEPairingError`."""
+    async def pair(self, passkey: int | None = None) -> None:
+        """Pairs, encrypting the link: "Just Works", or passkey entry (MITM-protected) with the device's static
+        ``passkey``. Raises `BLEPairingError`."""
         ...
 
     async def unpair(self) -> None:
@@ -462,7 +466,7 @@ BLEDiscoveryService = BLEService
 class LocalAdapter:
     """A Bluetooth adapter of this machine, through bleak (BlueZ on Linux)."""
 
-    can_pair = True  # BlueZ pairs "Just Works" without an agent: LE Secure Connections, no MITM protection
+    can_pair = True  # LE Secure Connections where the device offers it; through a scoped BlueZ agent on Linux
 
     def __init__(self, adapter: str | None = None):
         self.name = adapter or "local"
@@ -515,12 +519,12 @@ class LocalAdapter:
             finally:
                 if scanner:
                     await scanner.start()
-        return _BleakConnection(client)
+        return _BleakConnection(client, self._options.get("bluez", {}).get("adapter") or "hci0")
 
 
 class _BleakConnection:
-    def __init__(self, client: BleakClient):
-        self._client = client
+    def __init__(self, client: BleakClient, adapter: str):
+        self._client, self._adapter = client, adapter
 
     @property
     def mtu(self) -> int:
@@ -548,10 +552,17 @@ class _BleakConnection:
     async def stop_notify(self, handle: int):
         await self._client.stop_notify(handle)
 
-    async def pair(self):
+    async def pair(self, passkey: int | None = None):
         try:
-            await self._client.pair()
-        except (BleakError, EOFError) as e:  # BlueZ's org.bluez.Error.AuthenticationFailed, a dropped link
+            if sys.platform == "linux":  # bleak's pair() brings no agent: LE Secure Connections fails without one
+                await bluez_pairing.pair(self._adapter, self._client.address, passkey)
+            elif passkey is None:  # the OS pairs on its own, with its own prompts
+                await self._client.pair()
+            else:
+                raise BLEPairingError("Pairing with a passkey needs BlueZ")
+        except BLEPairingError:
+            raise
+        except (ConnectionError, BleakError, EOFError) as e:  # org.bluez.Error.AuthenticationFailed, a dropped link
             raise BLEPairingError(f"Pairing failed: {e}") from e
 
     async def unpair(self):
