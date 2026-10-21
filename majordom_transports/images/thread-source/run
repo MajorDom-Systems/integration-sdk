@@ -1,0 +1,70 @@
+#!/command/with-contenv bash
+# Lets the border router's host reach Thread nodes over TCP: keeps a backbone ULA as the preferred source of the
+# routes into the Thread network. s6 runs it as a service in openthread/border-router; elsewhere start it with bash.
+#
+# Why: for a destination behind the Thread interface Linux picks that interface's own address as the source (RFC 6724
+# rule 5), and that is one of the border router's Thread addresses. OpenThread consumes TCP to its own addresses (its
+# receive filter never passes TCP to the host, ip6.cpp PassToHost), so replies never reach Linux; ping and UDP do.
+# From a backbone address the replies are routed traffic and reach the host. A ULA: border routers publish fc00::/7
+# into the Thread network data, so nodes route replies to it. Only routes covering the border router's preferred
+# Thread addresses (its OMR addresses) change: mesh-local ones stay, a node answers from there only to its own mesh.
+# Follows the border router re-adding its routes and the backbone renumbering; the routes go with the interface.
+
+thread_if=${OT_THREAD_IF:-wpan0}
+backbone_if=${OT_INFRA_IF:-${BACKBONE_IF:-eth0}}
+
+# The first stable ULA of `ip -o -6 addr show dev <backbone> scope global`, else a temporary one.
+backbone_source() {
+  ip -o -6 addr show dev "$backbone_if" scope global 2>/dev/null | awk '
+    / (deprecated|tentative|dadfailed)( |$)/ { next }
+    { split($4, a, "/") }
+    a[1] !~ /^f[cd]/ { next }
+    / temporary( |$)/ { if (!temporary) temporary = a[1]; next }
+    { print a[1]; found = 1; exit }
+    END { if (!found && temporary) print temporary }'
+}
+
+# The Thread interface's preferred global addresses, without their prefix length.
+thread_addresses() {
+  ip -o -6 addr show dev "$thread_if" scope global 2>/dev/null | awk '
+    / (deprecated|tentative|dadfailed)( |$)/ { next }
+    { split($4, a, "/"); print a[1] }'
+}
+
+# Each route line from `ip -6 route show` as `<src or -> <dst> [proto P] [metric M] [pref R]`.
+route_fields() {
+  awk '$1 != "default" {
+    line = $1; src = "-"
+    for (i = 2; i < NF; i++) {
+      if ($i == "proto" || $i == "metric" || $i == "pref") line = line " " $i " " $(i + 1)
+      if ($i == "src") src = $(i + 1)
+    }
+    print src, line }'
+}
+
+sync_sources() {
+  local src address dst attributes current
+  src=$(backbone_source)
+  [ -n "$src" ] || return 0
+  for address in $(thread_addresses); do
+    ip -6 route show match "$address" dev "$thread_if" 2>/dev/null | route_fields |
+      while read -r current dst attributes; do
+        [ "$current" = "$src" ] && continue
+        # shellcheck disable=SC2086  # attributes are words: proto P metric M pref R
+        ip -6 route replace "$dst" dev "$thread_if" $attributes src "$src" &&
+          echo "[thread-source] $dst on $thread_if from $src"
+      done
+  done
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  while true; do
+    sync_sources
+    # every address or route change; a burst (the border router starting) settles first
+    ip -6 monitor address route | while read -r _; do
+      while read -r -t 1 _; do :; done
+      sync_sources
+    done
+    sleep 5  # the monitor went away
+  done
+fi

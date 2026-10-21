@@ -82,6 +82,7 @@ otbr-agent -I wpan0 -B "${BACKBONE_IF}" \
   "spinel+cpc://cpcd_0?iid=2&iid-list=0" >/var/log/otbr.log 2>&1 &
 sleep 4
 log "otbr-agent up; Thread REST on :${OTBR_REST_PORT}"
+bash /thread-source &  # the host reaches Thread nodes over TCP (see the script)
 
 if [ "${THREAD_FORM}" = "1" ]; then
   # Decide on the saved dataset, not the state: a restored network is still "detached" right after
