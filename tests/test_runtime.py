@@ -279,7 +279,7 @@ async def test_services_preferring_the_same_port_get_different_ones(tmp_path, st
 
 async def settle(rt):
     """Let what services set up and learn finish."""
-    await asyncio.gather(*rt._tasks)
+    await asyncio.gather(*(task for tasks in rt._tasks.values() for task in tasks))
 
 
 async def test_services_set_up_what_the_runtime_runs_and_teach_it_facts(tmp_path):
@@ -312,6 +312,32 @@ async def test_services_set_up_what_the_runtime_runs_and_teach_it_facts(tmp_path
     await settle(rt)
     assert calls == [("learn", "http://theirs")]  # someone else's router is read, never set up
     assert rt.context().thread_dataset == "0e08"
+
+
+async def test_a_refresh_that_changes_nothing_lets_setup_finish(tmp_path):
+    """A border router still forming its network when a refresh came was cancelled and never set up."""
+    release, provisioned = asyncio.Event(), []
+
+    class Router(Service):
+        async def provision(self, endpoint, settings):
+            await release.wait()
+            provisioned.append(endpoint.url)
+
+        async def learn(self, endpoint):
+            return {}
+
+    class Thread:
+        needs = [Need("thread")]
+        services = [Router("router", {"image": "router"}, [Need("ip")], [Endpoint("thread", "rest", "http://ours")])]
+        settings = None
+
+    rt = Runtime(tmp_path / "data", {"thread": Thread}, docker=False, scan=False)
+    await rt.refresh()
+    await asyncio.sleep(0)
+    await rt.refresh()  # recreates nothing
+    release.set()
+    await settle(rt)
+    assert provisioned == ["http://ours"]
 
 
 async def test_recreating_services_keeps_the_thread_network_known(tmp_path, stick, monkeypatch):

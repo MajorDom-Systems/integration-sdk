@@ -111,7 +111,7 @@ class Runtime:
         self._held: dict[str, str] = {}  # radio id -> the other program that has it open
         self._compose = ""
         self._learned: dict[tuple[str, str], Mapping[str, Any]] = {}  # bound (provider, url) -> context facts
-        self._tasks: list[asyncio.Task] = []  # services setting up and learning
+        self._tasks: dict[tuple[str, str], list[asyncio.Task]] = {}  # services setting up and learning, by source
         self._lock = asyncio.Lock()
         self._watcher: asyncio.Task | None = None
 
@@ -122,7 +122,7 @@ class Runtime:
         self._watcher = asyncio.create_task(self._watch(), name="transports.watch")
 
     async def stop(self):
-        for task in (self._watcher, *self._tasks):
+        for task in (self._watcher, *(t for tasks in self._tasks.values() for t in tasks)):
             if task:
                 task.cancel()
 
@@ -151,17 +151,18 @@ class Runtime:
     def _follow(self, recreated: bool):
         """Have services set up what runs and learn facts from what is bound; known facts stay until read
         again, and go with their provider."""
-        for task in self._tasks:
-            task.cancel()
         sources = self._sources()
+        for key in [key for key in self._tasks if recreated or key not in sources]:
+            for task in self._tasks.pop(key):
+                task.cancel()
         self._learned = {key: facts for key, facts in self._learned.items() if key in sources}
-        self._tasks = []
         for key, (service, endpoint) in sources.items():
-            if recreated or key not in self._learned:
-                self._tasks.append(asyncio.create_task(self._learn(key, service, endpoint)))
+            running = any(not task.done() for task in self._tasks.get(key, []))
+            if recreated or key not in self._learned and not running:  # a source unchanged keeps setting up
+                self._tasks[key] = [asyncio.create_task(self._learn(key, service, endpoint))]
                 if key[0] == service.name:  # never someone else's (pinned)
                     settings = self.settings(service.name)
-                    self._tasks.append(asyncio.create_task(self._provision(service, endpoint, settings)))
+                    self._tasks[key].append(asyncio.create_task(self._provision(service, endpoint, settings)))
 
     async def _learn(self, key: tuple[str, str], service: Service, endpoint: Endpoint):
         try:
