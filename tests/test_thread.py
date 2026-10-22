@@ -3,6 +3,7 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingTCPServer
+from typing import Any
 
 import pytest
 from majordom_integration_sdk import Endpoint
@@ -14,7 +15,7 @@ from majordom_transports.services import ThreadNetwork, active_dataset, form_net
 @pytest.fixture
 def border_router():
     """A border router's REST API with no network until one is put."""
-    state = {"dataset": "", "puts": []}
+    state: dict[str, Any] = {"dataset": "", "puts": []}
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -31,7 +32,7 @@ def border_router():
             self.send_response(200)
             self.end_headers()
 
-        def log_message(self, *args):
+        def log_message(self, format, *args):
             pass
 
     server = ThreadingTCPServer(("127.0.0.1", 0), Handler)  # HTTPServer would resolve the host name first

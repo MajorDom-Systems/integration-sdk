@@ -12,15 +12,25 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio", "ruff"]
+dev = ["poethepoet (>=0.36.0,<1.0.0)", "ty", "ruff", "pip-audit", "pytest", "pytest-asyncio", "pytest-cov"]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
+requires-poetry = ">=2.0"
 packages = [{ include = "majordom_transports" }]
 include = [{ path = "majordom_transports/images", format = ["sdist", "wheel"] }]
+
+# The tests' consumers are bare classes standing in for integration controllers, and their drivers subclass the
+# registered driver's runtime class: ty can't match the former to the Consumer protocol nor follow the latter
+[[tool.ty.overrides]]
+include = ["tests/**"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unsupported-base = "ignore"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -30,3 +40,31 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "SIM", "I"]
+
+[tool.poe.tasks.check]
+shell = """
+code=0
+
+echo "\nRunning ruff lint:"
+poetry run ruff check --fix || code=1
+
+echo "\nRunning ruff format:"
+poetry run ruff format || code=1
+
+echo "\nRunning ty:"
+poetry run ty check || code=1
+
+echo "\nRunning pytest:"
+poetry run pytest --cov=majordom_transports --cov-report=xml || code=1
+
+echo "\nRunning poetry build:"
+poetry build || code=1
+
+echo "\nRunning poetry check:"
+poetry check || code=1
+
+${ci:+git diff --exit-code} || code=1
+
+exit $code
+"""
+args = [{ name = "ci", type = "boolean" }]
