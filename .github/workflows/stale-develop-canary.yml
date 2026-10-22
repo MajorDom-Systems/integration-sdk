@@ -1,0 +1,22 @@
+name: Stale develop canary
+
+# Monthly escalation on top of the release nudge: if develop has sat unreleased longer
+# than stale-days (oldest unreleased commit), open/refresh a "bot: stale develop" issue.
+# Closes itself once develop is no longer ahead of master.
+on:
+  schedule:
+    - cron: "0 9 1 * *"   # 09:00 UTC on the 1st of each month
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  canary:
+    uses: ParkerIndustries/workflows/.github/workflows/stale-develop-canary.yml@v1
+    with:
+      stable-branch: master
+      dev-branch: develop
+      mention: "@MarkParker5"   # change per-repo if the maintainer differs
+      stale-days: 30

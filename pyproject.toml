@@ -41,6 +41,14 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "SIM", "I"]
 
+[tool.poe.tasks.install]
+shell = """
+poetry install
+echo '#!/bin/sh\npoetry run poe check' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+echo "Pre-commit hook installed."
+"""
+
 [tool.poe.tasks.check]
 shell = """
 code=0
