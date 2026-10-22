@@ -36,7 +36,7 @@ Issues = "https://github.com/MajorDom-Systems/integration-sdk/issues"
 
 [dependency-groups]
 dev = [
-    "poethepoet (>=0.36.0,<1.0.0)",
+    "poethepoet (>=0.49.0,<1.0.0)",
     "ty",             # type checker; swap for mypy/pyright by editing the `check` task below
     "ruff",
     "pip-audit",      # dependency vuln scan — gates release (not everyday CI); run locally with `poetry run pip-audit`
