@@ -23,7 +23,7 @@ services:
       - /run:exec,mode=1777
     environment:
       RADIO_DEVICE: ${RADIO_BY_ID:?set RADIO_BY_ID to the stick's /dev/serial/by-id path}
-      HARNESS_TX_DBM: ${HARNESS_TX_DBM:-}
+      THREAD_TX_DBM: ${THREAD_TX_DBM:-}
     entrypoint: ["/bin/bash", "/entrypoint.sh"]
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f tcp-listen && ot-ctl state | grep -qE 'leader|router|child'"]

@@ -76,7 +76,7 @@ multiprotocol = _BorderRouter(
             "EZSP_TCP_PORT": "{ports.ezsp}",
             "OTBR_REST_PORT": "{ports.rest}",
             "THREAD_DATASET": "{settings.dataset}",
-            "HARNESS_TX_DBM": "{settings.tx_power}",
+            "THREAD_TX_DBM": "{settings.tx_power}",
         },
         "healthcheck": {
             "test": ["CMD-SHELL", "pgrep -f tcp-listen && ot-ctl state | grep -qE 'leader|router|child'"],
