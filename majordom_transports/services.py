@@ -47,7 +47,7 @@ class _FormingBorderRouter(_BorderRouter):
 #: One multi-PAN RCP serving Zigbee (zigbeed, EZSP over TCP) and Thread (OTBR) through cpcd.
 silabs_multiprotocol = _BorderRouter(
     "silabs-multiprotocol",
-    needs=[Need("cpc", ["uart"])],
+    needs=[Need("multipan", ["silabs-cpc"])],
     provides=[Endpoint("zigbee", "ezsp", "socket://127.0.0.1:{ports.ezsp}"), _OTBR_REST],
     settings=ThreadNetwork,
     ports={"ezsp": 9999, "rest": 8081},
@@ -59,7 +59,7 @@ silabs_multiprotocol = _BorderRouter(
         "network_mode": "host",
         "hostname": "majordom-thread",  # its mDNS daemon announces this, not the hub's own name
         # a privileged container sees the host's /dev: a common name (ttyACM0) would be the host's own device
-        "devices": ["{links.cpc.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
+        "devices": ["{links.multipan.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
         "volumes": [
             f"{_IMAGES}/multiprotocol/cpcd.conf:/usr/local/etc/cpcd.conf:ro",
             f"{_IMAGES}/multiprotocol/entrypoint.sh:/entrypoint.sh:ro",
@@ -70,8 +70,8 @@ silabs_multiprotocol = _BorderRouter(
         "tmpfs": ["/run:exec,mode=1777"],
         "entrypoint": ["/bin/bash", "/entrypoint.sh"],
         "environment": {
-            "RADIO_BAUD": "{links.cpc.params[baud]}",
-            "RADIO_FLOW_CONTROL": "{links.cpc.params[flow_control]}",
+            "RADIO_BAUD": "{links.multipan.params[baud]}",
+            "RADIO_FLOW_CONTROL": "{links.multipan.params[flow_control]}",
             "BACKBONE_IF": "{host.interface}",
             "EZSP_TCP_PORT": "{ports.ezsp}",
             "OTBR_REST_PORT": "{ports.rest}",

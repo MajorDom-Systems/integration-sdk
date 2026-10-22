@@ -13,7 +13,7 @@ MATTER_SERVER = Service(
     "matterjs-server",
     compose={"image": "matter", "environment": {"OTBR": "{links.thread.url}", "REGION": "{context.region}"}},
     needs=[Need("ip"), Need("thread", ["otbr-rest"], required=False)],
-    provides=[Endpoint("matter", "ws", "ws://127.0.0.1:5580/ws")],
+    provides=[Endpoint("matter", "matter-server-ws", "ws://127.0.0.1:5580/ws")],
 )
 
 
@@ -35,7 +35,7 @@ class Zigbee:
 
 
 class Matter:
-    needs = [Need("matter", ["ws"])]
+    needs = [Need("matter", ["matter-server-ws"])]
     services = [MATTER_SERVER]
     settings = None
 
@@ -93,7 +93,7 @@ def compose(tmp_path):
 
 
 async def test_multipan_stick_serves_zigbee_and_matter_through_one_service(tmp_path, stick):
-    path = stick("sky", driver="silabs", firmware="multipan")
+    path = stick("sky", driver="silabs", firmware="multipan-rcp")
     rt = runtime(tmp_path, [path])
     await rt.refresh()
 
@@ -109,8 +109,8 @@ async def test_multipan_stick_serves_zigbee_and_matter_through_one_service(tmp_p
 
 
 async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp_path, stick):
-    ncp = stick("ncp", driver="silabs", firmware="zigbee")
-    rcp = stick("rcp", driver="silabs", firmware="thread")
+    ncp = stick("ncp", driver="silabs", firmware="zigbee-ncp")
+    rcp = stick("rcp", driver="silabs", firmware="thread-rcp")
     rt = runtime(tmp_path, [ncp, rcp])
     await rt.refresh()
 
@@ -122,13 +122,13 @@ async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp
 
 
 async def test_serial_settings_come_from_the_firmware_or_the_board(tmp_path, stick):
-    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan")])
+    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan-rcp")])
     await rt.refresh()
     environment = compose(tmp_path)["silabs-multiprotocol"]["environment"]
     assert (environment["RADIO_BAUD"], environment["RADIO_FLOW_CONTROL"]) == ("460800", "True")
 
     (tmp_path / "ttyAMA3").touch()  # soldered: its board wires the UART without flow control
-    board = {"id": "mg26", "path": str(tmp_path / "ttyAMA3"), "driver": "silabs", "firmware": "thread"}
+    board = {"id": "mg26", "path": str(tmp_path / "ttyAMA3"), "driver": "silabs", "firmware": "thread-rcp"}
     rt = runtime(tmp_path / "board", board=[board | {"params": {"baud": 115200, "flow_control": False}}])
     await rt.refresh()
     rcp_url = "spinel+hdlc+uart:///dev/ttyRCP?uart-baudrate=115200"
@@ -145,7 +145,7 @@ async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
 
 
 async def test_pinned_endpoint_replaces_the_border_router(tmp_path, stick):
-    rcp = stick("rcp", driver="silabs", firmware="thread")
+    rcp = stick("rcp", driver="silabs", firmware="thread-rcp")
     rt = runtime(tmp_path, [rcp], pinned={"thread": Endpoint("thread", "otbr-rest", "http://mine:8081", shared=True)})
     await rt.refresh()
 
@@ -165,8 +165,8 @@ async def test_unknown_stick_is_recognised_by_an_integration_probe(tmp_path, mon
 
 
 async def test_user_pin_picks_between_two_providers(tmp_path, stick):
-    sky = stick("sky", driver="silabs", firmware="multipan")
-    rcp = stick("rcp", driver="silabs", firmware="thread")
+    sky = stick("sky", driver="silabs", firmware="multipan-rcp")
+    rcp = stick("rcp", driver="silabs", firmware="thread-rcp")
     rt = runtime(tmp_path, [sky, rcp])
     await rt.refresh()
     assert rt.providers("matterjs-server")["thread"] == "silabs-multiprotocol"
@@ -201,7 +201,7 @@ async def test_a_service_setting_recreates_only_that_service(tmp_path, stick, mo
         return "0e08"
 
     monkeypatch.setattr("majordom_transports.services.active_dataset", dataset)
-    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan")], on_change=changed)
+    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan-rcp")], on_change=changed)
     await rt.refresh()
     await settle(rt)
     before = compose(tmp_path)
@@ -214,15 +214,19 @@ async def test_a_service_setting_recreates_only_that_service(tmp_path, stick, mo
 
 
 async def test_firmware_options_name_what_each_firmware_would_serve(tmp_path, stick):
-    stick("usb-Nabu_Casa_SkyConnect_v1.0_1-if00", driver="silabs", firmware="thread")
+    stick("usb-Nabu_Casa_SkyConnect_v1.0_1-if00", driver="silabs", firmware="thread-rcp")
     rt = runtime(tmp_path)
     assert rt.radios()[0].options == {}  # stable channel: nothing verified to flash yet
     await rt.update_settings("hub", {"firmware": "dev"})
-    assert rt.radios()[0].options == {"zigbee": ["zigbee"], "thread": ["thread"], "multipan": ["thread", "zigbee"]}
+    assert rt.radios()[0].options == {
+        "zigbee-ncp": ["zigbee"],
+        "thread-rcp": ["thread"],
+        "multipan-rcp": ["thread", "zigbee"],
+    }
 
 
 async def test_services_get_free_host_ports_and_keep_them(tmp_path, stick, listening):
-    sky = stick("sky", driver="silabs", firmware="multipan")
+    sky = stick("sky", driver="silabs", firmware="multipan-rcp")
     rt = runtime(tmp_path, [sky])
     await rt.refresh()
     assert rt.links("zigbee")["zigbee"].url == "socket://127.0.0.1:9999"  # the preferred port, free
@@ -242,7 +246,7 @@ async def test_services_get_free_host_ports_and_keep_them(tmp_path, stick, liste
 
 
 async def test_a_port_held_by_our_own_running_container_is_kept(tmp_path, stick, listening, monkeypatch):
-    sky = stick("sky", driver="silabs", firmware="multipan")
+    sky = stick("sky", driver="silabs", firmware="multipan-rcp")
     rt = runtime(tmp_path, [sky])
     await rt.refresh()
     listening.update({9999, 8081})  # our silabs-multiprotocol container is up and holds them
@@ -260,7 +264,7 @@ async def test_services_preferring_the_same_port_get_different_ones(tmp_path, st
     bridge = Service(
         "bridge",
         {"image": "bridge", "command": ["--port", "{ports.api}"]},
-        provides=[Endpoint("matter", "ws", "ws://127.0.0.1:{ports.api}/ws")],
+        provides=[Endpoint("matter", "matter-server-ws", "ws://127.0.0.1:{ports.api}/ws")],
         ports={"api": 9999},
     )
 
@@ -268,7 +272,7 @@ async def test_services_preferring_the_same_port_get_different_ones(tmp_path, st
         services = [bridge]
 
     consumers: dict[str, Any] = {"zigbee": Zigbee, "matter": Bridged}
-    path = stick("sky", driver="silabs", firmware="multipan")
+    path = stick("sky", driver="silabs", firmware="multipan-rcp")
     rt = Runtime(tmp_path / "data", consumers, docker=False, scan=False, devices={"sky": path})
     await rt.refresh()
     zigbee, matter = rt.links("zigbee") or {}, rt.links("matter") or {}
@@ -353,7 +357,7 @@ async def test_recreating_services_keeps_the_thread_network_known(tmp_path, stic
         seen.append(rt.context().thread_dataset)
 
     monkeypatch.setattr("majordom_transports.services.active_dataset", dataset)
-    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan")], on_change=changed)
+    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan-rcp")], on_change=changed)
     await rt.refresh()
     await settle(rt)
     await rt.update_settings("hub", {"region": "Europe"})  # recreates matter-server
@@ -371,7 +375,7 @@ async def test_only_known_radios_are_opened_until_asked(tmp_path, monkeypatch):
     class Silabs(module.DRIVERS["silabs"].__class__):
         async def identify(self, path):
             opened.append(path.rsplit("/", 1)[1])
-            return "multipan" if path.endswith("sky") else None
+            return "multipan-rcp" if path.endswith("sky") else None
 
     monkeypatch.setattr(module, "DRIVERS", {"silabs": Silabs()})
     monkeypatch.setattr(module, "glob", lambda pattern: [f"/dev/serial/by-id/{name}" for name in usb])
@@ -395,7 +399,7 @@ async def test_a_stick_another_program_holds_is_left_alone_until_claimed(tmp_pat
     class Silabs(drivers.Silabs):
         async def identify(self, path):
             opened.append(path)
-            return "zigbee"
+            return "zigbee-ncp"
 
     monkeypatch.setattr(module, "DRIVERS", {"silabs": Silabs()})
     monkeypatch.setattr(module, "glob", lambda pattern: ["/dev/serial/by-id/sky"] if "serial" in pattern else [])
@@ -415,7 +419,7 @@ async def test_a_stick_another_program_holds_is_left_alone_until_claimed(tmp_pat
 
 
 async def test_a_known_stick_another_program_took_is_not_bound(tmp_path, stick, held):
-    path = stick("ncp", driver="silabs", firmware="zigbee")
+    path = stick("ncp", driver="silabs", firmware="zigbee-ncp")
     held["ncp"] = "node"
     rt = runtime(tmp_path, [path])
     await rt.refresh()
@@ -427,7 +431,7 @@ async def test_a_known_stick_another_program_took_is_not_bound(tmp_path, stick, 
 
 
 async def test_a_stick_is_used_once_the_other_program_lets_go(tmp_path, stick, held):
-    path = stick("ncp", driver="silabs", firmware="zigbee")
+    path = stick("ncp", driver="silabs", firmware="zigbee-ncp")
     held["ncp"] = "node"
     rt = runtime(tmp_path, [path], poll=0.01)
     await rt.start()
@@ -443,13 +447,13 @@ async def test_a_stick_is_used_once_the_other_program_lets_go(tmp_path, stick, h
 async def test_a_radio_is_released_before_it_is_probed_again(tmp_path, stick, monkeypatch):
     from majordom_transports import runtime as module
 
-    path = stick("sky", driver="silabs", firmware="multipan")
+    path = stick("sky", driver="silabs", firmware="multipan-rcp")
     running_while_probed = []
 
     class Silabs(module.DRIVERS["silabs"].__class__):
         async def identify(self, path):
             running_while_probed.append(set(compose(tmp_path)))
-            return "multipan"
+            return "multipan-rcp"
 
     monkeypatch.setattr(module, "DRIVERS", {"silabs": Silabs()})
     rt = runtime(tmp_path, [path])
@@ -491,7 +495,7 @@ async def test_a_failed_compose_up_is_retried_on_the_next_refresh(tmp_path, stic
         return Process()
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", docker)
-    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan")])
+    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan-rcp")])
     rt.docker = True
 
     await rt.refresh()
@@ -510,7 +514,7 @@ async def test_a_stick_that_comes_back_on_another_tty_is_followed(tmp_path):
     link.symlink_to(tmp_path / "ttyUSB0")
     state = tmp_path / "data" / "state.json"
     state.parent.mkdir()
-    entry = {"path": str(link), "driver": "silabs", "firmware": "multipan"}
+    entry = {"path": str(link), "driver": "silabs", "firmware": "multipan-rcp"}
     state.write_text(json.dumps({"radios": {link.name: entry}}))
     rt = runtime(tmp_path, [str(link)], poll=0.01)
     await rt.start()
@@ -542,7 +546,7 @@ async def test_restarting_a_service_restarts_only_its_container(tmp_path, stick,
     async def changed():
         changes.append(1)
 
-    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan")], on_change=changed)
+    rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan-rcp")], on_change=changed)
     await rt.refresh()
     monkeypatch.setattr("asyncio.create_subprocess_exec", docker)
     rt.docker = True

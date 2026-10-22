@@ -48,30 +48,30 @@ class Silabs(RadioDriver):
     """Silicon Labs EFR32 sticks: Zigbee NCP (EZSP), Thread RCP (Spinel) or multi-PAN RCP (CPC)."""
 
     firmwares = {
-        "zigbee": [Endpoint("zigbee", "ezsp", "{device}", params={"baud": 115200, "flow_control": True})],
-        "thread": [Endpoint("thread", "spinel", "{device}", params={"baud": 460800, "flow_control": True})],
-        "multipan": [Endpoint("cpc", "uart", "{device}", params={"baud": 460800, "flow_control": True})],
+        "zigbee-ncp": [Endpoint("zigbee", "ezsp", "{device}", params={"baud": 115200, "flow_control": True})],
+        "thread-rcp": [Endpoint("thread", "spinel", "{device}", params={"baud": 460800, "flow_control": True})],
+        "multipan-rcp": [Endpoint("multipan", "silabs-cpc", "{device}", params={"baud": 460800, "flow_control": True})],
     }
 
     #: Builds per board, keyed by the product name in the stick's /dev/serial/by-id path.
     boards: ClassVar[dict[str, dict[str, Firmware]]] = {
         "SkyConnect": {
-            "zigbee": Firmware(
+            "zigbee-ncp": Firmware(
                 f"{_NABUCASA}/v2025.11.24/skyconnect_zigbee_ncp_7.4.4.5.gbl",
                 "9a189c5797ee4ac975c0a5ebdd96b126332ac348cab27d065bd58e993e7bb7b0",
             ),
-            "thread": Firmware(
+            "thread-rcp": Firmware(
                 f"{_NABUCASA}/v2025.11.24/skyconnect_openthread_rcp_2.4.4.0_GitHub-7074a43e4_gsdk_4.4.4.gbl",
                 "4cb5d04f4fab827745665104110fe1d272e4eb9bc38d1f496abb0311ef76e062",
             ),
-            "multipan": Firmware(
+            "multipan-rcp": Firmware(
                 f"{_NABUCASA}/v2024.8.20/skyconnect_rcp-uart-802154_gsdk_4.4.4.gbl",
                 "2140cfb06d2957e610057888a80fa068cf1bdacdbadb51ba430e2c8e1907a8bb",
             ),
         },
     }
 
-    _apps = {"EZSP": "zigbee", "SPINEL": "thread", "CPC": "multipan"}
+    _apps = {"EZSP": "zigbee-ncp", "SPINEL": "thread-rcp", "CPC": "multipan-rcp"}
 
     async def identify(self, path: str) -> str | None:
         found = re.search(r"Detected ApplicationType\.(\w+)", await _flasher(path, "probe"))
@@ -98,10 +98,12 @@ class Silabs(RadioDriver):
 class ZWave(RadioDriver):
     """Z-Wave controllers speaking the Serial API (any vendor)."""
 
-    firmwares = {"zwave": [Endpoint("zwave", "serial", "{device}", params={"baud": 115200, "flow_control": False})]}
+    firmwares = {
+        "serial-api": [Endpoint("zwave", "serial-api", "{device}", params={"baud": 115200, "flow_control": False})]
+    }
 
     async def identify(self, path: str) -> str | None:
-        return "zwave" if await asyncio.to_thread(_zwave_answers, path) else None
+        return "serial-api" if await asyncio.to_thread(_zwave_answers, path) else None
 
 
 def _zwave_answers(path: str) -> bool:
