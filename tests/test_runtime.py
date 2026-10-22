@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from majordom_transports import Runtime
 
-MATTER_SERVER = Service(
+MATTERJS_SERVER = Service(
     "matterjs-server",
     compose={"image": "matter", "environment": {"OTBR": "{links.thread.url}", "REGION": "{context.region}"}},
     needs=[Need("ip"), Need("thread", ["otbr-rest"], required=False)],
@@ -36,7 +36,7 @@ class Zigbee:
 
 class Matter:
     needs = [Need("matter", ["matter-server-ws"])]
-    services = [MATTER_SERVER]
+    services = [MATTERJS_SERVER]
     settings = None
 
     @classmethod
