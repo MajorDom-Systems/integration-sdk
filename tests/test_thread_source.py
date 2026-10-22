@@ -117,5 +117,5 @@ def test_without_a_thread_interface_nothing_changes(host):
 
 def test_both_border_routers_run_it():
     assert f"{SCRIPT.parent}:/etc/services.d/thread-source:ro" in services.otbr.compose["volumes"]  # s6 starts it
-    assert f"{SCRIPT}:/thread-source:ro" in services.multiprotocol.compose["volumes"]
+    assert f"{SCRIPT}:/thread-source:ro" in services.silabs_multiprotocol.compose["volumes"]
     assert "bash /thread-source &" in (services._IMAGES / "multiprotocol" / "entrypoint.sh").read_text()

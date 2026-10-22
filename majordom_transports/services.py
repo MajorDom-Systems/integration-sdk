@@ -45,8 +45,8 @@ class _FormingBorderRouter(_BorderRouter):
 
 
 #: One multi-PAN RCP serving Zigbee (zigbeed, EZSP over TCP) and Thread (OTBR) through cpcd.
-multiprotocol = _BorderRouter(
-    "multiprotocol",
+silabs_multiprotocol = _BorderRouter(
+    "silabs-multiprotocol",
     needs=[Need("cpc", ["uart"])],
     provides=[Endpoint("zigbee", "ezsp", "socket://127.0.0.1:{ports.ezsp}"), _OTBR_REST],
     settings=ThreadNetwork,
@@ -121,7 +121,7 @@ otbr = _FormingBorderRouter(
     },
 )
 
-SERVICES = [multiprotocol, otbr]
+SERVICES = [silabs_multiprotocol, otbr]
 
 
 def _call(url: str, method: str, path: str, body: str | None = None, kind: str = "text/plain") -> str:

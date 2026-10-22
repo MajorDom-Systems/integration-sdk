@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from majordom_transports import Runtime
 
 MATTER_SERVER = Service(
-    "matter-server",
+    "matterjs-server",
     compose={"image": "matter", "environment": {"OTBR": "{links.thread.url}", "REGION": "{context.region}"}},
     needs=[Need("ip"), Need("thread", ["otbr-rest"], required=False)],
     provides=[Endpoint("matter", "ws", "ws://127.0.0.1:5580/ws")],
@@ -100,10 +100,10 @@ async def test_multipan_stick_serves_zigbee_and_matter_through_one_service(tmp_p
     assert rt.links("zigbee") == {"zigbee": Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999")}
     assert rt.links("matter")["matter"].url == "ws://127.0.0.1:5580/ws"
     services = compose(tmp_path)
-    assert set(services) == {"multiprotocol", "matter-server"}
-    assert services["multiprotocol"]["devices"][0] == f"{path}:/dev/ttyRCP"
-    assert services["matter-server"]["environment"]["OTBR"] == "http://127.0.0.1:8081"
-    assert "depends_on" not in services["matter-server"]  # its border router coming and going doesn't restart it
+    assert set(services) == {"silabs-multiprotocol", "matterjs-server"}
+    assert services["silabs-multiprotocol"]["devices"][0] == f"{path}:/dev/ttyRCP"
+    assert services["matterjs-server"]["environment"]["OTBR"] == "http://127.0.0.1:8081"
+    assert "depends_on" not in services["matterjs-server"]  # its border router coming and going doesn't restart it
     assert rt.radios()[0].used_by == ["zigbee", "matter"]
     assert rt.radios()[0].offers == ["thread", "zigbee"]
 
@@ -115,7 +115,7 @@ async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp
     await rt.refresh()
 
     assert rt.links("zigbee") == {"zigbee": Endpoint("zigbee", "ezsp", ncp, params=NCP)}
-    assert set(compose(tmp_path)) == {"otbr", "matter-server"}
+    assert set(compose(tmp_path)) == {"otbr", "matterjs-server"}
     assert compose(tmp_path)["otbr"]["devices"][0] == f"{rcp}:/dev/ttyRCP"
     rcp_url = "spinel+hdlc+uart:///dev/ttyRCP?uart-baudrate=460800&uart-flow-control"
     assert compose(tmp_path)["otbr"]["environment"]["OT_RCP_DEVICE"] == rcp_url
@@ -124,7 +124,7 @@ async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp
 async def test_serial_settings_come_from_the_firmware_or_the_board(tmp_path, stick):
     rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan")])
     await rt.refresh()
-    environment = compose(tmp_path)["multiprotocol"]["environment"]
+    environment = compose(tmp_path)["silabs-multiprotocol"]["environment"]
     assert (environment["RADIO_BAUD"], environment["RADIO_FLOW_CONTROL"]) == ("460800", "True")
 
     (tmp_path / "ttyAMA3").touch()  # soldered: its board wires the UART without flow control
@@ -141,7 +141,7 @@ async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
 
     assert rt.links("zigbee") is None
     assert rt.links("matter") is not None
-    assert compose(tmp_path)["matter-server"]["environment"]["OTBR"] == ""
+    assert compose(tmp_path)["matterjs-server"]["environment"]["OTBR"] == ""
 
 
 async def test_pinned_endpoint_replaces_the_border_router(tmp_path, stick):
@@ -149,8 +149,8 @@ async def test_pinned_endpoint_replaces_the_border_router(tmp_path, stick):
     rt = runtime(tmp_path, [rcp], pinned={"thread": Endpoint("thread", "otbr-rest", "http://mine:8081", shared=True)})
     await rt.refresh()
 
-    assert set(compose(tmp_path)) == {"matter-server"}
-    assert compose(tmp_path)["matter-server"]["environment"]["OTBR"] == "http://mine:8081"
+    assert set(compose(tmp_path)) == {"matterjs-server"}
+    assert compose(tmp_path)["matterjs-server"]["environment"]["OTBR"] == "http://mine:8081"
 
 
 async def test_unknown_stick_is_recognised_by_an_integration_probe(tmp_path, monkeypatch):
@@ -169,10 +169,10 @@ async def test_user_pin_picks_between_two_providers(tmp_path, stick):
     rcp = stick("rcp", driver="silabs", firmware="thread")
     rt = runtime(tmp_path, [sky, rcp])
     await rt.refresh()
-    assert rt.providers("matter-server")["thread"] == "multiprotocol"
+    assert rt.providers("matterjs-server")["thread"] == "silabs-multiprotocol"
 
     await rt.pin("thread", "otbr")
-    assert rt.providers("matter-server")["thread"] == "otbr"
+    assert rt.providers("matterjs-server")["thread"] == "otbr"
 
 
 async def test_settings_persist_and_feed_context(tmp_path):
@@ -185,7 +185,7 @@ async def test_settings_persist_and_feed_context(tmp_path):
     wifi = [{"ssid": "iot", "password": "x"}]
     await rt.update_settings("hub", {"region": "Europe", "wifi": wifi, "wifi_ssid": "iot"})
     assert rt.context().region == "Europe"
-    assert compose(tmp_path)["matter-server"]["environment"]["REGION"] == "Europe"
+    assert compose(tmp_path)["matterjs-server"]["environment"]["REGION"] == "Europe"
     assert rt.context().wifi == WifiCredentials("iot", "x")
     assert rt.settings_scopes("matter") == []
 
@@ -206,10 +206,10 @@ async def test_a_service_setting_recreates_only_that_service(tmp_path, stick, mo
     await settle(rt)
     before = compose(tmp_path)
 
-    await rt.update_settings("multiprotocol", {"tx_power": -10})
+    await rt.update_settings("silabs-multiprotocol", {"tx_power": -10})
     await settle(rt)
     after = compose(tmp_path)
-    assert {name for name in before if before[name] != after[name]} == {"multiprotocol"}
+    assert {name for name in before if before[name] != after[name]} == {"silabs-multiprotocol"}
     assert changes[-1] == changes[-2]  # nothing an integration sees changed: none restarts
 
 
@@ -226,14 +226,14 @@ async def test_services_get_free_host_ports_and_keep_them(tmp_path, stick, liste
     rt = runtime(tmp_path, [sky])
     await rt.refresh()
     assert rt.links("zigbee")["zigbee"].url == "socket://127.0.0.1:9999"  # the preferred port, free
-    assert compose(tmp_path)["multiprotocol"]["environment"]["EZSP_TCP_PORT"] == "9999"
+    assert compose(tmp_path)["silabs-multiprotocol"]["environment"]["EZSP_TCP_PORT"] == "9999"
 
     listening.add(9999)  # after a reboot something else took it before our container came up
     rt = runtime(tmp_path, [sky])
     await rt.refresh()
     moved = rt.links("zigbee")["zigbee"].url
     assert moved != "socket://127.0.0.1:9999"
-    assert compose(tmp_path)["multiprotocol"]["environment"]["EZSP_TCP_PORT"] == moved.rsplit(":", 1)[1]
+    assert compose(tmp_path)["silabs-multiprotocol"]["environment"]["EZSP_TCP_PORT"] == moved.rsplit(":", 1)[1]
 
     listening.clear()  # the preferred port is free again: the service stays where it is now
     rt = runtime(tmp_path, [sky])
@@ -245,10 +245,10 @@ async def test_a_port_held_by_our_own_running_container_is_kept(tmp_path, stick,
     sky = stick("sky", driver="silabs", firmware="multipan")
     rt = runtime(tmp_path, [sky])
     await rt.refresh()
-    listening.update({9999, 8081})  # our multiprotocol container is up and holds them
+    listening.update({9999, 8081})  # our silabs-multiprotocol container is up and holds them
 
     async def running(self):
-        return {"multiprotocol"}
+        return {"silabs-multiprotocol"}
 
     monkeypatch.setattr(Runtime, "_running", running)
     rt = runtime(tmp_path, [sky])
@@ -454,11 +454,11 @@ async def test_a_radio_is_released_before_it_is_probed_again(tmp_path, stick, mo
     monkeypatch.setattr(module, "DRIVERS", {"silabs": Silabs()})
     rt = runtime(tmp_path, [path])
     await rt.refresh()
-    assert "multiprotocol" in compose(tmp_path)
+    assert "silabs-multiprotocol" in compose(tmp_path)
 
     await rt.forget("sky")  # plugged in: identified again, after the multi-PAN service let go of the stick
-    assert running_while_probed == [{"matter-server"}]
-    assert "multiprotocol" in compose(tmp_path)
+    assert running_while_probed == [{"matterjs-server"}]
+    assert "silabs-multiprotocol" in compose(tmp_path)
 
 
 async def test_a_probe_that_never_answers_gives_up(tmp_path, monkeypatch):
@@ -514,12 +514,14 @@ async def test_a_stick_that_comes_back_on_another_tty_is_followed(tmp_path):
     state.write_text(json.dumps({"radios": {link.name: entry}}))
     rt = runtime(tmp_path, [str(link)], poll=0.01)
     await rt.start()
-    assert compose(tmp_path)["multiprotocol"]["devices"][0].startswith(f"{(tmp_path / 'ttyUSB0').resolve()}:")
+    assert compose(tmp_path)["silabs-multiprotocol"]["devices"][0].startswith(f"{(tmp_path / 'ttyUSB0').resolve()}:")
 
     link.unlink()
     link.symlink_to(tmp_path / "ttyUSB4")
     async with asyncio.timeout(2):
-        while not compose(tmp_path)["multiprotocol"]["devices"][0].startswith(f"{(tmp_path / 'ttyUSB4').resolve()}:"):
+        while not compose(tmp_path)["silabs-multiprotocol"]["devices"][0].startswith(
+            f"{(tmp_path / 'ttyUSB4').resolve()}:"
+        ):
             await asyncio.sleep(0.01)
     await rt.stop()
 
@@ -545,8 +547,8 @@ async def test_restarting_a_service_restarts_only_its_container(tmp_path, stick,
     monkeypatch.setattr("asyncio.create_subprocess_exec", docker)
     rt.docker = True
 
-    await rt.restart("multiprotocol")
-    assert calls[-1][-2:] == ("restart", "multiprotocol")
+    await rt.restart("silabs-multiprotocol")
+    assert calls[-1][-2:] == ("restart", "silabs-multiprotocol")
     assert changes == [1]  # integrations aren't told: they reconnect on their own
     with pytest.raises(LookupError):
         await rt.restart("otbr")  # not running

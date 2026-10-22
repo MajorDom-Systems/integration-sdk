@@ -1,5 +1,5 @@
-# Harness: the stack the runtime runs for a multi-PAN stick (services.py `multiprotocol`) and
-# integration-matter's matter-server (its config.py), as static services for a host without the hub.
+# Harness: the stack the runtime runs for a multi-PAN stick (services.py `silabs-multiprotocol`) and
+# integration-matter's matterjs-server (its config.py), as static services for a host without the hub.
 # Keep both in step with those definitions.
 #   RADIO_BY_ID=/dev/serial/by-id/<stick> docker compose up -d --build
 services:
@@ -30,9 +30,9 @@ services:
       interval: 10s
       start_period: 120s
       retries: 3
-  matter-server:
+  matterjs-server:
     image: ghcr.io/matter-js/matterjs-server@sha256:bcaacf6b2b2df9ce2b929ad7469d5380a4d627f05f790e201d127e8b65af5b0e
-    container_name: matter-server
+    container_name: matterjs-server
     restart: unless-stopped
     network_mode: host
     userns_mode: host
