@@ -116,7 +116,7 @@ async def run_controller(
 ) -> None:
     """Instantiate ``controller_type``, start it and its discovery services, and run until
     interrupted (Ctrl-C), then stop everything cleanly. ``dependencies`` override fields of
-    `AbstractController.Dependencies`, e.g. ``links={"zwave": Endpoint("zwave", "ws", url)}``."""
+    `AbstractController.Dependencies`, e.g. ``links={"zwave": Endpoint("zwave", "zwave-js-ws", url)}``."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
     # The integration's identity is class-level, so its repository and documents folder can be

@@ -18,8 +18,8 @@ def test_controller_declarations_default_to_nothing():
 
 async def test_service_hooks_default_to_nothing():
     service = Service("server", compose={})
-    assert await service.provision(Endpoint("matter", "ws", "ws://127.0.0.1:5580/ws"), None) is None
-    assert await service.learn(Endpoint("matter", "ws", "ws://127.0.0.1:5580/ws")) == {}
+    assert await service.provision(Endpoint("matter", "matter-server-ws", "ws://127.0.0.1:5580/ws"), None) is None
+    assert await service.learn(Endpoint("matter", "matter-server-ws", "ws://127.0.0.1:5580/ws")) == {}
 
 
 def test_services_name_no_host_ports_by_default():
@@ -37,4 +37,4 @@ async def test_without_a_runtime_services_cant_be_restarted():
     from majordom_integration_sdk.testing import build_test_dependencies
 
     with pytest.raises(NotImplementedError):
-        await build_test_dependencies().services.restart("matter-server")
+        await build_test_dependencies().services.restart("matterjs-server")

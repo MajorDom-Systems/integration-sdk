@@ -1,6 +1,6 @@
 """The language integrations and transports share to describe what they need and what they offer.
 
-A capability is ``family/dialect``: ``zigbee/ezsp``, ``thread/spinel``, ``matter/ws``. Controllers and
+A capability is ``family/dialect``: ``zigbee/ezsp``, ``thread/spinel``, ``matter/matter-server-ws``. Controllers and
 services declare `Need`s; radios and services offer `Endpoint`s. A runtime (majordom-transports, or
 you by hand in library mode) binds them and hands every consumer a concrete `Endpoint` per family.
 """
@@ -49,7 +49,7 @@ class Need:
 @dataclass(frozen=True)
 class Service:
     """What the integration provides to its environment: a companion server it brings along, such as
-    Matter's matter-server. The runtime runs it as a container only while something is bound to one
+    Matter's matterjs-server. The runtime runs it as a container only while something is bound to one
     of its endpoints.
 
     ``compose`` is its Docker Compose service definition (image, environment, volumes, …); its strings
