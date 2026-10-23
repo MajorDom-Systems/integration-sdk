@@ -766,12 +766,13 @@ def _listening(port: int) -> bool:
 
 
 def _host_endpoints() -> list[Endpoint]:
-    """IP, and every Bluetooth adapter as its own single-use ``ble/bluez`` endpoint (the router takes them all, unless
-    one is reserved); off Linux, bleak's default adapter on the OS's own stack."""
+    """IP, and every Bluetooth adapter as its own single-use ``ble/bluez`` endpoint with its ``index`` (the router takes
+    them all, unless one is reserved); off Linux, bleak's default adapter on the OS's own stack."""
     adapters = sorted(Path(p).name for p in glob("/sys/class/bluetooth/hci*") if ":" not in Path(p).name)
     if sys.platform != "linux":
         adapters = [""]
-    return [Endpoint("ip", shared=True), *(Endpoint("ble", "bluez", name) for name in adapters)]
+    ble = [Endpoint("ble", "bluez", name, params={"index": name.removeprefix("hci")}) for name in adapters]
+    return [Endpoint("ip", shared=True), *ble]
 
 
 class _Peripherals(dict):
@@ -809,9 +810,12 @@ class _Host:
 
 
 class _Formatter(string.Formatter):
-    """None renders empty; a flag with a format spec renders the spec when set: ``{x:&uart-flow-control}``."""
+    """None renders empty; a flag with a format spec renders the spec when set: ``{x:&uart-flow-control}``; a ``!`` spec
+    renders what follows when the value is empty, e.g. a proxy without an adapter: ``{peripherals.ble.url:!true}``."""
 
     def format_field(self, value: Any, format_spec: str) -> str:
+        if format_spec.startswith("!"):
+            return "" if value else format_spec[1:]
         if isinstance(value, bool) and format_spec:
             return format_spec if value else ""
         return "" if value is None else super().format_field(value, format_spec)

@@ -207,3 +207,41 @@ def _platform(tmp_path):
     from majordom_integration_sdk.testing import build_test_platform
 
     return build_test_platform(tmp_path / "docs")
+
+
+async def test_a_service_hears_whether_it_got_an_adapter(tmp_path):
+    server = Service(
+        "matterjs-server",
+        {"image": "m", "environment": {"BLE_PROXY": "{peripherals.ble.url:!true}", "ADAPTER": "{peripherals.ble.url}"}},
+        [Need("ble", ["bluez"], required=False)],
+        [Endpoint("matter", "matter-server", "ws")],
+    )
+    rt = runtime(tmp_path, {"matter": consumer(Need("matter"), services=[server])}, FakeBLERouter())
+    await rt.refresh()
+
+    def environment() -> dict[str, str]:
+        return json.loads((tmp_path / "data" / "compose.json").read_text())["services"]["matterjs-server"][
+            "environment"
+        ]
+
+    assert environment() == {"BLE_PROXY": "true", "ADAPTER": ""}  # the router has every adapter: lend it over /ble
+
+    await rt.reserve("matterjs-server", "ble", "hci1")
+    assert environment() == {"BLE_PROXY": "", "ADAPTER": "hci1"}
+
+
+def test_the_host_offers_every_adapter_with_its_index(monkeypatch):
+    from majordom_integration_sdk.runtime import runtime as module
+
+    monkeypatch.undo()  # the real one, over a fake /sys
+    monkeypatch.setattr(
+        module,
+        "glob",
+        lambda pattern: ["/sys/class/bluetooth/hci1", "/sys/class/bluetooth/hci0", "/sys/class/bluetooth/hci0:1"],
+    )
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    assert module._host_endpoints() == [
+        Endpoint("ip", shared=True),
+        Endpoint("ble", "bluez", "hci0", params={"index": "0"}),
+        Endpoint("ble", "bluez", "hci1", params={"index": "1"}),
+    ]
