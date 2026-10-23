@@ -7,33 +7,18 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import ClassVar, Protocol, cast, final
+from typing import ClassVar, cast, final
 from uuid import UUID, uuid5
 
 from pydantic import BaseModel
 from slugify import slugify
 
-from majordom_integration_sdk.discovery.ble_discovery import BLEDiscoveryService
-from majordom_integration_sdk.discovery.ssdp_discovery import SSDPDiscoveryService
-from majordom_integration_sdk.discovery.zeroconf_discovery import ZeroconfDiscoveryService
-from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtocol
+from majordom_integration_sdk.controller.platform import Context, Platform
+from majordom_integration_sdk.peripherals import Bound, Endpoint, Need, PeripheralChange, Peripherals, Service
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
-from majordom_integration_sdk.schemas.event import Event
-from majordom_integration_sdk.schemas.notification import Notification
-from majordom_integration_sdk.transport import (
-    Context,
-    Endpoint,
-    Need,
-    NoServiceControl,
-    PeripheralChange,
-    Service,
-    ServiceControl,
-)
 
 _NAME_HELP = (
     "The integration name is auto-derived from your controller class name; set a class-level "
@@ -54,55 +39,6 @@ def _titleize(class_name: str) -> str:
     return " ".join(words) or base
 
 
-class ControllerOutput(Protocol):
-    """
-    Defines the callback interface for passing data from an integration back to the Hub.
-    An instance is injected by Hub into every controller via Dependencies.
-    """
-
-    async def controller_did_receive_discovery(self, controller: AbstractController, discovery: Discovery): ...
-    async def controller_did_update_discovery(self, controller: AbstractController, discovery: Discovery): ...
-    async def controller_did_lose_discovery(self, controller: AbstractController, discovery_id: UUID): ...
-
-    async def controller_did_connect_device(self, controller: AbstractController, device_id: UUID): ...
-
-    async def controller_did_lose_device(self, controller: AbstractController, device_id: UUID):
-        """Paired device became unreachable while the Hub is running (not just at startup/reboot)."""
-        ...
-
-    async def controller_did_receive_events(self, controller: AbstractController, events: Iterable[Event]):
-        """Report device-domain events (e.g. DeviceParameterChange) observed by the controller."""
-        ...
-
-    async def controller_did_encounter_error(
-        self,
-        controller: AbstractController,
-        message: str,
-        still_running: bool,
-    ):
-        """A user-facing problem the integration hit — surfaced to the user, not the developer.
-
-        Use this for things the user should know about or can act on (a wrong setup, an unplugged
-        radio); developer/technical detail goes to the logs instead. ``message`` is plain
-        language — include any call-to-action right in the text. Problems scoped to one device
-        belong on that device's ``last_error``, not here.
-
-        ``still_running`` is ``False`` when the controller can no longer run and is now inactive
-        — the Hub reflects it as a failed integration; the user is told it failed (and why, if
-        actionable) without a technical dump.
-        """
-        ...
-
-    async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):
-        """Surface a general user-facing notification — a floating tile in the app. Unlike
-        ``controller_did_encounter_error`` (specifically for failures/health), this is for anything
-        informational or advisory: a firmware update is available, a device needs a physical action,
-        a routine finished. The ``Notification`` carries the message plus its callout ``type``
-        (info/warning/error), delivery ``priority``, and ``ttl`` (seconds before auto-dismiss).
-        """
-        ...
-
-
 class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
     """
     Base class for all integration controllers.
@@ -115,37 +51,12 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
         if "name" not in cls.__dict__:
             cls.name = _titleize(cls.__name__)
 
-    @dataclass(frozen=True)
-    class Dependencies:
+    def __init__(self, platform: Platform, peripherals: Mapping[str, Bound] | None = None):
         """
-        Standardized dependencies injected by the Hub into every controller on construction.
+        Called by the Hub with the app's services and the bound needs. Do not change this signature.
         """
-
-        output: ControllerOutput
-        make_device_repository: Callable[[], AbstractAsyncContextManager[DeviceRepositoryProtocol]]
-        # The directory this integration may write files into that don't belong in the
-        # device database (certificates, protocol caches, …). The Hub computes and injects
-        # it per integration; the standalone dev runner points it at a local folder.
-        documents_folder: Path
-
-        # FUTURE: consider DI container
-        zeroconf_discovery_service: ZeroconfDiscoveryService
-        ssdp_discovery_service: SSDPDiscoveryService
-        ble_discovery_service: BLEDiscoveryService
-
-        links: Mapping[str, Endpoint] = field(default_factory=dict)  # bound `needs`, by family
-        settings: BaseModel | None = None  # validated instance of the controller's `settings` model
-        context: Context = field(default_factory=Context)
-        services: ServiceControl = field(default_factory=NoServiceControl)  # restarts the integration's `services`
-
-        def copy(self, **kwargs) -> AbstractController.Dependencies:
-            return replace(self, **kwargs)
-
-    def __init__(self, dependencies: Dependencies):
-        """
-        Called by the Hub with the injected dependencies. Do not change this signature.
-        """
-        self.dependencies = dependencies
+        self.platform = platform
+        self.peripherals = Peripherals(peripherals or {})
 
     # Abstract
 
@@ -173,13 +84,15 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
 
     It identifies the integration, so it's a constant of the class rather than per-instance
     state — the Hub reads it (and `slug()`) off the class to wire an integration's
-    dependencies *before* the controller exists.
+    peripherals and platform *before* the controller exists.
     """
 
     needs: ClassVar[Sequence[Need]] = ()
-    """What the integration requires from its environment: dependencies something else must provide,
-    e.g. ``[Need("zigbee", ["ezsp"])]``. Bound ones arrive in ``dependencies.links`` keyed by family; in library
-    mode pass them yourself."""
+    """What the integration requires from its environment: everything external, which something else must provide —
+    radios (``Need("zigbee", ["ezsp"])``), the Bluetooth router (``Need("ble", ["router"])``), DNS-SD
+    (``Need("mdns", ["dns-sd"])``), SSDP (``Need("upnp", ["ssdp"])``) and the services it brings. Bound ones arrive in
+    ``self.peripherals`` keyed by family; in library mode pass them yourself. Never need raw Bluetooth: the router
+    holds every radio."""
 
     services: ClassVar[Sequence[Service]] = ()
     """What the integration provides to its environment: companion servers it brings along (Matter:
@@ -187,32 +100,32 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
     `Need`s what they provide."""
 
     settings: ClassVar[type[BaseModel] | None] = None
-    """User-facing options as a pydantic model; the validated instance arrives in ``dependencies.settings``."""
+    """User-facing options as a pydantic model; the validated instance arrives in ``platform.settings``."""
 
     @classmethod
     async def probe(cls, path: str) -> Endpoint | None:
         """Tell whether an unidentified serial device at ``path`` speaks one of your protocols, and
         what it offers then, e.g. ``Endpoint("zigbee", "znp", path)``. The runtime asks this only
-        about devices no transport recognised."""
+        about devices no radio driver recognised."""
         return None
 
     async def peripheral_did_change(self, change: PeripheralChange) -> bool:
-        """A bound link was lost, appeared, or moved; ``dependencies.links`` is already updated.
+        """A bound need was lost, appeared, or moved; ``self.peripherals`` is already updated.
 
         Return True when handled in place (e.g. Matter keeps working over IP without Thread).
-        False lets the Hub restart the integration, or stop it while a required link is missing.
+        False lets the Hub restart the integration, or stop it while a required need is unbound.
         """
         return False
 
     async def settings_did_change(self, before: BaseModel | None) -> bool:
-        """The integration's settings changed; ``dependencies.settings`` already holds the new ones.
+        """The integration's settings changed; ``platform.settings`` already holds the new ones.
 
         Return True when applied in place; False (the default) has the Hub restart the integration.
         """
         return False
 
     async def context_did_change(self, before: Context) -> bool:
-        """Hub-wide facts changed (region, Wi-Fi, Thread network); ``dependencies.context`` holds the new ones.
+        """Hub-wide facts changed (region, Wi-Fi, Thread network); ``platform.context`` holds the new ones.
 
         Return True when applied in place; False (the default) has the Hub restart the integration.
         """
@@ -341,7 +254,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
     @property
     def documents_folder(self) -> Path:
         """Folder for storing files related to this integration that don't belong in the device database."""
-        return self.dependencies.documents_folder
+        return self.platform.documents_folder
 
     # def add_service_coroutine(self, coroutine: Callable[[], Awaitable]): ... # FUTURE
 

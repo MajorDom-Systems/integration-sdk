@@ -9,7 +9,7 @@ from majordom_integration_sdk.controller import AbstractController
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.schemas.event import DeviceParameterChange
-from majordom_integration_sdk.testing import RecordingControllerOutput, build_test_dependencies
+from majordom_integration_sdk.testing import RecordingControllerOutput, build_test_platform
 
 
 class _MinimalController(AbstractController[Device, Parameter]):
@@ -42,7 +42,7 @@ class _MinimalController(AbstractController[Device, Parameter]):
 
 
 def test_name_slug_and_uuid_helpers():
-    controller = _MinimalController(build_test_dependencies())
+    controller = _MinimalController(build_test_platform())
     assert controller.name_slug == "example-protocol"
     # Deterministic, namespaced, and hierarchical.
     device_uuid = controller.device_uuid("abc")
@@ -51,24 +51,24 @@ def test_name_slug_and_uuid_helpers():
 
 
 def test_documents_folder_is_the_injected_path(tmp_path):
-    deps = build_test_dependencies(documents_folder=tmp_path)
+    deps = build_test_platform(documents_folder=tmp_path)
     controller = _MinimalController(deps)
     assert controller.documents_folder == tmp_path
     assert controller.documents_folder.exists()
 
 
 async def test_controller_can_use_injected_repository():
-    deps = build_test_dependencies()
+    deps = build_test_platform()
     controller = _MinimalController(deps)
     device = make_device_state(integration=controller.name_slug)
-    async with controller.dependencies.make_device_repository() as repo:
+    async with controller.platform.make_device_repository() as repo:
         await repo.save(device)
         stored = await repo.state(device.id)
         assert stored is not None and stored.id == device.id
 
 
 async def test_recording_output_captures_reports():
-    deps = build_test_dependencies()
+    deps = build_test_platform()
     controller = _MinimalController(deps)
     output = deps.output
     assert isinstance(output, RecordingControllerOutput)
@@ -99,11 +99,11 @@ def test_name_is_autoderived_from_class_name():
 
 async def test_the_pairing_window_opens_without_credentials():
     # the Hub broadcasts `start_pairing_window(duration)`: credentials are only for the one integration that needs them
-    controller = _MinimalController(build_test_dependencies(integration="minimal"))
+    controller = _MinimalController(build_test_platform(integration="minimal"))
     await controller.start_pairing_window(5)
 
 
 async def test_changed_settings_and_context_ask_for_a_restart_unless_handled():
-    controller = _MinimalController(build_test_dependencies(integration="minimal"))
+    controller = _MinimalController(build_test_platform(integration="minimal"))
     assert await controller.settings_did_change(None) is False
     assert await controller.context_did_change(Context()) is False
