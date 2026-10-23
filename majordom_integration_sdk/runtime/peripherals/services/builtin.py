@@ -1,4 +1,4 @@
-"""Services majordom-transports runs between radios and integrations."""
+"""Services the runtime itself runs between radios and integrations."""
 
 from __future__ import annotations
 
@@ -10,8 +10,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from majordom_integration_sdk import Endpoint, Need, Service
 from pydantic import BaseModel, Field
+
+from majordom_integration_sdk.peripherals import Endpoint, Need, Service
 
 _IMAGES = Path(__file__).parent / "images"
 
@@ -59,7 +60,7 @@ silabs_multiprotocol = _BorderRouter(
         "network_mode": "host",
         "hostname": "majordom-thread",  # its mDNS daemon announces this, not the hub's own name
         # a privileged container sees the host's /dev: a common name (ttyACM0) would be the host's own device
-        "devices": ["{links.multipan.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
+        "devices": ["{peripherals.multipan.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
         "volumes": [
             f"{_IMAGES}/multiprotocol/cpcd.conf:/usr/local/etc/cpcd.conf:ro",
             f"{_IMAGES}/multiprotocol/entrypoint.sh:/entrypoint.sh:ro",
@@ -70,8 +71,8 @@ silabs_multiprotocol = _BorderRouter(
         "tmpfs": ["/run:exec,mode=1777"],
         "entrypoint": ["/bin/bash", "/entrypoint.sh"],
         "environment": {
-            "RADIO_BAUD": "{links.multipan.params[baud]}",
-            "RADIO_FLOW_CONTROL": "{links.multipan.params[flow_control]}",
+            "RADIO_BAUD": "{peripherals.multipan.params[baud]}",
+            "RADIO_FLOW_CONTROL": "{peripherals.multipan.params[flow_control]}",
             "BACKBONE_IF": "{host.interface}",
             "EZSP_TCP_PORT": "{ports.ezsp}",
             "OTBR_REST_PORT": "{ports.rest}",
@@ -101,12 +102,12 @@ otbr = _FormingBorderRouter(
         "userns_mode": "host",
         "network_mode": "host",
         "hostname": "majordom-thread",  # its mDNS daemon announces this, not the hub's own name
-        "devices": ["{links.thread.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
+        "devices": ["{peripherals.thread.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
         "volumes": ["{data}:/data", f"{_IMAGES}/thread-source:/etc/services.d/thread-source:ro"],
         "tmpfs": ["/run:exec,mode=1777", "/tmp:mode=1777"],  # s6-overlay runs its init from /run
         "environment": {
-            "OT_RCP_DEVICE": "spinel+hdlc+uart:///dev/ttyRCP?uart-baudrate={links.thread.params[baud]}"
-            "{links.thread.params[flow_control]:&uart-flow-control}",
+            "OT_RCP_DEVICE": "spinel+hdlc+uart:///dev/ttyRCP?uart-baudrate={peripherals.thread.params[baud]}"
+            "{peripherals.thread.params[flow_control]:&uart-flow-control}",
             "OT_INFRA_IF": "{host.interface}",
             "OT_THREAD_IF": "wpan0",
             "OT_REST_LISTEN_ADDR": "0.0.0.0",

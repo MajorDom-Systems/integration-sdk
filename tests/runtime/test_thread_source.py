@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from majordom_transports import services
+from majordom_integration_sdk.runtime.peripherals.services import builtin as services
 
 SCRIPT = services._IMAGES / "thread-source" / "run"
 

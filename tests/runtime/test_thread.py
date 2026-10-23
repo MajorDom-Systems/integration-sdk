@@ -6,10 +6,16 @@ from socketserver import ThreadingTCPServer
 from typing import Any
 
 import pytest
-from majordom_integration_sdk import Endpoint
 
-from majordom_transports import services
-from majordom_transports.services import ThreadNetwork, active_dataset, form_network, otbr, silabs_multiprotocol
+from majordom_integration_sdk import Endpoint
+from majordom_integration_sdk.runtime.peripherals.services import builtin as services
+from majordom_integration_sdk.runtime.peripherals.services.builtin import (
+    ThreadNetwork,
+    active_dataset,
+    form_network,
+    otbr,
+    silabs_multiprotocol,
+)
 
 
 @pytest.fixture

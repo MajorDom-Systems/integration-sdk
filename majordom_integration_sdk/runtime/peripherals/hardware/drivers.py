@@ -12,8 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
-import serial
-from majordom_integration_sdk import Endpoint
+from majordom_integration_sdk.peripherals import Endpoint
 
 
 class RadioDriver(ABC):
@@ -21,6 +20,7 @@ class RadioDriver(ABC):
     ``params`` the firmware's serial settings (a board profile may override them)."""
 
     firmwares: ClassVar[Mapping[str, Sequence[Endpoint]]]
+    bluetooth: ClassVar[frozenset[str]] = frozenset()  # firmwares that serve Bluetooth too (multiprotocol over CPC)
 
     @abstractmethod
     async def identify(self, path: str) -> str | None:
@@ -71,6 +71,7 @@ class Silabs(RadioDriver):
         },
     }
 
+    # NabuCasa's multi-PAN RCP is 802.15.4 only: none of these builds serves Bluetooth (``bluetooth`` stays empty)
     _apps = {"EZSP": "zigbee-ncp", "SPINEL": "thread-rcp", "CPC": "multipan-rcp"}
 
     async def identify(self, path: str) -> str | None:
@@ -107,6 +108,8 @@ class ZWave(RadioDriver):
 
 
 def _zwave_answers(path: str) -> bool:
+    import serial  # the runtime extra
+
     # Serial API request frame for FUNC_ID_ZW_GET_VERSION: SOF, length, REQ, 0x15, checksum.
     # A controller replies with its library version string, "Z-Wave x.y", and repeats any reply
     # the host didn't ACK (answering CAN to new requests meanwhile): NAK first, ACK the answer.
