@@ -16,13 +16,13 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Protocol
 
-from .ble_discovery import BLEConnection, BLEPairingError, PairableBLEConnection
+from .ble import BLEConnection, BLEPairingError, PairableBLEConnection
 
 logger = logging.getLogger(__name__)
 
 
 class SecureChannel(Protocol):
-    needs_pairing: bool  # lease a source that can pair: `BLEService.exclusive(..., pairing=...)`
+    needs_pairing: bool  # lease a source that can pair: `BLERouter.exclusive(..., pairing=...)`
 
     def secure(self, connection: BLEConnection) -> contextlib.AbstractAsyncContextManager[BLEConnection]:
         """The connection to write credentials through, secured; raises `BLEPairingError` (fail closed)."""
