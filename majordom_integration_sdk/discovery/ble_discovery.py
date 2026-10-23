@@ -4,11 +4,13 @@ Sources feed advertisements in: the hub's own adapters and proxies (e.g. ESPHome
 Listeners register `BLEMatcher`s and hear about matching devices whichever source saw them.
 `BLEService.connect` opens a GATT connection through the source that hears the device best;
 `BLEService.exclusive` leases that one source to a device for as long as pairing it takes.
+Credentials go to a device only over a link a `SecureChannel` (`ble_security`) has secured first.
 """
 
 import asyncio
 import contextlib
 import logging
+import sys
 from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +23,9 @@ from bleak.args.bluez import OrPattern
 from bleak.assigned_numbers import AdvertisementDataType
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
+from bleak.exc import BleakError
+
+from . import bluez_pairing
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +96,22 @@ class BLEConnection(Protocol):
     async def disconnect(self) -> None: ...
 
 
+@runtime_checkable
+class PairableBLEConnection(BLEConnection, Protocol):
+    """A connection that can encrypt its link by pairing (LE Secure Connections where both ends support it)."""
+
+    async def pair(self) -> None:
+        """Pairs "Just Works", encrypting the link. Raises `BLEPairingError`."""
+        ...
+
+    async def unpair(self) -> None:
+        """Forgets the bond; the link may drop."""
+        ...
+
+
 class BLESource(Protocol):
-    """A radio that hears advertisements and can connect to devices: a local adapter or a proxy."""
+    """A radio that hears advertisements and can connect to devices: a local adapter or a proxy. One whose
+    connections are `PairableBLEConnection`s says so with a true ``can_pair`` attribute."""
 
     name: str
 
@@ -112,6 +131,10 @@ class PausableBLESource(BLESource, Protocol):
 
 class BLEBusyError(ConnectionError):
     """Every source that hears the device is leased to someone else."""
+
+
+class BLEPairingError(ConnectionError):
+    """The link could not be encrypted: pairing failed, or no source that hears the device can pair."""
 
 
 @dataclass(frozen=True)
@@ -225,12 +248,13 @@ class BLEService:
 
     @contextlib.asynccontextmanager
     async def exclusive(
-        self, address: str, *, owner: str, timeout: float = 30, wait: float = 1
+        self, address: str, *, owner: str, timeout: float = 30, wait: float = 1, pairing: bool = False
     ) -> AsyncIterator[BLELease]:
         """Leases the source hearing ``address`` best to ``owner`` (e.g. while pairing it): that source stops
         scanning and others' connects avoid it; the rest keep going. A leased source is waited for ``wait``
-        seconds before the next best is tried, round after round, until ``timeout`` raises `BLEBusyError`."""
-        name = await self._acquire(address, owner, timeout, wait)
+        seconds before the next best is tried, round after round, until ``timeout`` raises `BLEBusyError`.
+        With ``pairing``, only sources that can pair are leased (`BLEPairingError` when none hears it)."""
+        name = await self._acquire(address, owner, timeout, wait, pairing)
         try:
             source = self._sources[name]
             with contextlib.suppress(Exception):
@@ -279,12 +303,14 @@ class BLEService:
     def _is_leased(self, name: str) -> bool:
         return name in self._leases and self._leases[name].locked()
 
-    async def _acquire(self, address: str, owner: str, timeout: float, wait: float) -> str:
+    async def _acquire(self, address: str, owner: str, timeout: float, wait: float, pairing: bool = False) -> str:
         """Locks the first candidate source that frees up within ``wait``, cycling until ``timeout``."""
         deadline = monotonic() + timeout
         while True:
             if not (candidates := self._candidates(address)):
                 raise ConnectionError(f"Can't reach {address}: no Bluetooth sources")
+            if pairing and not (candidates := [n for n in candidates if getattr(self._sources[n], "can_pair", False)]):
+                raise BLEPairingError(f"No Bluetooth source that hears {address} can pair")
             for name in candidates:
                 lock = self._leases.setdefault(name, asyncio.Lock())
                 if (remaining := deadline - monotonic()) <= 0:
@@ -439,6 +465,8 @@ BLEDiscoveryService = BLEService
 class LocalAdapter:
     """A Bluetooth adapter of this machine, through bleak (BlueZ on Linux)."""
 
+    can_pair = True  # LE Secure Connections where the device offers it; through a scoped BlueZ agent on Linux
+
     def __init__(self, adapter: str | None = None):
         self.name = adapter or "local"
         self._options = {"bluez": {"adapter": adapter}} if adapter else {}
@@ -490,12 +518,12 @@ class LocalAdapter:
             finally:
                 if scanner:
                     await scanner.start()
-        return _BleakConnection(client)
+        return _BleakConnection(client, self._options.get("bluez", {}).get("adapter") or "hci0")
 
 
 class _BleakConnection:
-    def __init__(self, client: BleakClient):
-        self._client = client
+    def __init__(self, client: BleakClient, adapter: str):
+        self._client, self._adapter = client, adapter
 
     @property
     def mtu(self) -> int:
@@ -525,6 +553,18 @@ class _BleakConnection:
 
     async def stop_notify(self, handle: int):
         await self._client.stop_notify(handle)
+
+    async def pair(self):
+        try:
+            if sys.platform == "linux":  # bleak's pair() brings no agent: LE Secure Connections fails without one
+                await bluez_pairing.pair(self._adapter, self._client.address)
+            else:  # the OS pairs on its own, with its own prompts
+                await self._client.pair()
+        except (ConnectionError, BleakError, EOFError) as e:  # org.bluez.Error.AuthenticationFailed, a dropped link
+            raise BLEPairingError(f"Pairing failed: {e}") from e
+
+    async def unpair(self):
+        await self._client.unpair()
 
     async def disconnect(self):
         await self._client.disconnect()

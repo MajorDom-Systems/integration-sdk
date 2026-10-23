@@ -103,9 +103,10 @@ class FakeBLESource:
     """A Bluetooth radio for tests: ``advertise`` feeds the service it serves, ``connect`` returns
     ``connection`` (or fails when there is none). Use with ``BLEService(sources=[...])``."""
 
-    def __init__(self, name: str = "fake", connection: BLEConnection | None = None):
+    def __init__(self, name: str = "fake", connection: BLEConnection | None = None, can_pair: bool = False):
         self.name = name
         self.connection = connection
+        self.can_pair = can_pair
         self.on_advertisement: OnAdvertisement | None = None
         self.connected: list[str] = []
 

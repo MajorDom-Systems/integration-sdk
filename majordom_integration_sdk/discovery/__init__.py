@@ -6,13 +6,16 @@ from .ble_discovery import (
     BLEDiscoveryService,
     BLELease,
     BLEMatcher,
+    BLEPairingError,
     BLEService,
     BLESource,
     GattCharacteristic,
     GattService,
     LocalAdapter,
+    PairableBLEConnection,
     PausableBLESource,
 )
+from .ble_security import LESecureConnections, SecureChannel, Unsecured
 from .ssdp_discovery import SSDPDiscoveryInfo, SSDPDiscoveryListener, SSDPDiscoveryService
 from .zeroconf_discovery import ZeroconfDiscoveryInfo, ZeroconfDiscoveryListener, ZeroconfDiscoveryService
 
@@ -24,15 +27,20 @@ __all__ = [
     "BLEDiscoveryService",
     "BLELease",
     "BLEMatcher",
+    "BLEPairingError",
     "BLEService",
     "BLESource",
     "GattCharacteristic",
     "GattService",
+    "LESecureConnections",
     "LocalAdapter",
+    "PairableBLEConnection",
     "PausableBLESource",
     "SSDPDiscoveryInfo",
     "SSDPDiscoveryListener",
     "SSDPDiscoveryService",
+    "SecureChannel",
+    "Unsecured",
     "ZeroconfDiscoveryInfo",
     "ZeroconfDiscoveryListener",
     "ZeroconfDiscoveryService",
