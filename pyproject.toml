@@ -1,7 +1,7 @@
 [project]
 name = "majordom-integration-sdk"
-version = "0.2.1"
-description = "Models, protocols, and tooling for building MajorDom integrations."
+version = "0.3.0"
+description = "Models, protocols, tooling and the runtime for building and running MajorDom integrations."
 authors = [{ name = "Mark Parker", email = "mark@parker-programs.com" }]
 readme = "README.md"
 license = "Apache-2.0"
@@ -19,14 +19,18 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic (>=2.14.1,<3.0)",
     "python-slugify",
-    "zeroconf (>=0.151.5)",
-    "bleak (>=0.22)",
 ]
 
 [project.optional-dependencies]
 # Interactive standalone runner: `majordom_integration_sdk.dev.run_cli`. Kept out of the base
 # install (the SDK is a runtime dep of every integration) — `pip install "majordom-integration-sdk[cli]"`.
 cli = ["typer-shell (>=0.2)", "rich (>=13)"]
+# The runtime (`majordom_integration_sdk.runtime`): radios, firmware, services. The Hub and the dev runner install it.
+runtime = ["pyserial (>=3.5)"]
+# The Bluetooth router's adapters (bleak; dbus-fast pairs through BlueZ on Linux).
+ble = ["bleak (>=0.22)", "dbus-fast (>=2.0) ; sys_platform == 'linux'"]
+# DNS-SD over mDNS (zeroconf).
+discovery = ["zeroconf (>=0.151.5)"]
 
 [project.urls]
 Homepage = "https://majordom.io"
@@ -54,6 +58,9 @@ dev = [
     "faker",          # realistic fake data for tests
     "typer-shell",    # the `cli` extra — installed in dev so ty/ruff check dev/cli.py
     "rich",
+    "pyserial",       # the `runtime`, `ble` and `discovery` extras, for the same reason
+    "bleak",
+    "zeroconf",
 ]
 
 [build-system]
@@ -63,12 +70,16 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 requires-poetry = ">=2.0"
 packages = [{ include = "majordom_integration_sdk" }]
+include = [{ path = "majordom_integration_sdk/runtime/peripherals/services/images", format = ["sdist", "wheel"] }]
 
-# schemas/ and discovery/ are lifted verbatim from the Hub, which type-checks them under
+# schemas/ and the providers (BLE, DNS-SD, SSDP) are lifted verbatim from the Hub, which type-checks them under
 # mypy (they carry mypy-style `# type: ignore` comments ty doesn't read). Exempt just those
 # rules for just those paths — all SDK-native code stays fully checked. Re-home in the Hub.
 [[tool.ty.overrides]]
-include = ["majordom_integration_sdk/schemas/**", "majordom_integration_sdk/discovery/**"]
+include = [
+    "majordom_integration_sdk/schemas/**",
+    "majordom_integration_sdk/runtime/peripherals/providers/**",
+]
 
 [tool.ty.overrides.rules]
 invalid-return-type = "ignore"
@@ -85,6 +96,15 @@ include = ["majordom_integration_sdk/repository/**"]
 
 [tool.ty.overrides.rules]
 invalid-parameter-default = "ignore"
+
+# The runtime's test consumers are bare classes standing in for integration controllers, and their drivers subclass
+# the registered driver's runtime class: ty can't match the former to the Consumer protocol nor follow the latter
+[[tool.ty.overrides]]
+include = ["tests/runtime/**"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unsupported-base = "ignore"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -118,11 +138,11 @@ docstring-code-format = true
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/*" = ["E402"]
-# schemas/ and discovery/ are lifted verbatim from the Hub and maintained under its lint
+# schemas/ and the DNS-SD / SSDP providers are lifted verbatim from the Hub and maintained under its lint
 # rules; abstract_controller.py keeps the Hub's long-form docstrings. Exempt only the
 # house-style rules for these paths — SDK-native code stays fully linted.
 "majordom_integration_sdk/schemas/*" = ["E501", "UP042"]
-"majordom_integration_sdk/discovery/*" = ["E501", "SIM102", "SIM105"]
+"majordom_integration_sdk/runtime/peripherals/providers/{dns_sd,ssdp}.py" = ["E501", "SIM102", "SIM105"]
 "majordom_integration_sdk/controller/abstract_controller.py" = ["E501"]
 
 [tool.poe.tasks.install]
