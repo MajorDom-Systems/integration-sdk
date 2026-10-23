@@ -1,0 +1,24 @@
+MajorDom multi-PAN host stack: third-party components
+
+Silicon Labs SiSDK v2025.6.3 debian-bookworm packages, redistributed unmodified as object code:
+  cpcd + libcpc 4.7.1 (package 4.6.0), zigbeed 8.2.2, ot-br-posix 2.7.3.0 (otbr-agent, ot-ctl)
+  License: Silicon Labs Master Software License Agreement, /usr/share/doc/silabs/MSLA
+  Use is limited to Silicon Labs radio devices.
+  https://github.com/SiliconLabs/simplicity_sdk/releases/tag/v2025.6.3
+
+OpenThread and OpenThread Border Router (inside otbr-agent and ot-ctl)
+  License: BSD-3-Clause, OPENTHREAD-BSD-3-Clause in this directory
+  https://github.com/openthread/openthread  https://github.com/openthread/ot-br-posix
+  The default (MDNS=avahi) build compiles otbr-agent and ot-ctl from the SiSDK v2025.6.3 sources instead,
+  with Silicon Labs' CPC vendor interface (licence in its source headers); they link Debian's libavahi-client.
+
+mDNSResponder below ships only in the MDNS=mdnsresponder build.
+
+mDNSResponder (mdnsd, libdns_sd.so), built from the source shipped in the ot-br-posix package
+  License: Apache-2.0 (daemon) and BSD-3-Clause (client library), /usr/share/doc/mDNSResponder/LICENSE
+
+bellows, zigpy (Python, /opt/venv): GPL-3.0. Unmodified PyPI releases (bellows 0.49.2, zigpy 2.0.1),
+  run as separate programs. Licence texts: /opt/venv/lib/python3*/site-packages/*.dist-info/
+  Source: https://pypi.org/project/bellows/0.49.2/  https://pypi.org/project/zigpy/2.0.1/
+
+Debian packages in the base image keep their licences in /usr/share/doc/*/copyright.
