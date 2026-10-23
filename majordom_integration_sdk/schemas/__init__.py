@@ -8,10 +8,8 @@ protocol) and the automation event bus live in the Hub, not here.
 
 from .base import Base, NonEmptyStr, StrEnum, StrIdentifiable, UUIdentifable
 from .command import DeviceCommand
+from .credentials import CredentialsOption, CredentialsType, CredentialsValue, ProvidedCredentials, WifiCredentials
 from .device import (
-    CredentialsOption,
-    CredentialsType,
-    CredentialsValue,
     Device,
     DeviceCreate,
     DeviceDataModel,
@@ -20,7 +18,6 @@ from .device import (
     DevicePatch,
     DeviceState,
     Discovery,
-    ProvidedCredentials,
 )
 from .event import DeviceParameterChange, Event
 from .parameter import (
@@ -44,10 +41,13 @@ __all__ = [
     "DeviceCommand",
     "Event",
     "DeviceParameterChange",
-    # device
+    # credentials
     "CredentialsOption",
     "CredentialsType",
     "CredentialsValue",
+    "ProvidedCredentials",
+    "WifiCredentials",
+    # device
     "Device",
     "DeviceCreate",
     "DeviceDataModel",
@@ -56,7 +56,6 @@ __all__ = [
     "DevicePatch",
     "DeviceState",
     "Discovery",
-    "ProvidedCredentials",
     # parameter
     "Parameter",
     "ParameterDataType",
