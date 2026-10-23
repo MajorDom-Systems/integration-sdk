@@ -245,3 +245,19 @@ def test_the_host_offers_every_adapter_with_its_index(monkeypatch):
         Endpoint("ble", "bluez", "hci0", params={"index": "0"}),
         Endpoint("ble", "bluez", "hci1", params={"index": "1"}),
     ]
+
+
+async def test_a_consumer_restarts_only_the_services_it_brings(tmp_path, monkeypatch):
+    own = Service("radio-server", {"image": "r"})
+    rt = runtime(tmp_path, {"radio": consumer(services=[own])})
+    restarted: list[str] = []
+
+    async def restart(service: str):
+        restarted.append(service)
+
+    monkeypatch.setattr(rt, "restart", restart)
+    services = rt.platform("radio", _platform(tmp_path)).services
+    await services.restart("radio-server")
+    with pytest.raises(PermissionError):
+        await services.restart("silabs-multiprotocol")  # shared, not its own
+    assert restarted == ["radio-server"]
