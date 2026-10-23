@@ -1,8 +1,9 @@
 """Interactive REPL for running one integration standalone — the ``majordom-integration-sdk[cli]`` extra.
 
-Ported from the MajorDom Hub's operator CLI and scoped to a single controller: start it with real
-discovery services and a local repository, then pair / control / inspect devices from a prompt.
-Where :func:`run_controller` just *watches*, this lets you *drive* the integration by hand.
+Ported from the MajorDom Hub's operator CLI and scoped to a single controller: start it under the
+runtime (its needs bound as under the Hub) with a local repository, then pair / control / inspect
+devices, and see or pin what its needs are bound to, from a prompt. Where :func:`run_controller`
+just *watches*, this lets you *drive* the integration by hand.
 
 Needs the ``cli`` extra (typer-shell + rich)::
 
@@ -23,20 +24,26 @@ import json
 import logging
 import shutil
 import sys
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import rich
 from typer_shell import make_typer_shell
 
-from ..controller.abstract_controller import AbstractController, ControllerOutput
+from ..controller.abstract_controller import AbstractController
+from ..controller.output import ControllerOutput
+from ..peripherals import Bound, Endpoint, Peripherals
 from ..schemas.command import DeviceCommand
-from ..schemas.device import CredentialsType, ProvidedCredentials
+from ..schemas.credentials import CredentialsType, ProvidedCredentials
 from ..schemas.event import DeviceParameterChange
 from ..schemas.parameter import ParameterRole
-from . import build_dependencies
+from . import _runner
+
+if TYPE_CHECKING:
+    from ..runtime import Runtime
 
 logger = logging.getLogger("majordom_integration_sdk.dev")
 
@@ -98,9 +105,13 @@ class _CliSession:
     resolution (``repo.get`` + ``get_parameter_state`` + ``model_validate`` into the controller's
     ``device_type`` / ``parameter_type``)."""
 
-    def __init__(self, controller: AbstractController):
+    def __init__(self, controller: AbstractController, runtime: Runtime | None = None):
         self._controller = controller
-        self._deps = controller.dependencies
+        self._runtime = runtime
+
+    @property
+    def _deps(self):
+        return self._controller.platform
 
     @property
     def discoveries(self):
@@ -165,6 +176,42 @@ class _CliSession:
             )
         return "Command sent"
 
+    # needs
+
+    def needs(self) -> list[str]:
+        """Each need: what it is bound to and who provides it, or why it isn't bound."""
+        slug, rows = self._controller.slug(), []
+        bound = (self._runtime.peripherals(slug) or Peripherals()) if self._runtime else self._controller.peripherals
+        providers = self._runtime.providers(slug) if self._runtime else {}
+        unbound = self._runtime.unbound(slug) if self._runtime else {}
+        for need in type(self._controller).needs:
+            wanted = f"{need.family}/{'|'.join(need.dialects) or '*'}{' (many)' if need.many else ''}"
+            wanted += "" if need.required else " (optional)"
+            if need.family in bound:
+                urls = ", ".join(e.url or e.dialect for e in bound.endpoints(need.family))
+                rows.append(f"{wanted}  -> {urls}  by {providers.get(need.family, 'you')}")
+            else:
+                rows.append(f"{wanted}  unbound: {unbound.get(need.family, 'not given')}")
+        return rows
+
+    async def pin(self, family: str, url: str, dialect: str = "") -> None:
+        """Provide an endpoint yourself, e.g. ``zigbee socket://192.168.1.5:6638 ezsp``."""
+        dialect = dialect or next(
+            (n.dialects[0] for n in type(self._controller).needs if n.family == family and n.dialects), ""
+        )
+        await self._require_runtime().pin_endpoint(Endpoint(family, dialect, url, shared=True))
+
+    async def unpin(self, family: str) -> None:
+        await self._require_runtime().pin_endpoint(None, family)
+
+    async def resolve(self) -> None:
+        await self._require_runtime().refresh()
+
+    def _require_runtime(self) -> Runtime:
+        if self._runtime is None:
+            raise RuntimeError("No runtime here: the peripherals were given by hand")
+        return self._runtime
+
 
 class _CliControllerOutput(ControllerOutput):
     """The CLI's own output delegate — a different approach from the logging one: it shows each
@@ -224,12 +271,16 @@ async def run_cli(
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
-    **dependencies: Any,
+    peripherals: Mapping[str, Bound] | None = None,
+    docker: bool = True,
+    scan: bool = True,
+    pinned: Mapping[str, Endpoint] = {},
+    **platform: Any,
 ) -> None:
-    """Start ``controller_type`` (with real discovery + a local repository) and drop into an
-    interactive prompt. ``dependencies`` override fields of `AbstractController.Dependencies`
-    (``links``, ``settings``, ``context``). ``db_path`` file-backs the repository so paired devices survive restarts;
-    omit it for in-memory. ``exit`` / Ctrl-D leaves the prompt and stops everything cleanly."""
+    """Start ``controller_type`` under the runtime (or with ``peripherals`` you give) with a local repository and
+    drop into an interactive prompt. ``platform`` overrides fields of `Platform` (``settings``, ``context``);
+    ``docker``, ``scan`` and ``pinned`` go to the runtime. ``db_path`` file-backs the repository so paired devices
+    survive restarts; omit it for in-memory. ``exit`` / Ctrl-D leaves the prompt and stops everything cleanly."""
     # Capture all logs + warnings into a buffer for the duration of the session so they don't break
     # the interactive TUI; the buffer is dumped to stderr on exit/crash (see the finally block).
     # The CLI's own discovery/event/command output (via _print) stays visible and prompt-safe.
@@ -244,22 +295,17 @@ async def run_cli(
     loop = asyncio.get_running_loop()
 
     # Identity is class-level, so the repository/documents folder are scoped before construction;
-    # then swap in an output that also persists state.
-    deps = build_dependencies(
-        storage_root=storage_root,
-        db_path=db_path,
-        integration=controller_type.name,
-        slug=controller_type.slug(),
+    # the output also persists state.
+    runner = _runner(controller_type, storage_root, db_path, peripherals, docker, scan, pinned, None, platform)
+    controller = runner.controller
+    controller.platform = runner.base = runner.base.copy(
+        output=_CliControllerOutput(runner.base.make_device_repository)
     )
-    deps = deps.copy(output=_CliControllerOutput(deps.make_device_repository), **dependencies)
-    controller = controller_type(deps)
-    session = _CliSession(controller)
+    session = _CliSession(controller, runner.runtime)
 
-    await deps.zeroconf_discovery_service.start()
-    await deps.ssdp_discovery_service.start()
-    await deps.ble_discovery_service.start()
-    await controller.start()
-    _print(f"{controller.name} started — discovering. Type 'help' for commands, 'exit' to quit.")
+    await runner.start()
+    state = "started" if runner.running else "waiting for its needs (see `needs`)"
+    _print(f"{controller.name} {state}. Type 'help' for commands, 'exit' to quit.")
 
     # Shell commands run in a worker thread (typer-shell blocks); hop back onto this loop to call
     # the controller's async API.
@@ -345,6 +391,31 @@ async def run_cli(
             parsed = value
         _print(call(session.control(UUID(device_id), UUID(parameter_id), parsed)))
 
+    @app.command()
+    def needs():
+        """List the integration's needs: what each is bound to and by whom, or why it isn't bound."""
+        for row in session.needs():
+            _print(row)
+
+    @app.command()
+    def pin(family: str, url: str, dialect: str = ""):
+        """Provide an endpoint for a need yourself, e.g. `pin zigbee socket://192.168.1.5:6638 ezsp` or
+        `pin matter ws://127.0.0.1:5580` (dialect defaults to the need's first)."""
+        call(session.pin(family, url, dialect))
+        _print("\n".join(session.needs()))
+
+    @app.command()
+    def unpin(family: str):
+        """Drop an endpoint you pinned: the runtime binds the need again."""
+        call(session.unpin(family))
+        _print("\n".join(session.needs()))
+
+    @app.command()
+    def resolve():
+        """Look for radios again and bind every need anew."""
+        call(session.resolve())
+        _print("\n".join(session.needs()))
+
     # typer-shell parses sys.argv on start; clear it so a bare `run_cli()` doesn't inherit flags.
     sys.argv = sys.argv[:1]
     try:
@@ -352,10 +423,7 @@ async def run_cli(
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
-        await controller.stop()
-        await deps.ble_discovery_service.stop()
-        await deps.ssdp_discovery_service.stop()
-        await deps.zeroconf_discovery_service.stop()
+        await runner.stop()
         _print(f"{controller.name} stopped.")
         # restore logging and dump everything captured during the session for debugging
         logging.captureWarnings(False)

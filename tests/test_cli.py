@@ -1,5 +1,5 @@
 """Exercises the interactive CLI's controller-driving core (`_CliSession`) against a fake
-controller wired with the offline test dependencies — no REPL, no network. The typer-shell
+controller wired with the offline test platform — no REPL, no network. The typer-shell
 wiring on top is a thin layer over these same calls."""
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from majordom_integration_sdk import Endpoint, Need, Peripherals
 from majordom_integration_sdk.controller import AbstractController
 from majordom_integration_sdk.dev.cli import _CliControllerOutput, _CliSession, _print
 from majordom_integration_sdk.schemas.command import DeviceCommand
@@ -25,7 +26,7 @@ from majordom_integration_sdk.schemas.parameter import (
     ParameterState,
     ParameterVisibility,
 )
-from majordom_integration_sdk.testing import build_test_dependencies
+from majordom_integration_sdk.testing import build_test_platform
 
 INTEGRATION = "Fake"
 
@@ -78,7 +79,7 @@ class FakeController(AbstractController):
             manufacturer=None,
             parameters=[_param(self._param_role)],
         )
-        async with self.dependencies.make_device_repository() as repo:
+        async with self.platform.make_device_repository() as repo:
             await repo.save(state)
         self.paired.append(device_id)
         return device_id
@@ -111,7 +112,7 @@ def _discovery() -> Discovery:
 
 @pytest.fixture
 def session_and_controller():
-    deps = build_test_dependencies(integration=INTEGRATION)
+    deps = build_test_platform(integration=INTEGRATION)
     controller = FakeController(deps)
     return _CliSession(controller), controller
 
@@ -168,7 +169,7 @@ async def test_actions_on_missing_device(session_and_controller):
 
 
 async def test_control_rejects_non_control_parameter():
-    deps = build_test_dependencies(integration=INTEGRATION)
+    deps = build_test_platform(integration=INTEGRATION)
     controller = FakeController(deps, param_role=ParameterRole.sensor)
     session = _CliSession(controller)
 
@@ -183,7 +184,7 @@ async def test_control_rejects_non_control_parameter():
 
 
 async def test_output_delegate_persists_event_values():
-    deps = build_test_dependencies(integration=INTEGRATION)
+    deps = build_test_platform(integration=INTEGRATION)
     controller = FakeController(deps)
     session = _CliSession(controller)
 
@@ -240,3 +241,64 @@ def test_capturing_handler_buffers_then_dumps(capsys):
     err = capsys.readouterr().err
     assert "chatty controller noise" in err
     assert "captured logs" in err
+
+
+# --- needs ---------------------------------------------------------------------------------
+
+
+class _ZigbeeController(FakeController):
+    name = "Fake Zigbee"
+    needs = [Need("zigbee", ["ezsp", "znp"]), Need("ble", ["bluez"], required=False)]
+
+
+@pytest.fixture
+async def needs_session(tmp_path, monkeypatch):
+    from majordom_integration_sdk.dev import Runner, build_runtime
+    from majordom_integration_sdk.testing import FakeBLERouter, FakeBLESource
+
+    monkeypatch.setattr("majordom_integration_sdk.runtime.runtime.builtin_providers", lambda: [FakeBLERouter()])
+    monkeypatch.setattr(
+        "majordom_integration_sdk.runtime.runtime._host_endpoints",
+        lambda: [Endpoint("ble", "bluez", "hci0", instance=FakeBLESource("hci0"))],
+    )
+    runtime = build_runtime(_ZigbeeController, tmp_path / "runtime", docker=False, scan=False)
+    runner = Runner(_ZigbeeController, build_test_platform(integration=INTEGRATION), runtime)
+    await runner.start()
+    yield _CliSession(runner.controller, runtime), runner
+    await runner.stop()
+
+
+async def test_needs_show_what_is_unbound_and_why(needs_session):
+    session, runner = needs_session
+    assert session.needs() == [
+        "zigbee/ezsp|znp  unbound: need zigbee/ezsp|znp: silabs-multiprotocol can't run (need multipan/silabs-cpc: "
+        "nothing offers it)",
+        "ble/bluez (optional)  unbound: need ble/bluez: every provider taken by ble-router"
+        ' — use Need("ble", ["router"])',
+    ]
+    assert not runner.running
+
+
+async def test_a_pinned_endpoint_binds_the_need_and_starts_the_integration(needs_session):
+    session, runner = needs_session
+    await session.pin("zigbee", "socket://192.168.1.5:6638")  # the need's first dialect
+
+    assert session.needs()[0] == "zigbee/ezsp|znp  -> socket://192.168.1.5:6638  by pinned"
+    assert runner.controller.peripherals.endpoint("zigbee") == Endpoint(
+        "zigbee", "ezsp", "socket://192.168.1.5:6638", shared=True
+    )
+    assert runner.running
+
+    await session.unpin("zigbee")
+    assert session.needs()[0].startswith("zigbee/ezsp|znp  unbound")
+    assert not runner.running
+    await session.resolve()  # nothing new: still waiting
+
+
+async def test_needs_without_a_runtime_list_what_was_given():
+    controller = _ZigbeeController(build_test_platform(integration=INTEGRATION))
+    controller.peripherals = Peripherals({"zigbee": Endpoint("zigbee", "ezsp", "/dev/ttyUSB0")})
+    session = _CliSession(controller)
+    assert session.needs()[0] == "zigbee/ezsp|znp  -> /dev/ttyUSB0  by you"
+    with pytest.raises(RuntimeError, match="by hand"):
+        await session.resolve()

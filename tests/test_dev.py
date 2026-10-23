@@ -1,37 +1,42 @@
 """Smoke tests for the standalone dev runner (``majordom_integration_sdk.dev``).
 
-``run_controller`` wires real, network-live discovery services and then blocks forever, so it is
-never run whole in CI. These tests cover the parts that can break without a device on the
-network: ``build_dependencies`` assembles a correctly-scoped dependency set, and
-``run_controller`` starts and stops a controller cleanly (discovery services faked out).
+``run_controller`` binds needs through the runtime and then blocks forever, so it is never run whole
+against real radios in CI. These tests cover the parts that can break without a device on the
+network: ``build_platform`` assembles a correctly-scoped platform, the `Runner` starts, stops and
+rebinds a controller as the Hub does (the runtime's providers faked out), and ``run_controller``
+starts and stops cleanly.
 """
 
+import asyncio
+from typing import cast
 from uuid import UUID
 
+import pytest
 from conftest import make_device_state
 
 import majordom_integration_sdk.dev as dev
+from majordom_integration_sdk import Endpoint, Need, PeripheralChange
 from majordom_integration_sdk.controller import AbstractController
-from majordom_integration_sdk.dev import LoggingControllerOutput, build_dependencies, run_controller
+from majordom_integration_sdk.dev import LoggingControllerOutput, Runner, build_platform, build_runtime, run_controller
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
-from majordom_integration_sdk.testing import (
-    FakeBLEDiscoveryService,
-    FakeSSDPDiscoveryService,
-    FakeZeroconfDiscoveryService,
-)
+from majordom_integration_sdk.testing import FakeBLERouter, FakeSSDP
+
+ZWAVE = Endpoint("zwave", "zwave-js-server", "ws://127.0.0.1:3000", shared=True)
 
 
 class _RecordingController(AbstractController[Device, Parameter]):
-    """Minimal controller that records that it was started and stopped."""
+    """Minimal controller that records that it was started and stopped, and the peripheral changes it saw."""
 
     name = "Dev Example"
+    needs = [Need("zwave", ["zwave-js-server"]), Need("ble", ["router"], required=False)]
     instances: list["_RecordingController"] = []
+    handles_changes = True
 
-    def __init__(self, deps):
-        super().__init__(deps)
-        self.started = False
-        self.stopped = False
+    def __init__(self, platform):
+        super().__init__(platform)
+        self.started = self.stopped = 0
+        self.changes: list[PeripheralChange] = []
         _RecordingController.instances.append(self)
 
     @property
@@ -39,10 +44,14 @@ class _RecordingController(AbstractController[Device, Parameter]):
         return {}
 
     async def start(self):
-        self.started = True
+        self.started += 1
 
     async def stop(self):
-        self.stopped = True
+        self.stopped += 1
+
+    async def peripheral_did_change(self, change: PeripheralChange) -> bool:
+        self.changes.append(change)
+        return self.handles_changes
 
     async def pair_device(self, discovery: Discovery, credentials: ProvidedCredentials | None):
         pass
@@ -60,71 +69,110 @@ class _RecordingController(AbstractController[Device, Parameter]):
         pass
 
 
-# --- build_dependencies -------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def offline_providers(monkeypatch):
+    """The runtime's providers, without radios or sockets."""
+    router = FakeBLERouter()
+    monkeypatch.setattr("majordom_integration_sdk.runtime.runtime.builtin_providers", lambda: [router, FakeSSDP()])
+    return router
 
 
-def test_build_dependencies_defaults_to_memory_and_logging_output(tmp_path):
-    deps = build_dependencies(storage_root=tmp_path, integration="Example")
-
-    assert isinstance(deps.output, LoggingControllerOutput)
-    # Real (network-live) discovery services are wired for a standalone run.
-    assert isinstance(deps.zeroconf_discovery_service, dev.ZeroconfDiscoveryService)
-    assert isinstance(deps.ssdp_discovery_service, dev.SSDPDiscoveryService)
-    assert isinstance(deps.ble_discovery_service, dev.BLEDiscoveryService)
+# --- build_platform -----------------------------------------------------------------------
 
 
-def test_build_dependencies_scopes_documents_folder(tmp_path):
+def test_build_platform_defaults_to_memory_and_logging_output(tmp_path):
+    assert isinstance(build_platform(storage_root=tmp_path, integration="Example").output, LoggingControllerOutput)
+
+
+def test_build_platform_scopes_documents_folder(tmp_path):
     # slug wins over integration for the subfolder name; the folder is created eagerly.
-    deps = build_dependencies(storage_root=tmp_path, integration="Example", slug="example-protocol")
-    assert deps.documents_folder == tmp_path / "example-protocol"
-    assert deps.documents_folder.is_dir()
+    platform = build_platform(storage_root=tmp_path, integration="Example", slug="example-protocol")
+    assert platform.documents_folder == tmp_path / "example-protocol"
+    assert platform.documents_folder.is_dir()
 
 
-def test_build_dependencies_honors_custom_output(tmp_path):
+def test_build_platform_honors_custom_output(tmp_path):
     from majordom_integration_sdk.testing import RecordingControllerOutput
 
     output = RecordingControllerOutput()
-    deps = build_dependencies(storage_root=tmp_path, output=output)
-    assert deps.output is output
+    assert build_platform(storage_root=tmp_path, output=output).output is output
 
 
-async def test_build_dependencies_memory_repository_round_trips(tmp_path):
-    deps = build_dependencies(storage_root=tmp_path, integration="example")
+async def test_build_platform_memory_repository_round_trips(tmp_path):
+    platform = build_platform(storage_root=tmp_path, integration="example")
     device = make_device_state(integration="example")
-    async with deps.make_device_repository() as repo:
+    async with platform.make_device_repository() as repo:
         await repo.save(device)
         assert (await repo.state(device.id)) is not None
 
 
-async def test_build_dependencies_sqlite_persists_to_file(tmp_path):
+async def test_build_platform_sqlite_persists_to_file(tmp_path):
     db_path = tmp_path / "dev.sqlite"
     device = make_device_state(integration="example")
 
-    deps = build_dependencies(storage_root=tmp_path, db_path=db_path, integration="example")
-    async with deps.make_device_repository() as repo:
+    platform = build_platform(storage_root=tmp_path, db_path=db_path, integration="example")
+    async with platform.make_device_repository() as repo:
         await repo.save(device)
 
     assert db_path.exists(), "a db_path should select the file-backed sqlite repository"
-    # A fresh dependency set over the same file sees the persisted device (survives 'restarts').
-    deps2 = build_dependencies(storage_root=tmp_path, db_path=db_path, integration="example")
-    async with deps2.make_device_repository() as repo:
+    # A fresh platform over the same file sees the persisted device (survives 'restarts').
+    again = build_platform(storage_root=tmp_path, db_path=db_path, integration="example")
+    async with again.make_device_repository() as repo:
         assert (await repo.state(device.id)) is not None
 
 
-# --- run_controller -----------------------------------------------------------------------
+# --- the runtime --------------------------------------------------------------------------
 
 
-async def test_run_controller_starts_and_stops_cleanly(tmp_path, monkeypatch):
-    """run_controller should start the controller + discovery services and, on cancellation,
-    stop everything without raising. Discovery services are faked so nothing touches the network."""
-    import asyncio
+def test_without_the_runtime_extra_the_runner_says_what_to_install(tmp_path, monkeypatch):
+    monkeypatch.setattr(dev.importlib.util, "find_spec", lambda name: None)
+    with pytest.raises(ImportError, match=r"majordom-integration-sdk\[runtime"):
+        build_runtime(_RecordingController, tmp_path)
 
-    monkeypatch.setattr(dev, "ZeroconfDiscoveryService", FakeZeroconfDiscoveryService)
-    monkeypatch.setattr(dev, "SSDPDiscoveryService", FakeSSDPDiscoveryService)
-    monkeypatch.setattr(dev, "BLEDiscoveryService", FakeBLEDiscoveryService)
+
+async def test_the_runner_starts_the_controller_once_its_needs_are_bound(tmp_path, offline_providers):
+    runtime = build_runtime(_RecordingController, tmp_path / "runtime", docker=False, scan=False)
+    runner = Runner(_RecordingController, build_platform(storage_root=tmp_path), runtime)
+    await runner.start()
+    controller = cast(_RecordingController, runner.controller)
+    assert not controller.started  # nothing offers zwave-js-server here
+    assert "zwave" in runtime.unbound(controller.slug())
+
+    await runtime.pin_endpoint(ZWAVE)
+    assert controller.started == 1
+    assert controller.peripherals.endpoint("zwave") == ZWAVE
+    assert controller.peripherals.instance("ble") is offline_providers  # the router, as under the Hub
+    assert controller.platform.offers is not None
+
+    await runtime.pin_endpoint(None, "zwave")  # a required need lost: stopped until it's back
+    assert controller.stopped == 1
+    await runner.stop()
+
+
+async def test_the_runner_hands_a_moved_peripheral_over_or_restarts(tmp_path):
+    runtime = build_runtime(
+        _RecordingController, tmp_path / "runtime", docker=False, scan=False, pinned={"zwave": ZWAVE}
+    )
+    runner = Runner(_RecordingController, build_platform(storage_root=tmp_path), runtime)
+    await runner.start()
+    controller = cast(_RecordingController, runner.controller)
+    moved = Endpoint("zwave", "zwave-js-server", "ws://192.168.1.9:3000", shared=True)
+
+    await runtime.pin_endpoint(moved)
+    assert controller.changes == [PeripheralChange("zwave", ZWAVE, moved)]
+    assert (controller.started, controller.stopped) == (1, 0)  # handled in place
+
+    controller.handles_changes = False
+    await runtime.pin_endpoint(ZWAVE)
+    assert (controller.started, controller.stopped) == (2, 1)
+    await runner.stop()
+
+
+async def test_run_controller_with_peripherals_given_runs_without_the_runtime(tmp_path):
     _RecordingController.instances.clear()
-
-    task = asyncio.create_task(run_controller(_RecordingController, storage_root=tmp_path))
+    task = asyncio.create_task(
+        run_controller(_RecordingController, storage_root=tmp_path, peripherals={"zwave": ZWAVE})
+    )
 
     async with asyncio.timeout(5):
         while not (_RecordingController.instances and _RecordingController.instances[-1].started):
@@ -135,4 +183,24 @@ async def test_run_controller_starts_and_stops_cleanly(tmp_path, monkeypatch):
 
     controller = _RecordingController.instances[-1]
     assert controller.started and controller.stopped
-    assert task.done() and task.exception() is None
+    assert controller.peripherals.endpoint("zwave") == ZWAVE
+    assert not (tmp_path / "runtime").exists()
+
+
+async def test_run_controller_starts_and_stops_cleanly_under_the_runtime(tmp_path):
+    _RecordingController.instances.clear()
+    pinned = {"zwave": ZWAVE}
+    task = asyncio.create_task(
+        run_controller(_RecordingController, storage_root=tmp_path, docker=False, scan=False, pinned=pinned)
+    )
+
+    async with asyncio.timeout(5):
+        while not (_RecordingController.instances and _RecordingController.instances[-1].started):
+            await asyncio.sleep(0.01)
+
+    task.cancel()
+    await task
+
+    controller = _RecordingController.instances[-1]
+    assert controller.started and controller.stopped
+    assert (tmp_path / "runtime" / "state.json").exists()

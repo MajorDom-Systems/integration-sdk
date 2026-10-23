@@ -1,36 +1,44 @@
 """Run one integration controller standalone — no Hub process.
 
 This is the "run standalone, then bridge into the MajorDom language" half of the
-integration workflow: wire a single controller with real discovery services and a local
-repository, start it, and watch what it discovers/reports on the console. Modeled on the
-discovery services' own ``__main__`` demos rather than the Hub's multi-controller CLI.
+integration workflow: the runtime (the ``runtime`` extra) binds the controller's needs as under
+the Hub — the Bluetooth router over the local adapters, DNS-SD, SSDP, the radios it finds and the
+services it runs — and the controller starts with its ``peripherals`` and ``platform``, then you
+watch what it discovers/reports on the console.
 
     import asyncio
     from majordom_integration_sdk.dev import run_controller
     from majordom_hue import HueController  # your integration
 
     asyncio.run(run_controller(HueController))
+
+Without Docker or radios, ``docker=False, scan=False`` and ``pinned={"zwave": Endpoint(...)}`` bind
+only what you give; ``peripherals={...}`` skips the runtime altogether (library mode).
 """
 
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from majordom_integration_sdk.controller.abstract_controller import AbstractController, ControllerOutput
-from majordom_integration_sdk.discovery.ble_discovery import BLEDiscoveryService
-from majordom_integration_sdk.discovery.ssdp_discovery import SSDPDiscoveryService
-from majordom_integration_sdk.discovery.zeroconf_discovery import ZeroconfDiscoveryService
+from majordom_integration_sdk.controller.abstract_controller import AbstractController
+from majordom_integration_sdk.controller.output import ControllerOutput
+from majordom_integration_sdk.controller.platform import Platform
+from majordom_integration_sdk.peripherals import Bound, Endpoint, PeripheralChange, Peripherals
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtocol
 from majordom_integration_sdk.repository.sqlite import SqliteDeviceRepository
 from majordom_integration_sdk.schemas.device import Discovery
 from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
+
+if TYPE_CHECKING:
+    from majordom_integration_sdk.runtime import Runtime
 
 logger = logging.getLogger("majordom_integration_sdk.dev")
 
@@ -72,15 +80,15 @@ class LoggingControllerOutput(ControllerOutput):
         )
 
 
-def build_dependencies(
+def build_platform(
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
     integration: str | None = None,
     slug: str | None = None,
     output: ControllerOutput | None = None,
-) -> AbstractController.Dependencies:
-    """Assemble real (network-live) dependencies for a standalone run.
+) -> Platform:
+    """Assemble the app's services for a standalone run.
 
     ``db_path`` selects a file-backed :class:`SqliteDeviceRepository` (state survives
     restarts); omit it for an in-memory repository. ``integration`` scopes the repository to
@@ -97,14 +105,99 @@ def build_dependencies(
     subfolder = slug or integration
     folder = root / subfolder if subfolder else root
     folder.mkdir(parents=True, exist_ok=True)
-    return AbstractController.Dependencies(
+    return Platform(
         output=output or LoggingControllerOutput(),
         make_device_repository=repository.session,
         documents_folder=folder,
-        zeroconf_discovery_service=ZeroconfDiscoveryService(),
-        ssdp_discovery_service=SSDPDiscoveryService(),
-        ble_discovery_service=BLEDiscoveryService(),
     )
+
+
+def build_runtime(
+    controller_type: type[AbstractController],
+    data: Path,
+    *,
+    docker: bool = True,
+    scan: bool = True,
+    pinned: Mapping[str, Endpoint] = {},
+    **runtime: Any,
+) -> Runtime:
+    """The runtime for one controller: its needs bound like under the Hub. Needs the ``runtime`` extra."""
+    if importlib.util.find_spec("serial") is None:
+        raise ImportError(
+            "Resolving needs takes the runtime — install it with:\n"
+            '    pip install "majordom-integration-sdk[runtime,ble,discovery]"\n'
+            "or pass peripherals={...} yourself."
+        )
+    from majordom_integration_sdk.runtime import Runtime
+
+    return Runtime(data, {controller_type.slug(): controller_type}, docker=docker, scan=scan, pinned=pinned, **runtime)
+
+
+class Runner:
+    """Drives one controller as the Hub does: starts it once its required needs are bound, stops it when one is lost,
+    and hands moved peripherals, settings and context over — restarting it unless it handles them itself."""
+
+    def __init__(
+        self,
+        controller_type: type[AbstractController],
+        platform: Platform,
+        runtime: Runtime | None = None,
+        peripherals: Mapping[str, Bound] | None = None,
+    ):
+        self.slug, self.base, self.runtime = controller_type.slug(), platform, runtime
+        self.controller = controller_type(platform)
+        self.controller.peripherals = Peripherals(peripherals or {})
+        self.running = False
+        self._lock = asyncio.Lock()
+        if runtime:
+            runtime.on_change = self.sync
+
+    async def start(self):
+        if self.runtime:
+            await self.runtime.start()  # binds, then syncs through on_change
+        else:
+            await self._start()
+
+    async def stop(self):
+        if self.running:
+            await self.controller.stop()
+            self.running = False
+        if self.runtime:
+            await self.runtime.stop()
+
+    async def sync(self):
+        assert self.runtime
+        async with self._lock:
+            peripherals = self.runtime.peripherals(self.slug)
+            if peripherals is None:
+                for family, reason in self.runtime.unbound(self.slug).items():
+                    logger.warning("%s isn't bound: %s", family, reason)
+                if self.running:
+                    await self.controller.stop()
+                    self.running = False
+                return
+            platform = self.runtime.platform(self.slug, self.base)
+            before, current = self.controller.peripherals, self.controller.platform
+            self.controller.peripherals, self.controller.platform = peripherals, platform
+            if not self.running:
+                return await self._start()
+            handled = True
+            for family in sorted(before.keys() | peripherals.keys()):
+                if before.get(family) != peripherals.get(family):
+                    change = PeripheralChange(family, before.get(family), peripherals.get(family))
+                    handled = await self.controller.peripheral_did_change(change) and handled
+            if platform.settings != current.settings:
+                handled = await self.controller.settings_did_change(current.settings) and handled
+            if platform.context != current.context:
+                handled = await self.controller.context_did_change(current.context) and handled
+            if not handled:
+                await self.controller.stop()
+                await self.controller.start()
+
+    async def _start(self):
+        await self.controller.start()
+        self.running = True
+        logger.info("%s started — watching for devices.", self.controller.name)
 
 
 async def run_controller(
@@ -112,39 +205,49 @@ async def run_controller(
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
-    **dependencies: Any,
+    peripherals: Mapping[str, Bound] | None = None,
+    docker: bool = True,
+    scan: bool = True,
+    pinned: Mapping[str, Endpoint] = {},
+    **platform: Any,
 ) -> None:
-    """Instantiate ``controller_type``, start it and its discovery services, and run until
-    interrupted (Ctrl-C), then stop everything cleanly. ``dependencies`` override fields of
-    `AbstractController.Dependencies`, e.g. ``links={"zwave": Endpoint("zwave", "zwave-js-ws", url)}``."""
+    """Start ``controller_type`` under the runtime (or with ``peripherals`` you give) and run until interrupted
+    (Ctrl-C), then stop everything cleanly. ``platform`` overrides fields of `Platform`, e.g. ``settings``;
+    ``docker``, ``scan`` and ``pinned`` go to the runtime (`build_runtime`)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-
-    # The integration's identity is class-level, so its repository and documents folder can be
-    # scoped before it's constructed.
-    deps = build_dependencies(
-        storage_root=storage_root,
-        db_path=db_path,
-        integration=controller_type.name,
-        slug=controller_type.slug(),
-    ).copy(**dependencies)
-    controller = controller_type(deps)
-
-    await deps.zeroconf_discovery_service.start()
-    await deps.ssdp_discovery_service.start()
-    await deps.ble_discovery_service.start()
-    await controller.start()
-    logger.info("%s started — watching for devices. Ctrl-C to stop.", controller.name)
-
+    runner = _runner(controller_type, storage_root, db_path, peripherals, docker, scan, pinned, None, platform)
+    await runner.start()
     try:
         await asyncio.Event().wait()  # run forever until cancelled
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
-        await controller.stop()
-        await deps.ble_discovery_service.stop()
-        await deps.ssdp_discovery_service.stop()
-        await deps.zeroconf_discovery_service.stop()
-        logger.info("%s stopped.", controller.name)
+        await runner.stop()
+        logger.info("%s stopped.", controller_type.name)
+
+
+def _runner(
+    controller_type: type[AbstractController],
+    storage_root: Path | None,
+    db_path: str | Path | None,
+    peripherals: Mapping[str, Bound] | None,
+    docker: bool,
+    scan: bool,
+    pinned: Mapping[str, Endpoint],
+    output: ControllerOutput | None,
+    overrides: Mapping[str, Any],
+) -> Runner:
+    # The integration's identity is class-level, so its repository and documents folder can be
+    # scoped before it's constructed.
+    root = Path(storage_root) if storage_root is not None else Path(".majordom-dev")
+    base = build_platform(
+        storage_root=root, db_path=db_path, integration=controller_type.name, slug=controller_type.slug()
+    )
+    base = base.copy(output=output or base.output, **overrides)
+    if peripherals is not None:
+        return Runner(controller_type, base, peripherals=Peripherals(peripherals))
+    runtime = build_runtime(controller_type, root / "runtime", docker=docker, scan=scan, pinned=pinned)
+    return Runner(controller_type, base, runtime)
 
 
 def __getattr__(name: str):
@@ -162,4 +265,4 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["run_controller", "run_cli", "build_dependencies", "LoggingControllerOutput"]
+__all__ = ["run_controller", "run_cli", "build_platform", "build_runtime", "Runner", "LoggingControllerOutput"]
