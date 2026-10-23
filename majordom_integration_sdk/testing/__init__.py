@@ -5,10 +5,13 @@ instead of reinventing them, so every integration is exercised through the same 
 
 - :class:`RecordingControllerOutput` — a spy implementing every ``ControllerOutput``
   callback, capturing what a controller reports back to the Hub.
-- Offline discovery-service doubles (no radios/sockets touched).
-- :func:`build_test_dependencies` — assembles an ``AbstractController.Dependencies`` wired
-  with the recording output, an in-memory device repository, temp-dir storage, and the
-  discovery doubles, so a test can drive a controller exactly as the Hub would.
+- Offline doubles of every capability (no radios/sockets touched): :class:`FakeBLESource` for the
+  Bluetooth router to hear through, :class:`FakeBLERouter`, :class:`FakeDNSSD` (the ``discovery``
+  extra) and :class:`FakeSSDP`. Each offers itself as ``.endpoint``, to pass in the controller's
+  peripherals: ``Controller(platform, {"ble": router.endpoint})``.
+- :func:`build_test_platform` — assembles a controller ``Platform`` wired with the recording
+  output, an in-memory device repository and temp-dir storage, so a test can drive a controller
+  exactly as the Hub would.
 """
 
 from __future__ import annotations
@@ -19,14 +22,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData
-
-from majordom_integration_sdk.controller.abstract_controller import AbstractController, ControllerOutput
-from majordom_integration_sdk.discovery.ble_discovery import BLEConnection, BLEDiscoveryService, OnAdvertisement
-from majordom_integration_sdk.discovery.ssdp_discovery import SSDPDiscoveryService
-from majordom_integration_sdk.discovery.zeroconf_discovery import ZeroconfDiscoveryService
+from majordom_integration_sdk.capabilities.ble import BLEConnection, OnAdvertisement
+from majordom_integration_sdk.controller.output import ControllerOutput
+from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
+from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
+from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
 from majordom_integration_sdk.schemas.device import Discovery
 from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
@@ -73,7 +74,7 @@ class RecordingControllerOutput(ControllerOutput):
         self.notifications.append(notification)
 
 
-class FakeZeroconfDiscoveryService(ZeroconfDiscoveryService):
+class FakeSSDP(SSDPDiscoveryService):
     """Real registration bookkeeping, but ``start``/``stop`` touch no network."""
 
     async def start(self):
@@ -83,30 +84,51 @@ class FakeZeroconfDiscoveryService(ZeroconfDiscoveryService):
         pass
 
 
-class FakeSSDPDiscoveryService(SSDPDiscoveryService):
+class FakeBLERouter(BLEService):
+    """A router with no radio unless given `FakeBLESource`s; ``start``/``stop`` run no background tasks."""
+
     async def start(self):
-        pass
+        self._is_running = True
+        await self._start_sources()
 
     async def stop(self):
-        pass
+        self._is_running = False
+        await self._stop_sources()
 
 
-class FakeBLEDiscoveryService(BLEDiscoveryService):
-    async def start(self):
-        pass
+def __getattr__(name: str):
+    if name == "FakeDNSSD":  # the discovery extra (zeroconf): only for the suites that use it
+        from majordom_integration_sdk.runtime.peripherals.providers.dns_sd import ZeroconfDiscoveryService
 
-    async def stop(self):
-        pass
+        class FakeDNSSD(ZeroconfDiscoveryService):
+            """Real registration bookkeeping, but ``start``/``stop`` touch no network."""
+
+            async def start(self):
+                pass
+
+            async def stop(self):
+                pass
+
+        globals()[name] = FakeDNSSD
+        return FakeDNSSD
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class FakeBLESource:
     """A Bluetooth radio for tests: ``advertise`` feeds the service it serves, ``connect`` returns
     ``connection`` (or fails when there is none). Use with ``BLEService(sources=[...])``."""
 
-    def __init__(self, name: str = "fake", connection: BLEConnection | None = None, can_pair: bool = False):
+    def __init__(
+        self,
+        name: str = "fake",
+        connection: BLEConnection | None = None,
+        can_pair: bool = False,
+        free_slots: int | None = None,
+    ):
         self.name = name
         self.connection = connection
         self.can_pair = can_pair
+        self.free_slots = free_slots
         self.on_advertisement: OnAdvertisement | None = None
         self.connected: list[str] = []
 
@@ -131,6 +153,9 @@ class FakeBLESource:
         service_data: dict[str, bytes] | None = None,
         manufacturer_data: dict[int, bytes] | None = None,
     ):
+        from bleak.backends.device import BLEDevice  # the ble extra
+        from bleak.backends.scanner import AdvertisementData
+
         assert self.on_advertisement, f"{self.name} isn't listening"
         adv = AdvertisementData(
             local_name, manufacturer_data or {}, service_data or {}, service_uuids or [], None, rssi, ()
@@ -138,35 +163,30 @@ class FakeBLESource:
         self.on_advertisement(BLEDevice(address, local_name, self.name), adv)  # details: the radio
 
 
-def build_test_dependencies(
+def build_test_platform(
     documents_folder: Path | None = None,
     integration: str | None = None,
-) -> AbstractController.Dependencies:
-    """Assemble controller ``Dependencies`` wired entirely with offline test doubles.
+) -> Platform:
+    """Assemble a controller ``Platform`` wired entirely with offline test doubles.
 
     Pass ``documents_folder`` to control where the controller writes files; a fresh temp dir
     is used otherwise. Pass ``integration`` to scope the in-memory repository to that
     integration's devices (access-control guard), mirroring how the Hub injects it. The
-    recording output is reachable as ``deps.output``.
+    recording output is reachable as ``platform.output``.
     """
     repository = DeviceRepositoryMemory(integration=integration)
     folder = documents_folder or Path(tempfile.mkdtemp(prefix="majordom-sdk-test-"))
     folder.mkdir(parents=True, exist_ok=True)
-    return AbstractController.Dependencies(
-        output=RecordingControllerOutput(),
-        make_device_repository=repository.session,
-        documents_folder=folder,
-        zeroconf_discovery_service=FakeZeroconfDiscoveryService(),
-        ssdp_discovery_service=FakeSSDPDiscoveryService(),
-        ble_discovery_service=FakeBLEDiscoveryService(),
+    return Platform(
+        output=RecordingControllerOutput(), make_device_repository=repository.session, documents_folder=folder
     )
 
 
 __all__ = [
     "RecordingControllerOutput",
-    "FakeZeroconfDiscoveryService",
-    "FakeSSDPDiscoveryService",
-    "FakeBLEDiscoveryService",
     "FakeBLESource",
-    "build_test_dependencies",
+    "FakeBLERouter",
+    "FakeDNSSD",
+    "FakeSSDP",
+    "build_test_platform",
 ]
