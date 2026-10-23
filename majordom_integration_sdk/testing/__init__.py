@@ -8,7 +8,8 @@ instead of reinventing them, so every integration is exercised through the same 
 - Offline doubles of every capability (no radios/sockets touched): :class:`FakeBLESource` for the
   Bluetooth router to hear through, :class:`FakeBLERouter`, :class:`FakeDNSSD` (the ``discovery``
   extra) and :class:`FakeSSDP`. Each offers itself as ``.endpoint``, to pass in the controller's
-  peripherals: ``Controller(platform, {"ble": router.endpoint})``.
+  peripherals: ``Controller(platform, {"ble": router.endpoint})``. :class:`FakeOffers` takes
+  what an integration offers, lending its Bluetooth sources to a router as the runtime would.
 - :func:`build_test_platform` — assembles a controller ``Platform`` wired with the recording
   output, an in-memory device repository and temp-dir storage, so a test can drive a controller
   exactly as the Hub would.
@@ -25,6 +26,7 @@ from uuid import UUID
 from majordom_integration_sdk.capabilities.ble import BLEConnection, OnAdvertisement
 from majordom_integration_sdk.controller.output import ControllerOutput
 from majordom_integration_sdk.controller.platform import Platform
+from majordom_integration_sdk.peripherals import Endpoint, PeripheralChange
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
@@ -94,6 +96,29 @@ class FakeBLERouter(BLEService):
     async def stop(self):
         self._is_running = False
         await self._stop_sources()
+
+
+class FakeOffers:
+    """What an integration offers, recorded; with a ``router``, offered ``ble`` sources are lent to it as the runtime
+    binds them. Use as ``platform.copy(offers=FakeOffers(router))``."""
+
+    def __init__(self, router: BLEService | None = None):
+        self.offered: list[Endpoint] = []
+        self._router = router
+
+    async def offer(self, endpoint: Endpoint) -> None:
+        await self._change(
+            [*(e for e in self.offered if (e.family, e.url) != (endpoint.family, endpoint.url)), endpoint]
+        )
+
+    async def withdraw(self, endpoint: Endpoint) -> None:
+        await self._change([e for e in self.offered if (e.family, e.url) != (endpoint.family, endpoint.url)])
+
+    async def _change(self, offered: list[Endpoint]):
+        before, self.offered = self.offered, offered
+        if self._router:
+            lent = [[e for e in endpoints if e.family == "ble"] for endpoints in (before, offered)]
+            await self._router.peripheral_did_change(PeripheralChange("ble", *lent))
 
 
 def __getattr__(name: str):
@@ -188,5 +213,6 @@ __all__ = [
     "FakeBLERouter",
     "FakeDNSSD",
     "FakeSSDP",
+    "FakeOffers",
     "build_test_platform",
 ]

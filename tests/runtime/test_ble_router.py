@@ -557,3 +557,19 @@ async def test_changed_manufacturer_data_is_an_update(radios):
         near.advertise("BB", manufacturer_data={APPLE: data})
         await settle()
     assert (len(listener.found), len(listener.updated)) == (1, 1)
+
+
+async def test_fake_offers_lend_the_router_what_an_integration_offers():
+    from majordom_integration_sdk import Endpoint
+    from majordom_integration_sdk.testing import FakeOffers
+
+    ble = BLEService()
+    await ble.start()
+    offers, proxy = FakeOffers(ble), FakeBLESource("esphome:aa")
+    lent = Endpoint("ble", "esphome-proxy", "esphome:aa", instance=proxy)
+
+    await offers.offer(lent)
+    assert offers.offered == [lent] and proxy.on_advertisement is not None
+    await offers.withdraw(lent)
+    assert offers.offered == [] and proxy.on_advertisement is None
+    await ble.stop()
