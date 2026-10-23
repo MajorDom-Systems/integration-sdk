@@ -1,153 +1,43 @@
-"""Bluetooth LE for integrations: one service that hears every radio and reaches every device.
+"""The runtime's ``ble/router``: one router over every Bluetooth source the runtime binds to it (see
+`majordom_integration_sdk.capabilities.ble` for the contract integrations use).
 
-Sources feed advertisements in: the hub's own adapters and proxies (e.g. ESPHome ``bluetooth_proxy``).
-Listeners register `BLEMatcher`s and hear about matching devices whichever source saw them.
-`BLEService.connect` opens a GATT connection through the source that hears the device best;
-`BLEService.exclusive` leases that one source to a device for as long as pairing it takes.
-Credentials go to a device only over a link a `SecureChannel` (`ble_security`) has secured first.
+It needs every raw radio, ``ble/bluez`` adapters, ``ble/silabs-cpc-hci`` and the ``ble/esphome-proxy`` nodes ESPHome
+offers, and offers itself as the one shared ``ble/router``. Sources come and go as the runtime rebinds it.
 """
+
+from __future__ import annotations
 
 import asyncio
 import contextlib
 import logging
-import sys
 from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
-from pathlib import Path
 from time import monotonic
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from bleak import BleakClient, BleakScanner
-from bleak.args.bluez import OrPattern
-from bleak.assigned_numbers import AdvertisementDataType
-from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData
-from bleak.exc import BleakError
+from majordom_integration_sdk.capabilities.ble import (
+    BLEBusyError,
+    BLEConnection,
+    BLEDiscoveryInfo,
+    BLEDiscoveryListener,
+    BLELease,
+    BLEMatcher,
+    BLEPairingError,
+    BLESource,
+    OnAdvertisement,
+    PausableBLESource,
+    ScanModeBLESource,
+)
+from majordom_integration_sdk.peripherals import Endpoint, Need, PeripheralChange, Peripherals
 
-from . import bluez_pairing
+if TYPE_CHECKING:
+    from bleak.backends.device import BLEDevice
+    from bleak.backends.scanner import AdvertisementData
 
 logger = logging.getLogger(__name__)
 
-OnAdvertisement = Callable[[BLEDevice, AdvertisementData], None]
-
-
-@dataclass(frozen=True)
-class BLEMatcher:
-    """What a listener wants to hear about; every field that is set must match."""
-
-    service_uuid: UUID | None = None  # advertised as a service or in the service data
-    service_data_uuid: UUID | None = None  # in the service data only (what the listener reads)
-    manufacturer_id: int | None = None
-    manufacturer_data_start: bytes = b""
-    local_name_prefix: str | None = None
-
-    def matches(self, adv: AdvertisementData) -> bool:
-        if self.service_uuid and str(self.service_uuid) not in {*adv.service_uuids, *adv.service_data}:
-            return False
-        if self.service_data_uuid and str(self.service_data_uuid) not in adv.service_data:
-            return False
-        if self.manufacturer_id is not None:
-            data = adv.manufacturer_data.get(self.manufacturer_id)
-            if data is None or not bytes(data).startswith(self.manufacturer_data_start):
-                return False
-        return not self.local_name_prefix or (adv.local_name or "").startswith(self.local_name_prefix)
-
-
-@dataclass
-class BLEDiscoveryInfo:
-    device: BLEDevice
-    advertisement: AdvertisementData
-    source: str = "local"  # the source that hears it best: "hci0", "esphome:<mac>", …
-    rssi: int | None = None  # as that source hears it
-    last_seen: float = 0.0  # monotonic
-
-
-class BLEDiscoveryListener(Protocol):
-    async def ble_did_discover_device(self, ble: "BLEService", info: BLEDiscoveryInfo): ...
-    async def ble_did_update_device(self, ble: "BLEService", info: BLEDiscoveryInfo): ...
-    async def ble_did_remove_device(self, ble: "BLEService", info: BLEDiscoveryInfo): ...
-
-
-@dataclass(frozen=True)
-class GattCharacteristic:
-    uuid: str
-    handle: int
-    properties: tuple[str, ...]  # "read", "write", "write-without-response", "notify", "indicate", …
-
-
-@dataclass(frozen=True)
-class GattService:
-    uuid: str
-    handle: int
-    characteristics: tuple[GattCharacteristic, ...]
-
-
-class BLEConnection(Protocol):
-    """An open GATT connection; characteristics are addressed by handle."""
-
-    @property
-    def mtu(self) -> int: ...
-    async def services(self) -> list[GattService]: ...
-    async def read(self, handle: int) -> bytes: ...
-    async def write(self, handle: int, data: bytes, response: bool = True) -> None: ...
-    async def start_notify(self, handle: int, callback: Callable[[bytes], None]) -> None: ...
-    async def stop_notify(self, handle: int) -> None: ...
-    async def disconnect(self) -> None: ...
-
-
-@runtime_checkable
-class PairableBLEConnection(BLEConnection, Protocol):
-    """A connection that can encrypt its link by pairing (LE Secure Connections where both ends support it)."""
-
-    async def pair(self) -> None:
-        """Pairs "Just Works", encrypting the link. Raises `BLEPairingError`."""
-        ...
-
-    async def unpair(self) -> None:
-        """Forgets the bond; the link may drop."""
-        ...
-
-
-class BLESource(Protocol):
-    """A radio that hears advertisements and can connect to devices: a local adapter or a proxy. One whose
-    connections are `PairableBLEConnection`s says so with a true ``can_pair`` attribute."""
-
-    name: str
-
-    async def start(self, on_advertisement: OnAdvertisement) -> None: ...
-    async def stop(self) -> None: ...
-    async def connect(self, address: str, on_disconnect: Callable[[], None]) -> BLEConnection: ...
-
-
-@runtime_checkable
-class PausableBLESource(BLESource, Protocol):
-    """A source that can stop hearing without letting go of its radio, e.g. a proxy whose connections only
-    work while it stays subscribed; a lease pauses one rather than stopping it."""
-
-    async def pause_scanning(self) -> None: ...
-    async def resume_scanning(self) -> None: ...
-
-
-class BLEBusyError(ConnectionError):
-    """Every source that hears the device is leased to someone else."""
-
-
-class BLEPairingError(ConnectionError):
-    """The link could not be encrypted: pairing failed, or no source that hears the device can pair."""
-
-
-@dataclass(frozen=True)
-class BLELease:
-    """One source held for one device: it doesn't scan, and only the holder connects through it."""
-
-    address: str
-    source: str
-    owner: str
-    _source: BLESource = field(repr=False)
-
-    async def connect(self, on_disconnect: Callable[[], None] = lambda: None) -> BLEConnection:
-        return await self._source.connect(self.address, on_disconnect)
+RAW_BLE = ["bluez", "silabs-cpc-hci", "esphome-proxy"]  # every radio the router hears through
 
 
 def _adv_signature(adv: AdvertisementData) -> tuple:
@@ -164,9 +54,6 @@ def _matches(matchers: list[BLEMatcher], adv: AdvertisementData) -> bool:
     return any(m.matches(adv) for m in matchers)
 
 
-_EVERY_ADVERTISER = [OrPattern(0, AdvertisementDataType.FLAGS, flags) for flags in (b"\x02", b"\x06", b"\x1a")]
-
-
 @dataclass
 class _BLETrackedDevice:
     info: BLEDiscoveryInfo
@@ -180,13 +67,16 @@ class _BLETrackedDevice:
 
 
 class BLEService:
-    """Bluetooth LE across all sources: discovery for listeners, GATT connections on demand."""
+    """Bluetooth LE across all sources: discovery for listeners, GATT connections on demand. A `BLERouter`."""
 
-    def __init__(self, sources: Iterable[BLESource] | None = None):
-        """``sources`` default to every local adapter (each BlueZ ``hciN``) found on start."""
+    name = "ble-router"
+    needs = [Need("ble", RAW_BLE, many=True, required=False)]
+
+    def __init__(self, sources: Iterable[BLESource] = ()):
+        """``sources``: radios to hear through besides the ones the runtime binds."""
         self._listeners: list[tuple[BLEDiscoveryListener, list[BLEMatcher]]] = []
-        self._sources: dict[str, BLESource] = {s.name: s for s in sources or ()}
-        self._use_local_adapters = sources is None
+        self._sources: dict[str, BLESource] = {s.name: s for s in sources}
+        self._bound: dict[str, str] = {}  # bound endpoint url -> the source it became
         self._is_running: bool = False
         self._leases: dict[str, asyncio.Lock] = {}  # source -> held while it is leased
         self._removal_grace_sec: float = 11.0  # seconds unheard by every source before did_remove is fired
@@ -200,6 +90,27 @@ class BLEService:
     @property
     def is_running(self) -> bool:
         return self._is_running
+
+    @property
+    def endpoint(self) -> Endpoint:
+        """What the runtime offers: this router, shared by every consumer."""
+        return Endpoint("ble", "router", "router", shared=True, instance=self)
+
+    async def peripheral_did_change(self, change: PeripheralChange) -> None:
+        """The runtime bound other radios to it: hear through the new ones, let go of the lost ones."""
+        before = {e.url: e for e in Peripherals({"ble": change.before}).endpoints("ble")} if change.before else {}
+        after = {e.url: e for e in Peripherals({"ble": change.after}).endpoints("ble")} if change.after else {}
+        for url in before.keys() - after.keys():
+            if name := self._bound.pop(url, None):
+                await self.remove_source(name)
+        for url in after.keys() - before.keys():
+            try:
+                source = source_of(after[url])
+            except Exception as e:  # a radio that can't be used here (a missing extra) leaves the others working
+                logger.warning(f"BLE can't use {after[url].dialect} {url}: {e}")
+                continue
+            self._bound[url] = source.name
+            await self.add_source(source)
 
     def register(self, listener: BLEDiscoveryListener, matchers: Iterable[BLEMatcher | UUID]) -> Callable[[], None]:
         """
@@ -232,8 +143,6 @@ class BLEService:
             await source.stop()
 
     async def start(self):
-        if self._use_local_adapters:
-            self._sources = {a.name: a for a in _local_adapters()} | self._sources
         self._is_running = True
         await self._start_sources()
         self._spawn(self._eviction_loop())
@@ -258,6 +167,7 @@ class BLEService:
         try:
             source = self._sources[name]
             with contextlib.suppress(Exception):
+                # paused, not stopped: a proxy answers connects only while it stays subscribed
                 await (source.pause_scanning() if isinstance(source, PausableBLESource) else source.stop())
             yield BLELease(address, name, owner, self._sources[name])
         finally:
@@ -289,16 +199,13 @@ class BLEService:
         """Every device heard recently, as the source hearing it best sees it."""
         return [tracked.info for tracked in self._tracked.values()]
 
-    def best_device(self, address: str) -> BLEDevice | None:
-        """bleak's device as the source hearing it best has it, for libraries that connect through bleak."""
-        tracked = self._tracked.get(address)
-        return tracked.info.device if tracked else None
-
     # Internals
 
     def _candidates(self, address: str) -> list[str]:
+        """Sources to reach ``address`` through, the strongest first; a proxy with no connection slot left last."""
         tracked = self._tracked.get(address)
-        return (tracked.sources(self._removal_grace_sec) if tracked else []) or list(self._sources)
+        names = (tracked.sources(self._removal_grace_sec) if tracked else []) or list(self._sources)
+        return sorted(names, key=lambda name: getattr(self._sources.get(name), "free_slots", None) == 0)
 
     def _is_leased(self, name: str) -> bool:
         return name in self._leases and self._leases[name].locked()
@@ -350,22 +257,24 @@ class BLEService:
         return monotonic() >= self._active_until
 
     async def _rescan(self, after: float = 0):
-        """Restarts the local adapters whose scan no longer fits (a burst began or ended)."""
+        """Switches every source that can between passive and active scanning (a burst began or ended)."""
         await asyncio.sleep(after)
         if not self._is_running:
             return
-        passive = self._scans_passively()
+        active = not self._scans_passively()
         for name, source in list(self._sources.items()):
-            if isinstance(source, LocalAdapter) and source.passive != passive and not self._is_leased(name):
-                await source.stop()
-                await self._start_source(name)
+            if isinstance(source, ScanModeBLESource) and not self._is_leased(name):
+                try:
+                    await source.set_scan_mode(active)
+                except Exception as e:
+                    logger.warning(f"BLE source {name} failed to switch its scan: {e}")
 
     async def _start_source(self, name: str):
         self._heard_at[name] = monotonic()  # one that fails to start is retried once it counts as silent
         source = self._sources[name]
-        if isinstance(source, LocalAdapter):
-            source.passive = self._scans_passively()
         try:
+            if isinstance(source, ScanModeBLESource):
+                await source.set_scan_mode(not self._scans_passively())
             await source.start(self._advertisement_handler(name))
         except Exception as e:
             logger.warning(f"BLE source {name} failed to start: {e}")
@@ -458,122 +367,17 @@ class BLEService:
         await self._evict_stale()
 
 
-#: The previous name, kept while integrations move to `BLEService`.
-BLEDiscoveryService = BLEService
+def source_of(endpoint: Endpoint) -> BLESource:
+    """The source a bound raw-BLE endpoint is: the one it carries (an ESPHome proxy), else a BlueZ adapter."""
+    if endpoint.instance is not None:
+        return endpoint.instance
+    if endpoint.dialect == "silabs-cpc-hci":
+        from majordom_integration_sdk.runtime.peripherals.providers.ble.cpc_hci import source_of as cpc_source
 
+        return cpc_source(endpoint)
+    from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import LocalAdapter  # the ble extra
 
-class LocalAdapter:
-    """A Bluetooth adapter of this machine, through bleak (BlueZ on Linux)."""
-
-    can_pair = True  # LE Secure Connections where the device offers it; through a scoped BlueZ agent on Linux
-
-    def __init__(self, adapter: str | None = None):
-        self.name = adapter or "local"
-        self._options = {"bluez": {"adapter": adapter}} if adapter else {}
-        self._scanner: BleakScanner | None = None
-        self._devices: dict[str, BLEDevice] = {}  # address -> last seen; connecting by it skips a scan
-        self.passive = False  # set: a passive scan of every advertiser, the listeners' matchers choose
-        self._passive_refused = False
-        self._scan_lock = asyncio.Lock()  # a connect holds it: no scan starts until it ends
-
-    async def start(self, on_advertisement: OnAdvertisement):
-        def on_detection(device: BLEDevice, adv_data: AdvertisementData):
-            self._devices.pop(device.address, None)  # re-added last: the dict stays oldest first
-            self._devices[device.address] = device
-            if len(self._devices) > 1024:  # phones rotate their address: drop the oldest
-                del self._devices[next(iter(self._devices))]
-            on_advertisement(device, adv_data)
-
-        # BlueZ refuses a passive scan without --experimental (Raspberry Pi OS's default): then it scans actively. With
-        # it, a Pi 5 (BlueZ 5.82, no offload) passes adverts only through patterns on the flags (2026-10-14), as in HA.
-        async with self._scan_lock:
-            if self.passive and not self._passive_refused:
-                bluez = {**self._options.get("bluez", {}), "or_patterns": _EVERY_ADVERTISER}
-                self._scanner = BleakScanner(detection_callback=on_detection, scanning_mode="passive", bluez=bluez)
-                try:
-                    return await self._scanner.start()
-                except Exception as e:
-                    # BlueZ's advertisement monitor is missing (an old or non-experimental bluetoothd)
-                    logger.warning(f"BLE {self.name} can't scan passively, scanning actively: {e}")
-                    self._passive_refused = True
-            self.passive = False
-            self._scanner = BleakScanner(detection_callback=on_detection, **self._options)
-            await self._scanner.start()
-
-    async def stop(self):
-        async with self._scan_lock:
-            scanner, self._scanner = self._scanner, None
-            if scanner:
-                await scanner.stop()
-
-    async def connect(self, address: str, on_disconnect: Callable[[], None]) -> BLEConnection:
-        device = self._devices.get(address, address)
-        client = BleakClient(device, disconnected_callback=lambda _: on_disconnect(), **self._options)
-        async with self._scan_lock:
-            scanner = self._scanner
-            if scanner:  # many adapters (the Raspberry Pi's included) stall a connect while discovering
-                await scanner.stop()
-            try:
-                await client.connect()
-            finally:
-                if scanner:
-                    await scanner.start()
-        return _BleakConnection(client, self._options.get("bluez", {}).get("adapter") or "hci0")
-
-
-class _BleakConnection:
-    def __init__(self, client: BleakClient, adapter: str):
-        self._client, self._adapter = client, adapter
-
-    @property
-    def mtu(self) -> int:
-        # On BlueZ bleak says 23 until the MTU is acquired, though BlueZ exchanged the real one on connect and every
-        # characteristic carries it; Matter's BTP sized its segments by the 23 and ran ~10x slower (2026-10-22).
-        characteristics = self._client.services.characteristics.values()
-        return max((c.max_write_without_response_size + 3 for c in characteristics), default=self._client.mtu_size)
-
-    async def services(self) -> list[GattService]:
-        return [
-            GattService(
-                service.uuid,
-                service.handle,
-                tuple(GattCharacteristic(c.uuid, c.handle, tuple(c.properties)) for c in service.characteristics),
-            )
-            for service in self._client.services
-        ]
-
-    async def read(self, handle: int) -> bytes:
-        return bytes(await self._client.read_gatt_char(handle))
-
-    async def write(self, handle: int, data: bytes, response: bool = True):
-        await self._client.write_gatt_char(handle, data, response=response)
-
-    async def start_notify(self, handle: int, callback: Callable[[bytes], None]):
-        await self._client.start_notify(handle, lambda _, data: callback(bytes(data)))
-
-    async def stop_notify(self, handle: int):
-        await self._client.stop_notify(handle)
-
-    async def pair(self):
-        try:
-            if sys.platform == "linux":  # bleak's pair() brings no agent: LE Secure Connections fails without one
-                await bluez_pairing.pair(self._adapter, self._client.address)
-            else:  # the OS pairs on its own, with its own prompts
-                await self._client.pair()
-        except (ConnectionError, BleakError, EOFError) as e:  # org.bluez.Error.AuthenticationFailed, a dropped link
-            raise BLEPairingError(f"Pairing failed: {e}") from e
-
-    async def unpair(self):
-        await self._client.unpair()
-
-    async def disconnect(self):
-        await self._client.disconnect()
-
-
-def _local_adapters() -> list[LocalAdapter]:
-    """One source per BlueZ adapter (hci0, a USB dongle as hci1, …); the default adapter elsewhere."""
-    names = sorted(path.name for path in Path("/sys/class/bluetooth").glob("hci*") if ":" not in path.name)
-    return [LocalAdapter(name) for name in names] or [LocalAdapter()]
+    return LocalAdapter(endpoint.url or None)
 
 
 # Example usage
@@ -583,16 +387,18 @@ if __name__ == "__main__":
     # logger.setLevel(logging.DEBUG)
 
     async def main():
-        discovery = BLEDiscoveryService()
+        from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import LocalAdapter
+
+        discovery = BLEService([LocalAdapter()])
 
         class SwitchBotListener:
-            async def ble_did_discover_device(self, ble: BLEDiscoveryService, info: BLEDiscoveryInfo):
+            async def ble_did_discover_device(self, ble: BLEService, info: BLEDiscoveryInfo):
                 print(f"Found: {info.device.name} ({info.device.address})")
 
-            async def ble_did_update_device(self, ble: BLEDiscoveryService, info: BLEDiscoveryInfo):
+            async def ble_did_update_device(self, ble: BLEService, info: BLEDiscoveryInfo):
                 print(f"Updated: {info.device.name} ({info.device.address})")
 
-            async def ble_did_remove_device(self, ble: BLEDiscoveryService, info: BLEDiscoveryInfo):
+            async def ble_did_remove_device(self, ble: BLEService, info: BLEDiscoveryInfo):
                 print(f"Removed: {info.device.name} ({info.device.address})")
 
         switchbot_services = {

@@ -1,3 +1,6 @@
+"""The runtime's ``upnp/ssdp``: one SSDP listener shared by every integration that needs it. See
+`majordom_integration_sdk.capabilities.ssdp` for the contract."""
+
 import asyncio
 import logging
 import socket
@@ -6,27 +9,12 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from time import monotonic
-from typing import NamedTuple, Protocol
+from typing import NamedTuple
+
+from majordom_integration_sdk.capabilities.ssdp import SSDPDiscoveryInfo, SSDPDiscoveryListener
+from majordom_integration_sdk.peripherals import Endpoint, Need, PeripheralChange
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class SSDPDiscoveryInfo:
-    addr: str
-    host: str | None
-    search_target: str | None
-    service_name: str | None
-    server: str | None
-    cache_control: str | None
-    location: str | None
-    response: dict[str, str]
-
-
-class SSDPDiscoveryListener(Protocol):
-    async def ssdp_did_discover_service(self, ssdp: "SSDPDiscoveryService", info: "SSDPDiscoveryInfo"): ...
-    async def ssdp_did_update_service(self, ssdp: "SSDPDiscoveryService", info: "SSDPDiscoveryInfo"): ...
-    async def ssdp_did_remove_service(self, ssdp: "SSDPDiscoveryService", info: "SSDPDiscoveryInfo"): ...
 
 
 @dataclass
@@ -59,6 +47,18 @@ class _SocketSubscribers:
 
 
 class SSDPDiscoveryService:
+    """An `SSDP`."""
+
+    name = "ssdp"
+    needs: list[Need] = []
+
+    @property
+    def endpoint(self) -> Endpoint:
+        return Endpoint("upnp", "ssdp", "ssdp", shared=True, instance=self)
+
+    async def peripheral_did_change(self, change: PeripheralChange) -> None:
+        pass
+
     def __init__(self):
         # Single dict: Endpoint -> SocketSubscribers(socket, [Subscriber])
         self._endpoints_subscribers: dict[_Endpoint, _SocketSubscribers] = dict()

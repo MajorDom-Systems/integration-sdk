@@ -6,14 +6,14 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from majordom_integration_sdk.discovery import (
+from majordom_integration_sdk.capabilities import (
     BLEConnection,
     BLEPairingError,
-    BLEService,
     LESecureConnections,
     PairableBLEConnection,
     Unsecured,
 )
+from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.testing import FakeBLESource
 
 
@@ -105,7 +105,7 @@ async def test_a_pairing_lease_fails_when_no_radio_hearing_the_device_can_pair(r
 
 @pytest.fixture
 def adapter_client(monkeypatch):
-    from majordom_integration_sdk.discovery import ble_discovery as module
+    from majordom_integration_sdk.runtime.peripherals.providers.ble import bluez as module
 
     client = Mock(connect=AsyncMock(), pair=AsyncMock(), unpair=AsyncMock(), address="AA:BB:CC:DD:EE:FF")
     monkeypatch.setattr(module, "BleakClient", lambda *args, **kwargs: client)
@@ -113,12 +113,12 @@ def adapter_client(monkeypatch):
 
 
 async def test_on_linux_a_local_adapter_pairs_through_its_own_bluez_agent(adapter_client, monkeypatch):
-    from majordom_integration_sdk.discovery import LocalAdapter, bluez_pairing
-    from majordom_integration_sdk.discovery import ble_discovery as module
+    from majordom_integration_sdk.runtime.peripherals.providers.ble import bluez as module
+    from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import LocalAdapter
 
     monkeypatch.setattr(module.sys, "platform", "linux")
     paired = AsyncMock()
-    monkeypatch.setattr(bluez_pairing, "pair", paired)
+    monkeypatch.setattr(module, "pair_through_agent", paired)
     adapter = LocalAdapter("hci1")
     assert adapter.can_pair
 
@@ -138,8 +138,8 @@ async def test_on_linux_a_local_adapter_pairs_through_its_own_bluez_agent(adapte
 async def test_elsewhere_the_os_pairs_on_its_own(adapter_client, monkeypatch):
     from bleak.exc import BleakError
 
-    from majordom_integration_sdk.discovery import LocalAdapter
-    from majordom_integration_sdk.discovery import ble_discovery as module
+    from majordom_integration_sdk.runtime.peripherals.providers.ble import bluez as module
+    from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import LocalAdapter
 
     monkeypatch.setattr(module.sys, "platform", "darwin")
     connection = await LocalAdapter().connect("AA:BB:CC:DD:EE:FF", lambda: None)
@@ -167,7 +167,7 @@ DEVICE = "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF"
     ],
 )
 def test_the_agent_answers_only_for_the_device_being_paired(member, body, answer):
-    from majordom_integration_sdk.discovery import bluez_pairing
+    from majordom_integration_sdk.runtime.peripherals.providers.ble import bluez as bluez_pairing
 
     assert bluez_pairing.device_path("hci0", "aa:bb:cc:dd:ee:ff") == DEVICE
     assert bluez_pairing.agent_answer(member, body, DEVICE) == answer

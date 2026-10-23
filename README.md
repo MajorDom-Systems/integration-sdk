@@ -33,7 +33,7 @@ Requires Python 3.12+.
 
 ## Also a standalone IoT toolkit
 
-You don't need MajorDom to get value from this package. `majordom_integration_sdk.discovery`
+You don't need MajorDom to get value from this package. `majordom_integration_sdk.runtime.peripherals.providers`
 ships three fully working, standardized device-discovery services you can drop into **any**
 async Python project:
 
@@ -43,7 +43,7 @@ async Python project:
   went away" events, not just arrivals.
 - **SSDP / UPnP** (`SSDPDiscoveryService`) — flexible, per-listener **configurable** search
   targets and refresh behavior over raw sockets, without dragging in a full UPnP stack.
-- **BLE** (`BLEDiscoveryService`) — a uniform listener interface over Bleak for advertisement
+- **BLE** (`BLEService`) — a uniform listener interface over Bleak for advertisement
   scanning.
 
 All three share one `register(listener, …) → cancel` shape, run standalone (each module has a
