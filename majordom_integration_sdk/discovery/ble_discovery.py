@@ -499,7 +499,10 @@ class _BleakConnection:
 
     @property
     def mtu(self) -> int:
-        return self._client.mtu_size
+        # On BlueZ bleak says 23 until the MTU is acquired, though BlueZ exchanged the real one on connect and every
+        # characteristic carries it; Matter's BTP sized its segments by the 23 and ran ~10x slower (2026-10-22).
+        characteristics = self._client.services.characteristics.values()
+        return max((c.max_write_without_response_size + 3 for c in characteristics), default=self._client.mtu_size)
 
     async def services(self) -> list[GattService]:
         return [
