@@ -56,7 +56,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
         Called by the Hub with the app's services and the bound needs. Do not change this signature.
         """
         self.platform = platform
-        self.peripherals = Peripherals(peripherals or {})
+        self.peripherals = peripherals if isinstance(peripherals, Peripherals) else Peripherals(peripherals or {})
 
     # Abstract
 
