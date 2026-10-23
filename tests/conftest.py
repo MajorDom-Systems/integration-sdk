@@ -55,3 +55,13 @@ def make_device_state(
 @pytest.fixture
 def device_state() -> DeviceState:
     return make_device_state()
+
+
+@pytest.fixture(autouse=True)
+def no_host_bluetooth(monkeypatch):
+    """The host offers IP only: no test opens this machine's Bluetooth through a runtime."""
+    from majordom_integration_sdk import Endpoint
+
+    monkeypatch.setattr(
+        "majordom_integration_sdk.runtime.runtime._host_endpoints", lambda: [Endpoint("ip", shared=True)]
+    )

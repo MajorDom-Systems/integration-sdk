@@ -1,5 +1,6 @@
-"""Find radios, bind every consumer's needs to what radios, services and the host offer, and run the
-services that end up bound through Docker Compose — then keep it in sync as sticks come and go."""
+"""Find radios, bind every consumer's needs to what radios, services, the host, the runtime's own providers and the
+consumers themselves offer, and run the services that end up bound through Docker Compose — then keep it in sync as
+sticks come and go and offers change."""
 
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import logging
 import os
 import socket
 import string
+import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from glob import glob
@@ -19,11 +21,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, Protocol
 
-from majordom_integration_sdk import Context, Endpoint, Need, Service, WifiCredentials
 from pydantic import BaseModel, Field
 
-from majordom_transports.drivers import DRIVERS, RADIO_USB_IDS
-from majordom_transports.services import SERVICES
+from majordom_integration_sdk.controller.platform import Context, Platform
+from majordom_integration_sdk.peripherals import Bound, Endpoint, Need, PeripheralChange, Peripherals, Service
+from majordom_integration_sdk.runtime.peripherals.hardware.drivers import DRIVERS, RADIO_USB_IDS
+from majordom_integration_sdk.runtime.peripherals.providers import Provider, builtin_providers
+from majordom_integration_sdk.runtime.peripherals.providers.ble import cpc_hci
+from majordom_integration_sdk.runtime.peripherals.services.builtin import SERVICES
+from majordom_integration_sdk.schemas.credentials import WifiCredentials
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +54,7 @@ Region = Literal[
 ]  # fmt: skip
 
 
-class HubSettings(BaseModel):
+class PlatformSettings(BaseModel):
     region: Region | None = Field(None, title="Radio region", description="Where the hub is used.")
     wifi: list[WifiCredentials] = Field([], title="Wi-Fi networks", description="Saved networks to set devices up on.")
     wifi_ssid: str | None = Field(None, title="Wi-Fi for devices", description="Empty uses the hub's own network.")
@@ -71,6 +77,36 @@ class Radio:
     held_by: str | None = None  # another program has it open: left alone until claimed (probe, or a pin)
 
 
+type Binding = tuple[str, Endpoint]  # who provides it, and what
+
+
+@dataclass(frozen=True)
+class _ServiceControl:
+    """A consumer's hold on the services it brings: restarting one leaves the consumers running."""
+
+    runtime: Runtime
+    own: frozenset[str]
+
+    async def restart(self, service: str) -> None:
+        if service not in self.own:
+            raise PermissionError(f"{service} isn't one of this integration's services")
+        await self.runtime.restart(service)
+
+
+@dataclass(frozen=True)
+class _Offers:
+    """A consumer's offers, bound to its name."""
+
+    runtime: Runtime
+    owner: str
+
+    async def offer(self, endpoint: Endpoint) -> None:
+        await self.runtime.offer(self.owner, endpoint)
+
+    async def withdraw(self, endpoint: Endpoint) -> None:
+        await self.runtime.withdraw(self.owner, endpoint)
+
+
 class Runtime:
     def __init__(
         self,
@@ -85,26 +121,31 @@ class Runtime:
         default_wifi: Callable[[], WifiCredentials | None] = lambda: None,
         on_change: Callable[[], Awaitable[None]] | None = None,
         poll: float = 2,
+        builtins: Sequence[Provider] | None = None,
     ):
         """
-        consumers: integration controller classes by slug.
+        consumers: integration controller classes by slug, bound in this order after the providers.
         docker: run the bound services; False leaves them to you (pin their endpoints).
         scan: look for USB sticks in /dev/serial/by-id; `devices` adds paths by id.
         board: soldered radios, ``{"id", "path", "driver", "firmware"}``, used without asking; ``"params"``
             overrides the firmware's serial settings where the board wires its UART differently.
         pinned: endpoints you provide yourself by family; they win over anything found.
+        builtins: the peripherals run in this process (the Bluetooth router, DNS-SD, SSDP); None runs one of each
+            whose extra is installed.
         """
         self.data, self.consumers, self.docker, self.scan = data, dict(consumers), docker, scan
         self.devices, self.board, self.pinned = dict(devices), list(board), dict(pinned)
         self.default_wifi, self.on_change, self.poll = default_wifi, on_change, poll
+        self.builtins = {p.name: p for p in (builtin_providers() if builtins is None else builtins)}
         self.services = {s.name: s for c in self.consumers.values() for s in c.services} | {s.name: s for s in SERVICES}
-        self.state: dict[str, Any] = {"radios": {}, "pins": {}, "settings": {}, "ports": {}}
+        self.state: dict[str, Any] = {"radios": {}, "pins": {}, "reserved": {}, "settings": {}, "ports": {}}
         with contextlib.suppress(FileNotFoundError):
             self.state |= json.loads((data / "state.json").read_text())
         for radio in self.board:
             self.state["radios"].setdefault(radio["id"], dict(radio))
-        self._links: dict[str, dict[str, Endpoint]] = {}  # consumer or service -> family -> endpoint
-        self._providers: dict[str, dict[str, str]] = {}  # consumer or service -> family -> provider
+        self._bound: dict[str, dict[str, list[Binding]]] = {}  # provider, consumer or service -> family -> bindings
+        self._unbound: dict[str, dict[str, str]] = {}  # owner -> family -> why its need isn't bound
+        self._offered: dict[str, list[Endpoint]] = {}  # consumer -> what it offers right now
         self._present: dict[str, str] = {}
         self._nodes: dict[str, str] = {}  # radio id -> device node its path resolves to (a ttyUSB*)
         self._busy: set[str] = set()  # radios being flashed
@@ -114,17 +155,28 @@ class Runtime:
         self._tasks: dict[tuple[str, str], list[asyncio.Task]] = {}  # services setting up and learning, by source
         self._lock = asyncio.Lock()
         self._watcher: asyncio.Task | None = None
+        self._notifying: set[asyncio.Task] = set()
 
     # Lifecycle
 
     async def start(self):
+        for provider in self.builtins.values():
+            try:
+                await provider.start()
+            except Exception:
+                log.exception(f"{provider.name} failed to start")
         await self.refresh()
-        self._watcher = asyncio.create_task(self._watch(), name="transports.watch")
+        self._watcher = asyncio.create_task(self._watch(), name="runtime.watch")
 
     async def stop(self):
-        for task in (self._watcher, *(t for tasks in self._tasks.values() for t in tasks)):
+        for task in (self._watcher, *self._notifying, *(t for tasks in self._tasks.values() for t in tasks)):
             if task:
                 task.cancel()
+        for provider in self.builtins.values():
+            try:
+                await provider.stop()
+            except Exception:
+                log.exception(f"{provider.name} failed to stop")
 
     async def refresh(self):
         async with self._lock:
@@ -140,13 +192,40 @@ class Runtime:
                 if not known:
                     self.state["radios"][radio_id] = await self._identify(path) if trusted else {}
                 self.state["radios"][radio_id]["path"] = path
+                await self._check_bluetooth(self.state["radios"][radio_id])
             self._save()
-            self._resolve()
-            await self._allocate()
-            recreated = await self._apply()
-            self._follow(recreated)
+            await self._rebind()
         if self.on_change:
             await self.on_change()
+
+    async def _rebind(self):
+        """Bind every need again, run what is bound, and tell the providers what they got."""
+        before = {name: self._peripherals(name) for name in self.builtins}
+        self._resolve()
+        await self._allocate()
+        recreated = await self._apply()
+        self._follow(recreated)
+        for name, provider in self.builtins.items():
+            was, now = before[name] or Peripherals(), self._peripherals(name) or Peripherals()
+            for family in sorted(was.keys() | now.keys()):
+                if was.get(family) != now.get(family):
+                    try:
+                        await provider.peripheral_did_change(PeripheralChange(family, was.get(family), now.get(family)))
+                    except Exception:
+                        log.exception(f"{name} failed to take its {family} peripherals")
+
+    async def _check_bluetooth(self, entry: dict[str, Any]):
+        """Whether a multi-PAN radio's firmware serves Bluetooth too: the driver's firmware metadata says, else the
+        radio is asked once."""
+        driver = DRIVERS.get(entry.get("driver", ""))
+        firmware = entry.get("firmware")
+        if (
+            not driver
+            or "bluetooth" in entry
+            or not any(e.family == "multipan" for e in fw_endpoints(driver, firmware, ""))
+        ):
+            return
+        entry["bluetooth"] = firmware in driver.bluetooth or await cpc_hci.has_bluetooth(entry["path"])
 
     def _follow(self, recreated: bool):
         """Have services set up what runs and learn facts from what is bound; known facts stay until read
@@ -200,13 +279,26 @@ class Runtime:
 
     # What the hub (or you) reads
 
-    def links(self, consumer: str) -> dict[str, Endpoint] | None:
-        """Bound endpoints of a consumer by family; None while a required need can't be met."""
-        return self._links.get(consumer)
+    def peripherals(self, consumer: str) -> Peripherals | None:
+        """Bound needs of a consumer by family; None while a required need can't be met (see `unbound`)."""
+        return self._peripherals(consumer)
 
     def providers(self, owner: str) -> dict[str, str]:
-        """Who serves each bound need of a consumer or service: a radio id, a service name, "host" or "pinned"."""
-        return dict(self._providers.get(owner, {}))
+        """Who serves each bound need of a consumer, service or provider: a radio id, a service or provider name, a
+        consumer that offered it, "host" or "pinned"; several, comma-separated, for a ``many`` need."""
+        return {family: ", ".join(p for p, _ in bound) for family, bound in self._bound.get(owner, {}).items()}
+
+    def unbound(self, owner: str) -> dict[str, str]:
+        """Why each need of a consumer, service or provider isn't bound, by family: for the user, with what to do
+        when there is something, e.g. 'need ble/bluez: every provider taken by ble-router — use Need("ble",
+        ["router"])'."""
+        return dict(self._unbound.get(owner, {}))
+
+    def platform(self, consumer: str, base: Platform) -> Platform:
+        """``base`` with what the runtime holds for ``consumer``: its settings, the context, its services and offers."""
+        services = _ServiceControl(self, frozenset(s.name for s in self.consumers[consumer].services))
+        settings, context = self.settings(consumer), self.context()
+        return base.copy(settings=settings, context=context, services=services, offers=_Offers(self, consumer))
 
     def context(self) -> Context:
         hub = self.settings("hub")
@@ -236,9 +328,9 @@ class Runtime:
         return result
 
     def settings(self, scope: str) -> Any:
-        """Validated settings of a consumer (slug), a service (name) or the hub ("hub"); None if it has none."""
+        """Validated settings of a consumer (slug), a service (name) or the platform ("hub"); None if it has none."""
         owner = self.consumers.get(scope) or self.services.get(scope)
-        model = HubSettings if scope == "hub" else getattr(owner, "settings", None)
+        model = PlatformSettings if scope == "hub" else getattr(owner, "settings", None)
         if model is None:
             return None
         stored = self.state["settings"].get(scope, {})
@@ -267,7 +359,7 @@ class Runtime:
 
     async def restart(self, service: str):
         """Restart a running service's container; nothing else changes, so integrations aren't told."""
-        if service not in self._links.keys() & self.services.keys():
+        if service not in self._running_services():
             raise LookupError(f"{service} isn't running")
         if not self.docker:
             return  # you run the services
@@ -288,6 +380,7 @@ class Runtime:
             channel = self.settings("hub").firmware
             await DRIVERS[entry["driver"]].flash(entry["path"], firmware, channel, self.data / "firmware")
             entry["firmware"] = await DRIVERS[entry["driver"]].identify(entry["path"])
+            entry.pop("bluetooth", None)
         finally:
             self._busy.discard(radio_id)
         await self.refresh()
@@ -319,6 +412,44 @@ class Runtime:
         else:
             self.state["pins"][family] = provider
         await self.refresh()
+
+    async def reserve(self, owner: str, family: str, url: str | None):
+        """Keep the ``family`` endpoint at ``url`` for ``owner`` alone (a consumer or a service), bound to it before
+        anyone else can bind it, the providers' ``many`` needs included: one Bluetooth adapter, ``ble/bluez hci1``, for
+        matterjs-server to use directly. None gives it back."""
+        if url is None:
+            self.state["reserved"].get(owner, {}).pop(family, None)
+        else:
+            self.state["reserved"].setdefault(owner, {})[family] = url
+        await self.refresh()
+
+    async def pin_endpoint(self, endpoint: Endpoint | None, family: str | None = None):
+        """Provide ``endpoint`` yourself for its family, winning over anything found (a ``socket://`` EZSP stick, a
+        matter-server you run); None with ``family`` drops yours."""
+        if endpoint is None:
+            self.pinned.pop(family or "", None)
+        else:
+            self.pinned[endpoint.family] = endpoint
+        await self.refresh()
+
+    async def offer(self, owner: str, endpoint: Endpoint):
+        """Offer ``endpoint`` on behalf of ``owner`` while it runs, e.g. ESPHome lending a node's Bluetooth as
+        ``ble/esphome-proxy``; one with the same family and url is replaced."""
+        offered = [e for e in self._offered.get(owner, []) if (e.family, e.url) != (endpoint.family, endpoint.url)]
+        self._offered[owner] = [*offered, endpoint]
+        await self._reoffer()
+
+    async def withdraw(self, owner: str, endpoint: Endpoint):
+        offered = self._offered.get(owner, [])
+        self._offered[owner] = [e for e in offered if (e.family, e.url) != (endpoint.family, endpoint.url)]
+        await self._reoffer()
+
+    async def _reoffer(self):
+        async with self._lock:
+            await self._rebind()
+        # the offerer may be the one being set up right now: it never waits for itself to be told
+        if self.on_change:
+            self._spawn(self.on_change())
 
     # Internals
 
@@ -359,53 +490,107 @@ class Runtime:
         node = self._nodes.get(radio_id, entry["path"])
         if "family" in entry:
             return [Endpoint(entry["family"], entry["dialect"], node)]
-        return fw_endpoints(DRIVERS.get(entry.get("driver", "")), entry.get("firmware"), node, entry.get("params", {}))
+        endpoints = fw_endpoints(
+            DRIVERS.get(entry.get("driver", "")), entry.get("firmware"), node, entry.get("params", {})
+        )
+        if entry.get("bluetooth"):  # computed: the firmware serves Bluetooth over CPC too
+            endpoints.append(Endpoint("ble", "silabs-cpc-hci", node, params={"hci": entry.get("hci")}))
+        return endpoints
 
-    def _offers(self) -> list[tuple[str, Endpoint]]:
-        offers = [("pinned", e) for e in self.pinned.values()] + [("host", e) for e in _host_endpoints()]
+    def _offers(self) -> list[Binding]:
+        offers: list[Binding] = [("pinned", e) for e in self.pinned.values()] + [("host", e) for e in _host_endpoints()]
         offers += [(i, e) for i, entry in self.state["radios"].items() for e in self._radio_endpoints(i, entry)]
         offers += [(name, e) for name, s in self.services.items() for e in s.provides]
+        offers += [(name, p.endpoint) for name, p in self.builtins.items()]
+        offers += [(owner, e) for owner, endpoints in self._offered.items() for e in endpoints]
         pins = self.state["pins"]
         return sorted(offers, key=lambda offer: (offer[0] != "pinned", pins.get(offer[1].family) != offer[0]))
 
-    def _resolve(self):
-        links: dict[str, dict[str, Endpoint] | None] = {}
-        providers: dict[str, dict[str, str]] = {}
-        taken: set[tuple[str, str]] = set()
-        offers = self._offers()
+    def _owner_needs(self, owner: str) -> Sequence[Need]:
+        holder = self.builtins.get(owner) or self.services.get(owner) or self.consumers.get(owner)
+        return holder.needs if holder else ()
 
-        def bind(owner: str, needs: Sequence[Need]) -> dict[str, Endpoint] | None:
-            if owner in links:
-                return links[owner]
-            links[owner] = None  # also guards against cycles
-            bound, by = {}, {}
+    def _peripherals(self, owner: str) -> Peripherals | None:
+        if (bound := self._bound.get(owner)) is None:
+            return None
+        many = {need.family for need in self._owner_needs(owner) if need.many}
+        return Peripherals({family: [e for _, e in b] if family in many else b[0][1] for family, b in bound.items()})
+
+    def _running_services(self) -> set[str]:
+        return self._bound.keys() & self.services.keys()
+
+    def _resolve(self):
+        """Providers first, then the consumers in order, each binding the services it reaches."""
+        resolved: dict[str, dict[str, list[Binding]] | None] = {}
+        unbound: dict[str, dict[str, str]] = {}
+        taken: dict[tuple[str, str, str], str] = {}  # (provider, family, url) of a single-use endpoint -> who took it
+        offers = self._offers()
+        reserved = {
+            (family, url): owner for owner, kept in self.state["reserved"].items() for family, url in kept.items()
+        }
+        offered_by = {}  # what each provider, service or consumer offers, by family: for the hint
+        for provider, endpoint in offers:
+            offered_by.setdefault((provider, endpoint.family), endpoint)
+
+        def why(need: Need, rejected: list[str]) -> str:
+            wanted = f"{need.family}/{'|'.join(need.dialects) or '*'}"
+            return f"need {wanted}: {'; '.join(dict.fromkeys(rejected)) or 'nothing offers it'}"
+
+        def bind(owner: str, needs: Sequence[Need]) -> dict[str, list[Binding]] | None:
+            if owner in resolved:
+                return resolved[owner]
+            resolved[owner] = None  # also guards against cycles
+            bound: dict[str, list[Binding]] = {}
+            mine: list[tuple[str, str, str]] = []
+            failed = False
             for need in needs:
-                for provider, endpoint in offers:
-                    if not need.accepts(endpoint) or (provider, endpoint.url) in taken or provider == owner:
+                chosen: list[Binding] = []
+                rejected: list[str] = []
+                candidates = sorted(offers, key=lambda o: reserved.get((o[1].family, o[1].url)) != owner)
+                for provider, endpoint in candidates:
+                    if not need.accepts(endpoint) or provider == owner:
+                        continue
+                    key = (provider, endpoint.family, endpoint.url)
+                    if (keeper := reserved.get((endpoint.family, endpoint.url), owner)) != owner:
+                        rejected.append(f"{endpoint.url or endpoint.dialect} is reserved for {keeper}")
+                        continue
+                    if (taker := taken.get(key)) is not None:
+                        rejected.append(f"every provider taken by {taker}" + _hint(offered_by, taker, need.family))
                         continue
                     if provider in self.services and bind(provider, self.services[provider].needs) is None:
+                        rejected.append(f"{provider} can't run ({'; '.join(unbound.get(provider, {}).values())})")
                         continue
                     if not endpoint.shared:
-                        taken.add((provider, endpoint.url))
-                    bound[need.family], by[need.family] = endpoint, provider
-                    break
-                else:
-                    if need.required:
-                        return None
-            links[owner], providers[owner] = bound, by
+                        taken[key] = owner
+                        mine.append(key)
+                    chosen.append((provider, endpoint))
+                    if not need.many:
+                        break
+                if chosen:
+                    bound[need.family] = chosen
+                    continue
+                unbound.setdefault(owner, {})[need.family] = why(need, rejected)
+                failed = failed or need.required  # the rest are still looked at: each says why it's unbound
+            if failed:
+                for key in mine:  # what it took goes back to the others
+                    del taken[key]
+                return None
+            resolved[owner] = bound
             return bound
 
+        for name, provider in self.builtins.items():
+            bind(name, provider.needs)
         for name, consumer in self.consumers.items():
             bind(name, consumer.needs)
-        self._links = {o: v for o, v in links.items() if v is not None}
-        self._providers = providers
+        self._bound = {o: v for o, v in resolved.items() if v is not None}
+        self._unbound = unbound
 
     async def _allocate(self):
         """Host ports for the bound services, then the links to them. A service keeps its ports across
         restarts; it gets the preferred one when free and moves only when something else took it."""
         allocated: dict[str, dict[str, int]] = self.state["ports"]
         running: set[str] | None = None
-        for name in sorted(self._links.keys() & self.services.keys()):
+        for name in sorted(self._running_services()):
             mine = allocated.setdefault(name, {})
             for port_name, preferred in self.services[name].ports.items():
                 others = {p for s, ports in allocated.items() for n, p in ports.items() if (s, n) != (name, port_name)}
@@ -419,10 +604,12 @@ class Runtime:
                     port = next(p for p in (preferred, *PORTS) if p not in others and not _listening(p))
                 mine[port_name] = port
         self._save()
-        for owner, providers in self._providers.items():
-            for family, provider in providers.items():
-                if provider in self.services and (endpoint := self._links.get(owner, {}).get(family)):
-                    self._links[owner][family] = replace(endpoint, url=_render(endpoint.url, self._templates(provider)))
+        for bound in self._bound.values():
+            for family, bindings in bound.items():
+                bound[family] = [
+                    (p, replace(e, url=_render(e.url, self._templates(p))) if p in self.services else e)
+                    for p, e in bindings
+                ]
 
     async def _running(self) -> set[str]:
         """Our services whose containers are up."""
@@ -439,7 +626,7 @@ class Runtime:
 
     def _roots(self, owner: str) -> set[str]:
         """Every provider ``owner`` depends on, directly or through services."""
-        direct = set(self._providers.get(owner, {}).values())
+        direct = {p for bindings in self._bound.get(owner, {}).values() for p, _ in bindings}
         return direct.union(*(self._roots(p) for p in direct if p in self.services))
 
     def _sources(self) -> dict[tuple[str, str], tuple[Service, Endpoint]]:
@@ -447,11 +634,10 @@ class Runtime:
         or for a pinned one any service providing that kind."""
         readers = {(e.family, e.dialect): s for s in self.services.values() for e in s.provides}
         sources = {}
-        for owner, providers in self._providers.items():
-            for family, provider in providers.items():
-                endpoint = self._links.get(owner, {}).get(family)
-                kind = readers.get((endpoint.family, endpoint.dialect)) if endpoint and provider == "pinned" else None
-                if endpoint and (service := self.services.get(provider) or kind):
+        for bound in self._bound.values():
+            for provider, endpoint in (binding for bindings in bound.values() for binding in bindings):
+                kind = readers.get((endpoint.family, endpoint.dialect)) if provider == "pinned" else None
+                if service := self.services.get(provider) or kind:
                     sources[provider, endpoint.url] = service, endpoint
         return sources
 
@@ -471,10 +657,11 @@ class Runtime:
     async def _apply(self) -> bool:
         """Run the bound services; True when what runs changed."""
         services = {}
-        for name in self._links.keys() & self.services.keys():
+        for name in self._running_services():
             data = self.data / "services" / name
             data.mkdir(parents=True, exist_ok=True)
-            values = {"data": data, "links": _Links(self._links[name]), "settings": self.settings(name)}
+            peripherals = _Peripherals(self._peripherals(name) or {})
+            values = {"data": data, "peripherals": peripherals, "settings": self.settings(name)}
             values |= {"context": self.context(), "host": _Host()} | self._templates(name)
             # no depends_on: everything retries until its links answer, and a dependency would recreate
             # a service whenever an optional provider (matter-server's border router) comes or goes
@@ -501,6 +688,18 @@ class Runtime:
     def _save(self):
         self.data.mkdir(parents=True, exist_ok=True)
         (self.data / "state.json").write_text(json.dumps(self.state, indent=2))
+
+    def _spawn(self, awaitable: Awaitable[None]):
+        task = asyncio.ensure_future(awaitable)
+        self._notifying.add(task)
+        task.add_done_callback(self._notifying.discard)
+
+
+def _hint(offered_by: Mapping[tuple[str, str], Endpoint], taker: str, family: str) -> str:
+    """What to need instead when what took the endpoint offers the same family itself: the router for raw BLE."""
+    if endpoint := offered_by.get((taker, family)):
+        return f' — use Need("{family}", ["{endpoint.dialect}"])'
+    return ""
 
 
 def _satisfied(needs: Sequence[Need], families: set[str]) -> bool:
@@ -567,15 +766,21 @@ def _listening(port: int) -> bool:
 
 
 def _host_endpoints() -> list[Endpoint]:
-    ble = [Endpoint("ble", "bluez", Path(p).name, shared=True) for p in glob("/sys/class/bluetooth/hci*")[:1]]
-    return [Endpoint("ip", shared=True), *ble]
+    """IP, and every Bluetooth adapter as its own single-use ``ble/bluez`` endpoint (the router takes them all, unless
+    one is reserved); off Linux, bleak's default adapter on the OS's own stack."""
+    adapters = sorted(Path(p).name for p in glob("/sys/class/bluetooth/hci*") if ":" not in Path(p).name)
+    if sys.platform != "linux":
+        adapters = [""]
+    return [Endpoint("ip", shared=True), *(Endpoint("ble", "bluez", name) for name in adapters)]
 
 
-class _Links(dict):
-    """Template access ``{links.thread.url}``; an unbound optional link, or a param it lacks, renders empty."""
+class _Peripherals(dict):
+    """Template access ``{peripherals.thread.url}``; an unbound optional need, or a param it lacks, renders empty. A
+    ``many`` need renders its first endpoint."""
 
     def __getattr__(self, family: str) -> Endpoint:
-        endpoint = self.get(family, Endpoint(""))
+        bound: Bound = self.get(family, Endpoint(""))
+        endpoint = (bound or [Endpoint("")])[0] if isinstance(bound, list) else bound
         return replace(endpoint, params=_Params(endpoint.params))
 
 
@@ -622,4 +827,4 @@ def _render(value: Any, values: Mapping[str, Any]) -> Any:
     return value
 
 
-__all__ = ["Runtime", "Radio", "HubSettings", "Consumer"]
+__all__ = ["Runtime", "Radio", "PlatformSettings", "Consumer"]
