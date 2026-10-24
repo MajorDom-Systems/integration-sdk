@@ -22,6 +22,7 @@ from majordom_integration_sdk.controller import (
     AbstractController,
     Context,
     ControllerOutput,
+    IntegrationError,
     Offers,
     Platform,
     ServiceControl,
@@ -43,6 +44,7 @@ __version__ = version("majordom-integration-sdk")
 __all__ = [
     "AbstractController",
     "ControllerOutput",
+    "IntegrationError",
     "Platform",
     "DeviceRepositoryProtocol",
     "DeviceRepositoryMemory",

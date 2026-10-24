@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from majordom_integration_sdk import Endpoint, Need, Peripherals
+from majordom_integration_sdk import Endpoint, IntegrationError, Need, Peripherals
 from majordom_integration_sdk.controller import AbstractController
 from majordom_integration_sdk.dev.cli import _CliControllerOutput, _CliSession, _print
 from majordom_integration_sdk.schemas.command import DeviceCommand
@@ -202,6 +202,18 @@ async def test_output_delegate_persists_event_values():
         stored = await repo.get_parameter_state(device_id, parameter.id)
     assert stored is not None
     assert stored.value  # a (non-empty, encoded) value was written back by the event
+
+
+async def test_output_delegate_prints_reported_and_resolved_errors(capsys):
+    deps = build_test_platform(integration=INTEGRATION)
+    output = _CliControllerOutput(deps.make_device_repository)
+    controller = FakeController(deps)
+
+    await output.controller_did_encounter_error(controller, IntegrationError("stick-unplugged", "Re-plug it", False))
+    await output.controller_did_resolve_error(controller, "stick-unplugged")
+
+    out = capsys.readouterr().out
+    assert "stick-unplugged: Re-plug it  (stopped)" in out and out.rstrip().endswith("stick-unplugged")
 
 
 def test_prompt_safe_print_is_a_noop_safe_call(capsys):

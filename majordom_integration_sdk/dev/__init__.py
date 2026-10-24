@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from majordom_integration_sdk.controller.abstract_controller import AbstractController
-from majordom_integration_sdk.controller.output import ControllerOutput
+from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
 from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.peripherals import Bound, Endpoint, PeripheralChange, Peripherals
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
@@ -65,14 +65,12 @@ class LoggingControllerOutput(ControllerOutput):
         for event in events:
             logger.info("event %s: %r", type(event).__name__, event)
 
-    async def controller_did_encounter_error(
-        self,
-        controller: AbstractController,
-        message: str,
-        still_running: bool,
-    ):
-        state = "still running" if still_running else "STOPPED — integration inactive"
-        logger.error("integration error (%s): %s", state, message)
+    async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError) -> None:
+        state = "still running" if error.still_running else "STOPPED — integration inactive"
+        logger.error("integration error %s (%s): %s", error.id, state, error.message)
+
+    async def controller_did_resolve_error(self, controller: AbstractController, error_id: str) -> None:
+        logger.info("integration error %s resolved", error_id)
 
     async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):
         logger.info(

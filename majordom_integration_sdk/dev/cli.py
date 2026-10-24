@@ -262,6 +262,12 @@ class _CliControllerOutput(ControllerOutput):
         for event in events:
             _print(f"[event] {type(event).__name__}: {event!r}")
 
+    async def controller_did_encounter_error(self, controller, error):
+        _print(f"[error] {error.id}: {error.message}{'' if error.still_running else '  (stopped)'}")
+
+    async def controller_did_resolve_error(self, controller, error_id):
+        _print(f"[error resolved] {error_id}")
+
 
 # --- the REPL ----------------------------------------------------------------------------------
 

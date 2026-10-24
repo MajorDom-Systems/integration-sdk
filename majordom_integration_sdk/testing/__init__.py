@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from majordom_integration_sdk.capabilities.ble import BLEConnection, OnAdvertisement
-from majordom_integration_sdk.controller.output import ControllerOutput
+from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
 from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.peripherals import Endpoint, PeripheralChange
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
@@ -48,7 +48,8 @@ class RecordingControllerOutput(ControllerOutput):
         self.connected_devices: list[UUID] = []
         self.lost_devices: list[UUID] = []
         self.events: list[Event] = []
-        self.errors: list[tuple[str, bool]] = []  # (message, still_running)
+        self.errors: dict[str, IntegrationError] = {}  # the active ones, by id
+        self.error_log: list[IntegrationError | str] = []  # every report, and the id of every resolve
         self.notifications: list[Notification] = []
 
     async def controller_did_receive_discovery(self, controller: _Controller, discovery: Discovery):
@@ -69,8 +70,13 @@ class RecordingControllerOutput(ControllerOutput):
     async def controller_did_receive_events(self, controller: _Controller, events: Iterable[Event]):
         self.events.extend(events)
 
-    async def controller_did_encounter_error(self, controller: _Controller, message: str, still_running: bool):
-        self.errors.append((message, still_running))
+    async def controller_did_encounter_error(self, controller: _Controller, error: IntegrationError) -> None:
+        self.errors[error.id] = error
+        self.error_log.append(error)
+
+    async def controller_did_resolve_error(self, controller: _Controller, error_id: str) -> None:
+        self.errors.pop(error_id, None)
+        self.error_log.append(error_id)
 
     async def controller_did_emit_notification(self, controller: _Controller, notification: Notification):
         self.notifications.append(notification)
