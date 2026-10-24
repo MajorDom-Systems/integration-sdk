@@ -19,7 +19,9 @@ if TYPE_CHECKING:
 class IntegrationError:
     """A problem with the whole integration, active until it is resolved or the integration restarts."""
 
-    id: str  # stable per condition, e.g. "server-unreachable", "stick-unplugged": links a report to its resolve
+    # Stable per condition, e.g. "server-unreachable": links a report to its resolve. Scoped to the integration;
+    # the "hub-" prefix is reserved for the errors the Hub reports on its behalf.
+    id: str
     message: str  # plain language, with any call-to-action in the text
     still_running: bool = True  # False: the integration stopped, and the Hub restarts it
 
