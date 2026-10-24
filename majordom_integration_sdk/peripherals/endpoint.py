@@ -13,7 +13,8 @@ class Endpoint:
 
     A radio firmware's ``url`` may hold ``{device}``, the stick's path; a service's ``{ports.<name>}``.
     ``params`` says how to talk to it, e.g. a serial port's ``baud`` and ``flow_control`` as the radio's
-    firmware sets them; a service reads them as ``{peripherals.<family>.params[baud]}``.
+    firmware sets them; a service reads them as ``{peripherals.<family>.params[baud]}``. The params a service
+    provides render like its compose, telling its consumers what it got: ``{"adapter": "{peripherals.ble.url}"}``.
 
     ``instance`` carries an in-process peripheral itself (the runtime's Bluetooth router, a DNS-SD browser, an
     ESPHome node's Bluetooth source); ``url`` still names it, and two endpoints are the same when all but the

@@ -239,6 +239,27 @@ async def test_a_service_hears_whether_it_got_an_adapter(tmp_path):
     assert service()["volumes"] == ["/data:/data", "/run/dbus:/run/dbus:ro"]
 
 
+async def test_a_consumer_hears_what_its_service_got_through_the_params_it_provides(tmp_path):
+    server = Service(
+        "matterjs-server",
+        {"image": "m"},
+        [Need("ble", ["bluez"], required=False)],
+        [Endpoint("matter", "matter-server", "ws", params={"adapter": "{peripherals.ble.url}", "baud": 9600})],
+    )
+    rt = runtime(tmp_path, {"matter": consumer(Need("matter"), services=[server])}, FakeBLERouter())
+    await rt.refresh()
+
+    def matter() -> Endpoint:
+        peripherals = rt.peripherals("matter")
+        assert peripherals is not None
+        return peripherals.endpoint("matter")
+
+    assert matter().params == {"adapter": "", "baud": 9600}  # the router has every adapter
+    await rt.reserve("matterjs-server", "ble", "hci1")
+    assert matter().params == {"adapter": "hci1", "baud": 9600}
+    assert server.provides[0].params["adapter"] == "{peripherals.ble.url}"  # the template stays for the next binding
+
+
 def test_the_host_offers_every_adapter_with_its_index(monkeypatch):
     from majordom_integration_sdk.runtime import runtime as module
 

@@ -610,6 +610,13 @@ class Runtime:
                     (p, replace(e, url=_render(e.url, self._templates(p))) if p in self.services else e)
                     for p, e in bindings
                 ]
+        # then the params, which may say what the service itself got, e.g. its adapter: once every URL is known
+        values = {name: self._values(name) for name in self._running_services()}
+        for bound in self._bound.values():
+            for family, bindings in bound.items():
+                bound[family] = [
+                    (p, replace(e, params=_render(e.params, values[p])) if p in values else e) for p, e in bindings
+                ]
 
     async def _running(self) -> set[str]:
         """Our services whose containers are up."""
@@ -623,6 +630,16 @@ class Runtime:
 
     def _templates(self, service: str) -> dict[str, Any]:
         return {"ports": SimpleNamespace(**self.state["ports"].get(service, {}))}
+
+    def _values(self, service: str) -> dict[str, Any]:
+        """What a service's compose and the params it provides render with."""
+        peripherals = _Peripherals(self._peripherals(service) or {})
+        values = {
+            "data": self.data / "services" / service,
+            "peripherals": peripherals,
+            "settings": self.settings(service),
+        }
+        return values | {"context": self.context(), "host": _Host()} | self._templates(service)
 
     def _roots(self, owner: str) -> set[str]:
         """Every provider ``owner`` depends on, directly or through services."""
@@ -658,11 +675,8 @@ class Runtime:
         """Run the bound services; True when what runs changed."""
         services = {}
         for name in self._running_services():
-            data = self.data / "services" / name
-            data.mkdir(parents=True, exist_ok=True)
-            peripherals = _Peripherals(self._peripherals(name) or {})
-            values = {"data": data, "peripherals": peripherals, "settings": self.settings(name)}
-            values |= {"context": self.context(), "host": _Host()} | self._templates(name)
+            values = self._values(name)
+            values["data"].mkdir(parents=True, exist_ok=True)
             # no depends_on: everything retries until its links answer, and a dependency would recreate
             # a service whenever an optional provider (matter-server's border router) comes or goes
             services[name] = {"restart": "unless-stopped", **_render(self.services[name].compose, values)}
