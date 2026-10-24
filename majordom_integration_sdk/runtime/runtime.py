@@ -811,11 +811,14 @@ class _Host:
 
 class _Formatter(string.Formatter):
     """None renders empty; a flag with a format spec renders the spec when set: ``{x:&uart-flow-control}``; a ``!`` spec
-    renders what follows when the value is empty, e.g. a proxy without an adapter: ``{peripherals.ble.url:!true}``."""
+    renders what follows when the value is empty, e.g. a proxy without an adapter: ``{peripherals.ble.url:!true}``, a
+    ``?`` spec when it isn't, e.g. a backend only with one: ``{peripherals.ble.url:?dbus}``."""
 
     def format_field(self, value: Any, format_spec: str) -> str:
         if format_spec.startswith("!"):
             return "" if value else format_spec[1:]
+        if format_spec.startswith("?"):
+            return format_spec[1:] if value else ""
         if isinstance(value, bool) and format_spec:
             return format_spec if value else ""
         return "" if value is None else super().format_field(value, format_spec)
@@ -826,8 +829,8 @@ def _render(value: Any, values: Mapping[str, Any]) -> Any:
         return _Formatter().vformat(value, (), values)
     if isinstance(value, Mapping):
         return {k: _render(v, values) for k, v in value.items()}
-    if isinstance(value, list | tuple):
-        return [_render(v, values) for v in value]
+    if isinstance(value, list | tuple):  # an item rendering empty is left out: a volume only with an adapter
+        return [item for v in value if (item := _render(v, values)) != ""]
     return value
 
 

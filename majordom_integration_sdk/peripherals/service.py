@@ -20,7 +20,9 @@ class Service:
 
     ``compose`` is its Docker Compose service definition (image, environment, volumes, …); its strings
     may hold ``{data}``, ``{peripherals.<family>.url}``, ``{settings.<field>}``, ``{context.<field>}``,
-    ``{host.interface|uid|gid}`` and ``{ports.<name>}``.
+    ``{host.interface|uid|gid}`` and ``{ports.<name>}``. A format spec turns a value into text: ``{x:!text}`` renders
+    ``text`` when ``x`` is empty, ``{x:?text}`` when it isn't; a list item that renders empty is left out, so
+    ``"volumes": ["{peripherals.ble.url:?/run/dbus:/run/dbus:ro}"]`` mounts D-Bus only while an adapter is bound.
 
     ``ports`` names the host ports it listens on, each with the port it *prefers*, not a fixed one: the runtime
     uses it when free, else assigns another (45800-45999), keeps the choice across restarts, and fills

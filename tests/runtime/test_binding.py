@@ -212,22 +212,31 @@ def _platform(tmp_path):
 async def test_a_service_hears_whether_it_got_an_adapter(tmp_path):
     server = Service(
         "matterjs-server",
-        {"image": "m", "environment": {"BLE_PROXY": "{peripherals.ble.url:!true}", "ADAPTER": "{peripherals.ble.url}"}},
+        {
+            "image": "m",
+            "environment": {
+                "BLE_PROXY": "{peripherals.ble.url:!true}",
+                "ADAPTER": "{peripherals.ble.url}",
+                "BACKEND": "{peripherals.ble.url:?dbus}",
+            },
+            "volumes": ["/data:/data", "{peripherals.ble.url:?/run/dbus:/run/dbus:ro}"],
+        },
         [Need("ble", ["bluez"], required=False)],
         [Endpoint("matter", "matter-server", "ws")],
     )
     rt = runtime(tmp_path, {"matter": consumer(Need("matter"), services=[server])}, FakeBLERouter())
     await rt.refresh()
 
-    def environment() -> dict[str, str]:
-        return json.loads((tmp_path / "data" / "compose.json").read_text())["services"]["matterjs-server"][
-            "environment"
-        ]
+    def service() -> dict[str, Any]:
+        return json.loads((tmp_path / "data" / "compose.json").read_text())["services"]["matterjs-server"]
 
-    assert environment() == {"BLE_PROXY": "true", "ADAPTER": ""}  # the router has every adapter: lend it over /ble
+    # the router has every adapter: lend it over /ble, and keep the system bus out
+    assert service()["environment"] == {"BLE_PROXY": "true", "ADAPTER": "", "BACKEND": ""}
+    assert service()["volumes"] == ["/data:/data"]
 
     await rt.reserve("matterjs-server", "ble", "hci1")
-    assert environment() == {"BLE_PROXY": "", "ADAPTER": "hci1"}
+    assert service()["environment"] == {"BLE_PROXY": "", "ADAPTER": "hci1", "BACKEND": "dbus"}
+    assert service()["volumes"] == ["/data:/data", "/run/dbus:/run/dbus:ro"]
 
 
 def test_the_host_offers_every_adapter_with_its_index(monkeypatch):
