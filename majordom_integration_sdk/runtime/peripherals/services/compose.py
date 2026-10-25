@@ -1,10 +1,10 @@
-"""Docker Compose as the runtime's `ServiceHost`: the containers of every `Service` that runs, as one project."""
+"""Docker Compose as the container host of every `Service`: the containers of the ones that run, as one project."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
+import functools
 import logging
 import os
 import socket
@@ -17,8 +17,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from majordom_integration_sdk.controller.platform import Context
-from majordom_integration_sdk.peripherals import Bound, Endpoint, Service
+from majordom_integration_sdk.peripherals import Bound, Endpoint, Peripheral, Service
+from majordom_integration_sdk.runtime.files import read_json, write_json
 
 log = logging.getLogger(__name__)
 
@@ -26,32 +26,42 @@ PORTS = range(45800, 46000)  # where a service goes when the port it prefers is 
 READY_POLL = 1  # seconds between checks of whether a container is up, its setup done and it is healthy
 
 
-class Compose:
-    """Runs the containers of the services that run as one ``majordom`` project in ``data/compose.json``, each with
-    its own data folder as ``{data}``. Each gets the host ports it prefers when free, kept in ``ports`` across
-    restarts. A service is up once compose reports it running, its ports answer, its `Service.provision` finished and
-    it is healthy. Without Docker it only writes the compose file, and a service is up once set up: you run the
-    containers."""
+class Compose(Peripheral):
+    """Docker Compose as the container host every `Service` needs (``container/compose``): the containers of the
+    services that run, as one ``majordom`` project in ``compose.json`` of its data folder, each service with its own
+    data folder as ``{data}``. Each gets the host ports it prefers when free, kept across restarts. A service's start
+    returns once compose reports its container running, its ports answer, its `Service.provision` finished and it is
+    healthy. It runs while a service does; while Docker isn't reachable its start fails, and the services wait, saying
+    so."""
 
-    def __init__(
-        self,
-        data: Path,
-        ports: dict[str, dict[str, int]],
-        save: Callable[[], Any],
-        context: Callable[[], Context],
-        is_docker_enabled: bool = True,
-    ):
-        self.data, self.ports, self.save, self.context = data, ports, save, context
-        self.is_docker_enabled = is_docker_enabled
+    name = "compose"
+    is_on_demand = True
+
+    def __init__(self):
         self._running: dict[str, Service] = {}
         self._tentative: dict[str, dict[str, int]] = {}  # the ports a service that doesn't run would get
         self._rendered: dict[str, Mapping[str, Any]] = {}  # what each one runs with, rendered when it was created
-        self._applied = ""  # the compose file docker last took
+        self._applied: Mapping[str, Any] | None = None  # the compose file docker last took
         self._lock = asyncio.Lock()
+
+    @property
+    def provides(self) -> list[Endpoint]:
+        return [Endpoint("container", "compose", "compose", is_shared=True, instance=self)]
+
+    @functools.cached_property
+    def ports(self) -> dict[str, dict[str, int]]:
+        """The host ports each service keeps, by its name."""
+        return read_json(self.data / "ports.json")
+
+    async def start(self):
+        try:
+            await self._docker("info", "--format", "{{.ServerVersion}}")
+        except RuntimeError as error:
+            raise RuntimeError(f"Docker isn't reachable: {error}") from None
 
     # ServiceHost
 
-    def provides(self, service: Service) -> list[Endpoint]:
+    def provided(self, service: Service) -> list[Endpoint]:
         values = self._values(service)
         ports = values["ports"]
         return [
@@ -92,7 +102,7 @@ class Compose:
             "data": service.data,
             "peripherals": _Peripherals(service.peripherals.bound),
             "settings": service.settings,
-            "context": self.context(),
+            "context": self.runtime.context,
             "host": _Host(),
             "ports": SimpleNamespace(**self._ports(service)),
         }
@@ -109,20 +119,20 @@ class Compose:
         others = {port for name, ports in self.ports.items() if name != service.name for port in ports.values()}
         for name, preferred in service.ports.items():
             if not mine.get(name) or mine[name] in others:
-                mine[name] = next(p for p in (preferred, *PORTS) if p not in others and not _listening(p))
+                mine[name] = next(p for p in (preferred, *PORTS) if p not in others and not _is_listening(p))
         self._tentative[service.name] = mine
         return mine
 
     async def _keep_ports(self, service: Service):
         """Keep its ports from now on; move off one something else took meanwhile, e.g. after a reboot before our
-        container came up."""
+        container came up. Not knowing which containers run, it moves nothing: it raises."""
         ports = self._ports(service)
-        if any(_listening(port) for port in ports.values()) and service.name not in await self._containers():
+        if any(_is_listening(port) for port in ports.values()) and service.name not in await self._containers():
             self.ports.pop(service.name, None)
-            self._tentative[service.name] = {name: port for name, port in ports.items() if not _listening(port)}
+            self._tentative[service.name] = {name: port for name, port in ports.items() if not _is_listening(port)}
             ports = self._ports(service)
         self.ports[service.name] = ports
-        self.save()
+        write_json(self.data / "ports.json", self.ports)
 
     async def _apply(self):
         """Have docker take what runs now. Applies run in turn, each to its end even when its caller is cancelled:
@@ -133,38 +143,35 @@ class Compose:
         async with self._lock:
             for service in self._running.values():
                 service.data.mkdir(parents=True, exist_ok=True)
-            compose = json.dumps({"name": "majordom", "services": dict(self._rendered)}, indent=2)
+            compose = {"name": "majordom", "services": dict(self._rendered)}
             if compose == self._applied:
                 return
-            self.data.mkdir(parents=True, exist_ok=True)
-            (self.data / "compose.json").write_text(compose)
-            self._applied = ""  # unknown until docker took it all
-            if self.is_docker_enabled:
-                args = ["up", "-d", "--remove-orphans"] if self._rendered else ["down"]
-                process = await asyncio.create_subprocess_exec(
-                    "docker", "compose", "-f", str(self.data / "compose.json"), *args,
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                )  # fmt: skip
-                output = (await process.communicate())[0].decode(errors="replace")
-                if process.returncode:
-                    raise RuntimeError(f"docker compose {args[0]} failed:\n{output[-3000:]}")
+            write_json(self.data / "compose.json", compose)
+            self._applied = None  # unknown until docker took it all
+            args = ["up", "-d", "--remove-orphans"] if self._rendered else ["down"]
+            await self._docker("compose", "-f", str(self.data / "compose.json"), *args)
             self._applied = compose  # only what actually runs: a failure is tried again
 
     async def _is_up(self, service: Service) -> bool:
-        if not self.is_docker_enabled:
-            return True
         ports = self.ports.get(service.name, {}).values()
-        return all(_listening(port) for port in ports) and service.name in await self._containers()
+        return all(_is_listening(port) for port in ports) and service.name in await self._containers()
 
     async def _containers(self) -> set[str]:
         """Our services whose containers are up."""
-        if not self.is_docker_enabled:
-            return set()
-        process = await asyncio.create_subprocess_exec(
-            "docker", "compose", "-p", "majordom", "ps", "--status", "running", "--services",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-        )  # fmt: skip
-        return set((await process.communicate())[0].decode().split())
+        return set((await self._docker("compose", "-p", "majordom", "ps", "--status", "running", "--services")).split())
+
+    async def _docker(self, *args: str) -> str:
+        """What ``docker`` with ``args`` printed; RuntimeError when it failed."""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "docker", *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            )
+            output = (await process.communicate())[0].decode(errors="replace")
+        except OSError as error:  # no docker at all
+            raise RuntimeError(str(error)) from error
+        if process.returncode:
+            raise RuntimeError(f"docker {' '.join(args[:3])} failed:\n{output[-3000:]}")
+        return output
 
 
 async def _until(check: Callable[[], Awaitable[bool]], failure: str):
@@ -183,7 +190,7 @@ async def _provision(service: Service, endpoint: Endpoint) -> bool:
     return True
 
 
-def _listening(port: int) -> bool:
+def _is_listening(port: int) -> bool:
     """Whether something on the host listens on a TCP port (all services run on the host network)."""
     with socket.socket() as probe:
         probe.settimeout(0.5)

@@ -9,6 +9,7 @@ instead of reinventing them, so every integration is exercised through the same 
   and the peripherals it brings along) is set per test, its starts can fail, its hooks answer as told.
 - :class:`RecordingPeripheralOutput` — what a peripheral reports to the runtime; :class:`RecordingRuntimeOutput` —
   what the runtime reports to the Hub.
+- :class:`FakeCompose` — the container host without Docker, for the services an integration provides.
 - Offline doubles of every capability (no radios/sockets touched): :class:`FakeBLESource` for the
   Bluetooth router to hear through (``router.add_source(source)``), :class:`FakeBLERouter`,
   :class:`FakeZeroconf` (the ``discovery`` extra) and :class:`FakeSSDP`. Each provides itself as
@@ -29,10 +30,11 @@ from uuid import UUID
 from majordom_integration_sdk.capabilities.ble import BLEConnection, OnAdvertisement
 from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
 from majordom_integration_sdk.controller.platform import Context, Platform
-from majordom_integration_sdk.peripherals import Endpoint, Need, Peripheral, PeripheralChange
+from majordom_integration_sdk.peripherals import Endpoint, Need, Peripheral, PeripheralChange, Service
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
+from majordom_integration_sdk.runtime.peripherals.services.compose import Compose
 from majordom_integration_sdk.schemas.device import Discovery
 from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
@@ -189,6 +191,22 @@ class RecordingRuntimeOutput:
         return next((status for n, status in reversed(self.statuses) if n == name), None)
 
 
+class FakeCompose(Compose):
+    """Docker Compose without Docker: it renders, keeps ports and writes ``compose.json`` as the real one, and a
+    container runs and answers once applied. ``calls`` are the docker commands it would have run."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls: list[tuple[str, ...]] = []
+
+    async def _docker(self, *args: str) -> str:
+        self.calls.append(args)
+        return "\n".join(self._running) if "ps" in args else ""
+
+    async def _is_up(self, service: Service) -> bool:
+        return service.name in self._running
+
+
 class FakeSSDP(SSDPDiscoveryService):
     """Real registration bookkeeping, but ``start``/``stop`` touch no network."""
 
@@ -307,5 +325,6 @@ __all__ = [
     "FakeBLERouter",
     "FakeZeroconf",
     "FakeSSDP",
+    "FakeCompose",
     "build_test_platform",
 ]

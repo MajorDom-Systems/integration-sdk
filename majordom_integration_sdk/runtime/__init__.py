@@ -14,6 +14,7 @@ from majordom_integration_sdk.runtime.peripherals.providers.ble.proxy import BLE
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
 from majordom_integration_sdk.runtime.peripherals.services.builtin import otbr, silabs_multiprotocol
+from majordom_integration_sdk.runtime.peripherals.services.compose import Compose
 from majordom_integration_sdk.runtime.runtime import (
     RETRY_DELAYS,
     DisabledStore,
@@ -45,6 +46,7 @@ __all__ = [
     "BluetoothAdapters",
     "HostNetwork",
     "Pinned",
+    "Compose",
     "BLEService",
     "BLEProxy",
     "SSDPDiscoveryService",

@@ -9,7 +9,7 @@ from support import run, settle
 from majordom_integration_sdk import AbstractController, Endpoint, Need, Service
 from majordom_integration_sdk.runtime import HostNetwork, PeripheralState, PeripheralStatus
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter
-from majordom_integration_sdk.testing import build_test_platform
+from majordom_integration_sdk.testing import FakeCompose, build_test_platform
 
 
 class Greeting(BaseModel):
@@ -75,7 +75,7 @@ def integration() -> tuple[Service, EchoController]:
 
 async def test_an_integration_runs_once_the_server_it_provides_serves(tmp_path):
     server, echo = integration()
-    runtime = await run(tmp_path, HostNetwork(), server, echo, is_docker_enabled=False)
+    runtime = await run(tmp_path, HostNetwork(), FakeCompose(), server, echo)
 
     assert runtime.status(echo) == PeripheralStatus(PeripheralState.RUNNING)
     assert echo.started_with == [("ws://127.0.0.1:5600", False)]  # its needs bound, its settings given, before start
@@ -84,8 +84,8 @@ async def test_an_integration_runs_once_the_server_it_provides_serves(tmp_path):
 
 async def test_an_integration_and_its_server_keep_their_settings(tmp_path):
     server, echo = integration()
-    runtime = await run(tmp_path, HostNetwork(), server, echo, is_docker_enabled=False)
-    compose = tmp_path / "data" / "compose.json"
+    runtime = await run(tmp_path, HostNetwork(), FakeCompose(), server, echo)
+    compose = tmp_path / "data" / "peripherals" / "compose" / "compose.json"
 
     await runtime.update_settings(server, {"greeting": "hi"})
     await settle(runtime)
@@ -97,13 +97,13 @@ async def test_an_integration_and_its_server_keep_their_settings(tmp_path):
     assert echo.settings.is_loud and len(echo.started_with) == 1  # applied in place
 
     server, again = integration()  # after a reboot
-    await run(tmp_path, HostNetwork(), server, again, is_docker_enabled=False)
+    await run(tmp_path, HostNetwork(), FakeCompose(), server, again)
     assert again.started_with == [("ws://127.0.0.1:5600", True)]
 
 
 async def test_an_integration_waits_with_a_reason_when_its_server_cant_run(tmp_path):
     server, echo = integration()
-    runtime = await run(tmp_path, server, echo, is_docker_enabled=False)  # no network for the server
+    runtime = await run(tmp_path, FakeCompose(), server, echo)  # no network for the server
     assert runtime.status(echo) == PeripheralStatus(
         PeripheralState.WAITING, "need example/echo: echo-server can't run (need ip/*: nothing offers it)"
     )

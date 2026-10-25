@@ -26,6 +26,7 @@ def test_the_defaults_are_what_runs_around_integrations_in_the_order_they_bind()
         "usb",
         "bluetooth-adapters",
         "host",
+        "compose",
         "silabs-multiprotocol",
         "otbr",
         "ble-router",
@@ -33,7 +34,7 @@ def test_the_defaults_are_what_runs_around_integrations_in_the_order_they_bind()
         "ssdp",
     ]
     on_demand = [p.name for p in default_peripherals() if p.is_on_demand]
-    assert on_demand == ["silabs-multiprotocol", "otbr", "ble-router", "zeroconf", "ssdp"]
+    assert on_demand == ["compose", "silabs-multiprotocol", "otbr", "ble-router", "zeroconf", "ssdp"]
 
 
 def test_the_usb_scanner_knows_every_sdk_driver_by_default():
@@ -57,6 +58,7 @@ def test_the_package_and_its_defaults_import_without_the_extras():
         "usb",
         "bluetooth-adapters",
         "host",
+        "compose",
         "silabs-multiprotocol",
         "otbr",
         "ble-router",

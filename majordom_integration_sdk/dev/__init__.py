@@ -12,8 +12,8 @@ you watch what it discovers/reports on the console.
 
     asyncio.run(run_controller(HueController))
 
-Without Docker, ``is_docker_enabled=False`` and ``pinned=[Endpoint(...)]`` give the endpoints you run
-yourself; ``runtime_peripherals=[HostNetwork(), ...]`` runs only those around it (no USB scanning);
+Without Docker, ``pinned=[Endpoint(...)]`` gives the endpoints of the servers you run yourself;
+``runtime_peripherals=[HostNetwork(), ...]`` runs only those around it (no USB scanning);
 ``peripherals={...}`` skips the runtime altogether (library mode).
 """
 
@@ -130,7 +130,6 @@ def build_runtime(
     *,
     runtime_peripherals: Sequence[Peripheral] | None = None,
     pinned: Sequence[Endpoint] = (),
-    is_docker_enabled: bool = True,
 ) -> Runtime:
     """The runtime for one controller, as under the Hub: the endpoints you pin first, then ``runtime_peripherals``
     (`default_peripherals()` by default), then the controller. Needs the ``runtime`` extra."""
@@ -143,9 +142,7 @@ def build_runtime(
     from majordom_integration_sdk.runtime import Pinned, Runtime, default_peripherals
 
     around = default_peripherals() if runtime_peripherals is None else runtime_peripherals
-    return Runtime(
-        data, [Pinned(*pinned), *around, controller], output=LoggingRuntimeOutput(), is_docker_enabled=is_docker_enabled
-    )
+    return Runtime(data, [Pinned(*pinned), *around, controller], output=LoggingRuntimeOutput())
 
 
 class Runner:
@@ -188,16 +185,13 @@ async def run_controller(
     peripherals: Mapping[str, Bound] | None = None,
     runtime_peripherals: Sequence[Peripheral] | None = None,
     pinned: Sequence[Endpoint] = (),
-    is_docker_enabled: bool = True,
     **platform: Any,
 ):
     """Start ``controller_type`` under the runtime (or with the ``peripherals`` you bind) and run until interrupted
     (Ctrl-C), then stop everything cleanly. ``platform`` overrides fields of `Platform`, e.g. ``context``;
-    ``runtime_peripherals``, ``pinned`` and ``is_docker_enabled`` go to the runtime (`build_runtime`)."""
+    ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    runner = _runner(
-        controller_type, storage_root, db_path, peripherals, runtime_peripherals, pinned, is_docker_enabled, platform
-    )
+    runner = _runner(controller_type, storage_root, db_path, peripherals, runtime_peripherals, pinned, platform)
     await runner.start()
     try:
         await asyncio.Event().wait()  # run forever until cancelled
@@ -215,7 +209,6 @@ def _runner(
     peripherals: Mapping[str, Bound] | None,
     runtime_peripherals: Sequence[Peripheral] | None,
     pinned: Sequence[Endpoint],
-    is_docker_enabled: bool,
     overrides: Mapping[str, Any],
 ) -> Runner:
     # The integration's identity is class-level, so its repository and documents folder can be
@@ -228,13 +221,7 @@ def _runner(
     if peripherals is not None:
         controller.peripherals = Peripherals(peripherals)
         return Runner(controller)
-    runtime = build_runtime(
-        controller,
-        root / "runtime",
-        runtime_peripherals=runtime_peripherals,
-        pinned=pinned,
-        is_docker_enabled=is_docker_enabled,
-    )
+    runtime = build_runtime(controller, root / "runtime", runtime_peripherals=runtime_peripherals, pinned=pinned)
     return Runner(controller, runtime)
 
 

@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from majordom_integration_sdk import Endpoint, Service
+from majordom_integration_sdk import Endpoint, Peripherals, Service
 from majordom_integration_sdk.runtime.peripherals.services import builtin as services
 from majordom_integration_sdk.runtime.peripherals.services.builtin import (
     ThreadNetwork,
@@ -98,7 +98,7 @@ class Answering:
     def __init__(self, url: str):
         self.url = url
 
-    def provides(self, service: Service) -> list[Endpoint]:
+    def provided(self, service: Service) -> list[Endpoint]:
         return [replace(endpoint, url=self.url) for endpoint in service.templates]
 
     async def up(self, service: Service):
@@ -116,6 +116,7 @@ async def test_a_border_router_tells_its_thread_network_once_it_serves(border_ro
     url, state = border_router
     state["dataset"] = "0e08existing"
     service, output = router(), RecordingPeripheralOutput()
-    service.host, service.runtime = Answering(url), output
+    service.peripherals = Peripherals({"container": Endpoint("container", "compose", instance=Answering(url))})
+    service.runtime = output
     await asyncio.wait_for(service.start(), 3)
     assert output.learned == [(service, {"thread_dataset": "0e08existing"})]

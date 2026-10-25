@@ -287,12 +287,11 @@ async def run_cli(
     peripherals: Mapping[str, Bound] | None = None,
     runtime_peripherals: Sequence[Peripheral] | None = None,
     pinned: Sequence[Endpoint] = (),
-    is_docker_enabled: bool = True,
     **platform: Any,
 ):
     """Start ``controller_type`` under the runtime (or with the ``peripherals`` you bind) with a local repository and
     drop into an interactive prompt. ``platform`` overrides fields of `Platform` (``context``);
-    ``runtime_peripherals``, ``pinned`` and ``is_docker_enabled`` go to the runtime (`build_runtime`). ``db_path``
+    ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`). ``db_path``
     file-backs the repository so paired devices survive restarts; omit it for in-memory. ``exit`` / Ctrl-D leaves the
     prompt and stops everything cleanly."""
     # Capture all logs + warnings into a buffer for the duration of the session so they don't break
@@ -310,9 +309,7 @@ async def run_cli(
 
     # Identity is class-level, so the repository/documents folder are scoped before construction;
     # the output also persists state.
-    runner = _runner(
-        controller_type, storage_root, db_path, peripherals, runtime_peripherals, pinned, is_docker_enabled, platform
-    )
+    runner = _runner(controller_type, storage_root, db_path, peripherals, runtime_peripherals, pinned, platform)
     controller = runner.controller
     controller.platform = controller.platform.copy(
         output=_CliControllerOutput(controller.platform.make_device_repository)

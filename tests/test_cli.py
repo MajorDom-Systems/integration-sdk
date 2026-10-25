@@ -268,7 +268,7 @@ class _ZigbeeController(FakeController):
 async def needs_session(tmp_path):
     from majordom_integration_sdk.dev import Runner, build_runtime
     from majordom_integration_sdk.runtime.peripherals.services.builtin import silabs_multiprotocol
-    from majordom_integration_sdk.testing import FakeBLERouter, FakeBLESource, FakePeripheral
+    from majordom_integration_sdk.testing import FakeBLERouter, FakeBLESource, FakeCompose, FakePeripheral
 
     adapter = FakePeripheral(
         "bluetooth-adapters", provides=[Endpoint("ble", "bluez", "hci0", instance=FakeBLESource())]
@@ -278,8 +278,7 @@ async def needs_session(tmp_path):
     runtime = build_runtime(
         controller,
         tmp_path / "runtime",
-        runtime_peripherals=[adapter, silabs_multiprotocol(), FakeBLERouter(), matter],
-        is_docker_enabled=False,
+        runtime_peripherals=[adapter, FakeCompose(), silabs_multiprotocol(), FakeBLERouter(), matter],
     )
     runner = Runner(controller, runtime)
     await runner.start()

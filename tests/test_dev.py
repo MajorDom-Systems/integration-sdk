@@ -82,7 +82,6 @@ def runner(tmp_path, router: FakeBLERouter, pinned=()) -> tuple[Runner, _Recordi
         tmp_path / "runtime",
         runtime_peripherals=[router, FakeSSDP()],
         pinned=pinned,
-        is_docker_enabled=False,
     )
     return Runner(controller, runtime), controller, runtime
 
@@ -210,7 +209,6 @@ async def test_run_controller_starts_and_stops_cleanly_under_the_runtime(tmp_pat
             storage_root=tmp_path,
             runtime_peripherals=[FakeSSDP()],
             pinned=[ZWAVE],
-            is_docker_enabled=False,
         )
     )
 

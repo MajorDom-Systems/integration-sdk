@@ -22,20 +22,22 @@ from majordom_integration_sdk.runtime.peripherals.hardware.usb import UsbScanner
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
 from majordom_integration_sdk.runtime.peripherals.services.builtin import otbr, silabs_multiprotocol
+from majordom_integration_sdk.runtime.peripherals.services.compose import Compose
 
 log = logging.getLogger(__name__)
 
 
 def default_peripherals() -> list[Peripheral]:
     """Everything the SDK runs around integrations, in the order it binds: the sticks plugged in (by
-    `default_usb_drivers`) before the containers that serve over them, the multiprotocol border router before the
-    standalone one, the Bluetooth router before the integrations, so it takes every adapter. On-demand ones run only
-    while used."""
+    `default_usb_drivers`) before the containers that serve over them, Docker Compose that runs those, the
+    multiprotocol border router before the standalone one, the Bluetooth router before the integrations, so it takes
+    every adapter. On-demand ones run only while used."""
     zeroconf = _zeroconf()
     return [
         UsbScanner(),
         BluetoothAdapters(),
         HostNetwork(),
+        Compose(),
         silabs_multiprotocol(),
         otbr(),
         BLEService(),

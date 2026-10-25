@@ -24,10 +24,8 @@ from majordom_integration_sdk.peripherals import (
     Peripheral,
     PeripheralChange,
     Peripherals,
-    Service,
 )
 from majordom_integration_sdk.runtime.files import read_json, write_json
-from majordom_integration_sdk.runtime.peripherals.services.compose import Compose
 
 log = logging.getLogger(__name__)
 
@@ -132,11 +130,10 @@ class Runtime:
 
     ``peripherals`` are bound in this order, what each brings along right after it: one listed first wins a single-use
     endpoint (the Bluetooth router takes every adapter before the containers) and is preferred for a need (list
-    `Pinned` first). ``context`` gives the Hub-wide facts its containers render; ``output`` hears every change of
-    status and what is learned; ``disabled`` keeps what the user disabled (in memory by default). It runs the
-    containers of the `Service`s through Docker Compose (`Compose`); without ``is_docker_enabled`` it only writes their
-    compose file, for you to run. Its own state — the settings, the user's pins and reservations, the containers' ports
-    — goes to ``data``.
+    `Pinned` first). ``context`` gives the Hub-wide facts, which peripherals read and containers render; ``output``
+    hears every change of status, what is learned and what is gone; ``disabled`` keeps what the user disabled (in
+    memory by default). Its own state — the settings, the user's pins and reservations — goes to ``data``, and every
+    peripheral gets a folder there, ``peripherals/<name>``.
 
     A peripheral that isn't disabled or failed runs while what brought it along does, while something that runs binds
     it if it ``is_on_demand``, and once every required need is bound to a provider that runs: its start returned. Only a
@@ -153,14 +150,12 @@ class Runtime:
         context: Callable[[], Context] = Context,
         output: RuntimeOutput | None = None,
         disabled: DisabledStore | None = None,
-        is_docker_enabled: bool = True,
     ):
         self.data, self.given, self._context, self.output = data, list(peripherals), context, output
         self.disabled = disabled or MemoryDisabledStore()
-        self.state: dict[str, Any] = {"settings": {}, "pins": {}, "reserved": {}, "ports": {}}
+        self.state: dict[str, Any] = {"settings": {}, "pins": {}, "reserved": {}}
         saved = read_json(data / "state.json")
         self.state |= {key: saved[key] for key in saved.keys() & self.state.keys()}  # older keys start fresh
-        self.compose = Compose(data, self.state["ports"], self._save, context, is_docker_enabled)
         self._entries: dict[str, _Entry] = {}  # in binding order
         self._clashes: list[_Entry] = []  # failed: another took their name
         self._gone: list[_Entry] = []  # to report
@@ -266,6 +261,8 @@ class Runtime:
         """The families ``endpoints`` would serve, themselves or through the on-demand peripherals here they would run,
         that something needs: one that runs anyway, or one used that isn't on the way: what a radio's firmware is good
         for."""
+        alive = [entry for entry in self._entries.values() if entry.state not in _GIVEN_UP]
+        available = {endpoint.family for entry in alive for endpoint in _offered(entry.peripheral)}
         families: set[str] = set()
         reached, on_the_way = {e.family for e in endpoints}, set[str]()
         while reached != families:
@@ -273,7 +270,7 @@ class Runtime:
             on_the_way = {
                 name
                 for name, entry in self._entries.items()
-                if entry.peripheral.is_on_demand and _is_satisfied(entry.peripheral.needs, families)
+                if entry.peripheral.is_on_demand and _is_fed(entry.peripheral.needs, families, available)
             }
             reached = families.union(
                 *({e.family for e in _offered(self._entries[name].peripheral)} for name in on_the_way)
@@ -524,8 +521,6 @@ class Runtime:
 
     def _adopt(self, peripheral: Peripheral, name: str, contributor: str | None) -> _Entry:
         peripheral.runtime, peripheral.data = self, self.data / "peripherals" / name
-        if isinstance(peripheral, Service):
-            peripheral.host = self.compose
         failure = self._failed.get(name, "")
         try:
             self._load_settings(peripheral, name)
@@ -820,12 +815,17 @@ class _Reasons:
                 rejected.append(f"every provider taken by {taker}" + self.hint(taker, need.family))
             elif provider.name not in self.alive:
                 rejected.append(f"{provider.name} is {entries[provider.name].state}")
-            elif provider.name not in self.wanted and (why := "; ".join(self.of(provider.name).values())):
+            elif provider.name not in self.wanted and (why := self.blocking(provider)):
                 rejected.append(f"{provider.name} can't run ({why})")
             else:
                 return None  # free, or on demand and idle only because the owner doesn't run
         wanted = f"{need.family}/{'|'.join(need.dialects) or '*'}"
         return f"need {wanted}: {'; '.join(dict.fromkeys(rejected)) or 'nothing offers it'}"
+
+    def blocking(self, provider: _Entry) -> str:
+        """Why the required needs of ``provider`` can't be bound: the optional ones don't keep it from running."""
+        required = {need.family for need in provider.peripheral.needs if need.is_required}
+        return "; ".join(why for family, why in self.of(provider.name).items() if family in required)
 
     def hint(self, taker: str, family: str) -> str:
         """What to need instead when what took the endpoint offers the same family itself: the router for raw BLE."""
@@ -904,8 +904,10 @@ def _key(bound: Mapping[str, list[Binding]]) -> _Key:
     return {family: [(p, e, id(e.instance)) for p, e in bindings] for family, bindings in bound.items()}
 
 
-def _is_satisfied(needs: Sequence[Need], families: set[str]) -> bool:
-    return all(need.family in families for need in needs if need.is_required)
+def _is_fed(needs: Sequence[Need], families: set[str], available: set[str]) -> bool:
+    """Whether ``families`` feed one of the required ``needs``, and with what is ``available`` all of them."""
+    required = {need.family for need in needs if need.is_required}
+    return bool(required & families) and required <= families | available
 
 
 __all__ = [

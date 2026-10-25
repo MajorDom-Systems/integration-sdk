@@ -16,9 +16,9 @@ if TYPE_CHECKING:
 
 
 class ServiceHost(Protocol):
-    """What runs a `Service`'s container: the runtime's Docker Compose."""
+    """What runs a `Service`'s container, bound to its ``container`` need: the runtime's `Compose`."""
 
-    def provides(self, service: Service) -> Sequence[Endpoint]:
+    def provided(self, service: Service) -> Sequence[Endpoint]:
         """Its ``provides`` rendered: the host ports it got, the params it renders."""
         ...
 
@@ -33,18 +33,7 @@ class ServiceHost(Protocol):
         ...
 
 
-class _NoHost:
-    def provides(self, service: Service) -> Sequence[Endpoint]:
-        return service.templates
-
-    async def up(self, service: Service):
-        raise NotImplementedError(f"Nothing runs containers here: run {service.name} yourself and pin what it provides")
-
-    async def down(self, service: Service):
-        pass
-
-    def is_current(self, service: Service) -> bool:
-        return True
+CONTAINER_HOST = Need("container", ["compose"])  # what every service needs
 
 
 class Service(Peripheral):
@@ -81,22 +70,32 @@ class Service(Peripheral):
         settings: type[BaseModel] | None = None,
         ports: Mapping[str, int] = {},  # name -> PREFERRED host port; see the docstring
     ):
-        self.name, self.compose, self.needs, self.templates = name, compose, needs, provides
+        self.name, self.compose, self.needs, self.templates = name, compose, [*needs, CONTAINER_HOST], provides
         self.Settings, self.ports = settings, ports
-        self.host: ServiceHost = _NoHost()  # the runtime's
+
+    @property
+    def host(self) -> ServiceHost | None:
+        """The container host its need is bound to."""
+        return self.peripherals.instance(CONTAINER_HOST.family)
 
     @property
     def provides(self) -> Sequence[Endpoint]:
-        return self.host.provides(self)
+        return self.host.provided(self) if self.host else self.templates
 
     async def start(self):
+        if not self.host:
+            raise NotImplementedError(
+                f"Nothing runs containers here: run {self.name} yourself and pin what it provides"
+            )
         await self.host.up(self)
 
     async def stop(self):
-        await self.host.down(self)
+        if self.host:
+            await self.host.down(self)
 
     async def context_did_change(self, before: Context) -> bool:
-        return self.host.is_current(self)
+        """Its container is recreated only when it would render otherwise now."""
+        return self.host.is_current(self) if self.host else True
 
     async def provision(self, endpoint: Endpoint):
         """Set up one of its endpoints once it answers, e.g. form a network. Called each time its container is
