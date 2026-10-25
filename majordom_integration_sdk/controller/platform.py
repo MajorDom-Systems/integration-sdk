@@ -1,4 +1,4 @@
-"""What the Hub (or the standalone runner) provides every controller besides its peripherals: the app's services."""
+"""What the Hub (or the standalone runner) provides every controller: the app's services and Hub-wide facts."""
 
 from __future__ import annotations
 
@@ -6,49 +6,10 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Protocol
-
-from pydantic import BaseModel
 
 from majordom_integration_sdk.controller.output import ControllerOutput
-from majordom_integration_sdk.peripherals import Endpoint
 from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtocol
 from majordom_integration_sdk.schemas.credentials import WifiCredentials
-
-
-class ServiceControl(Protocol):
-    """What an integration may do to the services it brings (its ``services``), through the runtime."""
-
-    async def restart(self, service: str) -> None:
-        """Restart one of them, e.g. after reconfiguring it. The integration keeps running: reconnect."""
-        ...
-
-
-@dataclass(frozen=True)
-class NoServiceControl:
-    """No runtime runs services here: library mode, the standalone runner without the runtime."""
-
-    async def restart(self, service: str) -> None:
-        raise NotImplementedError(f"Nothing runs {service} here: restart it yourself")
-
-
-class Offers(Protocol):
-    """Endpoints an integration offers others while it runs, e.g. ESPHome's Bluetooth proxies as ``ble/esphome-proxy``
-    sources of the Bluetooth router. The runtime binds them like any other and tells whoever gets or loses one."""
-
-    async def offer(self, endpoint: Endpoint) -> None: ...
-    async def withdraw(self, endpoint: Endpoint) -> None: ...
-
-
-@dataclass(frozen=True)
-class NoOffers:
-    """No runtime binds offers here: nothing takes them."""
-
-    async def offer(self, endpoint: Endpoint) -> None:
-        pass
-
-    async def withdraw(self, endpoint: Endpoint) -> None:
-        pass
 
 
 @dataclass(frozen=True)
@@ -70,11 +31,7 @@ class Platform:
     # device database (certificates, protocol caches, …). The Hub computes and injects
     # it per integration; the standalone dev runner points it at a local folder.
     documents_folder: Path
-
-    settings: BaseModel | None = None  # validated instance of the controller's `settings` model
-    context: Context = field(default_factory=Context)
-    services: ServiceControl = field(default_factory=NoServiceControl)  # restarts the integration's `services`
-    offers: Offers = field(default_factory=NoOffers)  # endpoints the integration lends others while it runs
+    context: Context = field(default_factory=Context)  # kept current by the Hub, which merges what the runtime learns
 
     def copy(self, **kwargs) -> Platform:
         return replace(self, **kwargs)

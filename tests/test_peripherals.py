@@ -1,6 +1,21 @@
-import pytest
+from uuid import UUID
 
-from majordom_integration_sdk import AbstractController, Endpoint, Need, Service
+import pytest
+from pydantic import BaseModel
+
+from majordom_integration_sdk import (
+    AbstractController,
+    Context,
+    Endpoint,
+    Need,
+    Peripheral,
+    PeripheralChange,
+    Peripherals,
+    Service,
+    UsbDriver,
+)
+from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter
+from majordom_integration_sdk.testing import build_test_platform
 
 
 def test_need_accepts_family_and_dialect():
@@ -10,20 +25,66 @@ def test_need_accepts_family_and_dialect():
     assert not Need("thread").accepts(Endpoint("zigbee", "ezsp"))
 
 
-def test_controller_declarations_default_to_nothing():
-    assert AbstractController.needs == ()
-    assert AbstractController.services == ()
-    assert AbstractController.settings is None
+class Host(Peripheral):
+    name = "host"
+    provides = [Endpoint("ip", is_shared=True)]
 
 
-async def test_service_hooks_default_to_nothing():
-    service = Service("server", compose={})
-    assert await service.provision(Endpoint("matter", "matter-server", "ws://127.0.0.1:5580"), None) is None
-    assert await service.learn(Endpoint("matter", "matter-server", "ws://127.0.0.1:5580")) == {}
+async def test_a_peripheral_needs_provides_and_brings_nothing_by_default():
+    host = Host()
+    assert (host.needs, host.provides, host.peripherals) == ((), [Endpoint("ip", is_shared=True)], ())
+    assert not host.is_on_demand and host.is_ready_on_start
+    assert host.Settings is None and host.settings is None
+    await host.start()
+    await host.stop()
+    await host.output.peripheral_did_change_provided(host)  # nothing runs it: told no one
+    assert await host.needed_peripheral_did_change(PeripheralChange("ip", None, None)) is False  # restart it
+    assert await host.settings_did_change(None) is False
+    assert await host.context_did_change(Context()) is True  # the context concerns few
 
 
-def test_services_name_no_host_ports_by_default():
-    assert Service("server", compose={}).ports == {}
+def test_peripherals_hand_out_one_endpoint_many_or_an_instance():
+    router = object()
+    adapters = [Endpoint("ble", "bluez", "hci0"), Endpoint("ble", "bluez", "hci1")]
+    peripherals = Peripherals(bound={"zigbee": Endpoint("zigbee", "ezsp", "/dev/ttyUSB0"), "raw": adapters})
+    assert peripherals.endpoint("zigbee").url == "/dev/ttyUSB0"
+    assert peripherals.endpoints("zigbee") == [peripherals.bound["zigbee"]]
+    assert peripherals.endpoints("raw") == adapters
+    with pytest.raises(TypeError, match="endpoints"):
+        peripherals.endpoint("raw")
+    assert peripherals.endpoints("thread") == []
+    assert peripherals.instance("ble") is None
+    with pytest.raises(KeyError):
+        peripherals.endpoint("thread")
+
+    peripherals.bind({"ble": Endpoint("ble", "router", "router", is_shared=True, instance=router)})
+    assert peripherals.instance("ble") is router
+    assert "zigbee" not in peripherals.bound  # a binding replaces the last one
+
+
+async def test_peripherals_restart_only_what_was_brought_along():
+    own, other = Host(), Host()
+    restarted: list[Peripheral] = []
+
+    async def restart(peripheral: Peripheral):
+        restarted.append(peripheral)
+
+    peripherals = Peripherals([own])
+    with pytest.raises(NotImplementedError, match="restart it yourself"):
+        await peripherals.restart(own)  # nothing runs it
+
+    peripherals.bind({}, restart=restart)
+    await peripherals.restart(own)
+    with pytest.raises(PermissionError):
+        await peripherals.restart(other)
+    assert restarted == [own]
+
+
+def test_an_endpoint_is_the_same_whatever_instance_it_carries():
+    assert Endpoint("ble", "esphome-proxy", "esphome:aa", instance=object()) == Endpoint(
+        "ble", "esphome-proxy", "esphome:aa", instance=object()
+    )
+    assert not Need("ble").is_many
 
 
 def test_endpoint_params_say_how_to_talk_to_it():
@@ -33,33 +94,84 @@ def test_endpoint_params_say_how_to_talk_to_it():
     assert hash(stick) == hash(Endpoint("zigbee", "ezsp", "/dev/ttyUSB0"))
 
 
-async def test_without_a_runtime_services_cant_be_restarted():
-    from majordom_integration_sdk.testing import build_test_platform
-
-    with pytest.raises(NotImplementedError):
-        await build_test_platform().services.restart("matterjs-server")
+SERVER = Service("server", compose={}, provides=[Endpoint("matter", "matter-server", "ws://127.0.0.1:{ports.api}")])
 
 
-def test_peripherals_hand_out_one_endpoint_many_or_an_instance():
-    from majordom_integration_sdk import Peripherals
-
-    router = object()
-    adapters = [Endpoint("ble", "bluez", "hci0"), Endpoint("ble", "bluez", "hci1")]
-    peripherals = Peripherals({"zigbee": Endpoint("zigbee", "ezsp", "/dev/ttyUSB0"), "raw": adapters})
-    assert peripherals.endpoint("zigbee").url == "/dev/ttyUSB0"
-    assert peripherals.endpoints("zigbee") == [peripherals["zigbee"]]
-    assert peripherals.endpoints("raw") == adapters
-    assert peripherals.endpoints("thread") == []
-    assert peripherals.instance("ble") is None
-    with pytest.raises(KeyError):
-        peripherals.endpoint("thread")
-
-    peripherals["ble"] = Endpoint("ble", "router", "router", is_shared=True, instance=router)
-    assert peripherals.instance("ble") is router
+async def test_a_service_runs_on_demand_once_ready_and_hooks_in_doing_nothing():
+    assert SERVER.is_on_demand and not SERVER.is_ready_on_start
+    assert SERVER.ports == {} and SERVER.Settings is None
+    assert await SERVER.provision(Endpoint("matter", "matter-server", "ws://127.0.0.1:5580")) is None
+    assert await SERVER.learn(Endpoint("matter", "matter-server", "ws://127.0.0.1:5580")) == {}
+    assert await SERVER.is_healthy()
 
 
-def test_an_endpoint_is_the_same_whatever_instance_it_carries():
-    assert Endpoint("ble", "esphome-proxy", "esphome:aa", instance=object()) == Endpoint(
-        "ble", "esphome-proxy", "esphome:aa", instance=object()
-    )
-    assert not Need("ble").is_many
+async def test_without_a_runtime_a_service_provides_its_templates_and_doesnt_run():
+    assert SERVER.provides == SERVER.templates
+    with pytest.raises(NotImplementedError, match="run server yourself"):
+        await SERVER.start()
+
+
+class Silabs(UsbDriver):
+    name = "silabs"
+    firmwares = {"zigbee-ncp": [Endpoint("zigbee", "ezsp", "{device}", params={"baud": 115200})]}
+
+
+def test_a_usb_driver_says_what_a_firmware_serves_and_offers_itself():
+    driver = Silabs()
+    assert driver.endpoints("zigbee-ncp", "/dev/ttyUSB0", {"flow_control": False}) == [
+        Endpoint("zigbee", "ezsp", "/dev/ttyUSB0", params={"baud": 115200, "flow_control": False})
+    ]
+    assert driver.endpoints(None, "/dev/ttyUSB0") == []
+    assert driver.provides[0].instance is driver and driver.is_on_demand
+    assert driver.flashable("/dev/ttyUSB0", "dev") == []
+
+
+class ExampleController(AbstractController[Device, Parameter]):
+    needs = [Need("example")]
+    services = [SERVER]
+
+    class Settings(BaseModel):
+        channel: int = 11
+
+    settings: Settings
+
+    @property
+    def discoveries(self) -> dict[UUID, Discovery]:
+        return {}
+
+    async def start(self):
+        pass
+
+    async def stop(self):
+        pass
+
+    async def pair_device(self, discovery, credentials):
+        pass
+
+    async def unpair(self, device):
+        pass
+
+    async def identify(self, device):
+        pass
+
+    async def fetch(self, device):
+        pass
+
+    async def send_command(self, command, device, parameter):
+        pass
+
+
+async def test_a_controller_is_a_peripheral_with_its_settings_and_its_peripherals():
+    controller = ExampleController(build_test_platform(), {"example": Endpoint("example", "echo", "ws://x")})
+    assert controller.settings.channel == 11  # its defaults until the runtime hands over the saved ones
+    assert controller.peripherals.endpoint("example").url == "ws://x"
+    assert list(controller.peripherals) == [SERVER]  # its services, brought along
+    assert not controller.is_on_demand and controller.provides == ()
+    assert await controller.needed_peripheral_did_change(PeripheralChange("example", None, None)) is False
+    assert await controller.context_did_change(Context()) is False  # restarted, unless it handles it
+
+
+def test_a_controller_without_settings_has_none():
+    assert AbstractController.Settings is None
+    assert AbstractController.needs == ()
+    assert AbstractController.services == ()

@@ -1,4 +1,4 @@
-"""What radios, services, the host and the runtime's own providers offer, and what a consumer gets once bound."""
+"""What peripherals provide, and what a need is bound to."""
 
 from __future__ import annotations
 
@@ -30,26 +30,6 @@ class Endpoint:
 
 
 type Bound = Endpoint | list[Endpoint]  # what a need is bound to: a list for an ``is_many`` need
-
-
-class Peripherals(dict[str, Bound]):
-    """A consumer's bound needs by family: an `Endpoint`, or a list of them for an ``is_many`` need."""
-
-    def endpoint(self, family: str) -> Endpoint:
-        """The endpoint bound to the need of ``family``; KeyError while it is unbound."""
-        bound = self[family]
-        if isinstance(bound, list):
-            raise TypeError(f"The {family} need binds many endpoints: use endpoints({family!r})")
-        return bound
-
-    def endpoints(self, family: str) -> list[Endpoint]:
-        """Every endpoint bound to the need of ``family``; empty while it is unbound."""
-        bound = self.get(family, [])
-        return bound if isinstance(bound, list) else [bound]
-
-    def instance(self, family: str) -> Any:
-        """The in-process peripheral bound to the need of ``family``, e.g. the Bluetooth router; None while unbound."""
-        return self.endpoint(family).instance if family in self else None
 
 
 @dataclass(frozen=True)

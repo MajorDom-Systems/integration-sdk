@@ -1,52 +1,116 @@
-"""Companion servers an integration brings along, run by the runtime while something uses them."""
+"""Companion servers an integration brings along, run as containers while something uses them."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel
 
 from majordom_integration_sdk.peripherals.endpoint import Endpoint
 from majordom_integration_sdk.peripherals.need import Need
+from majordom_integration_sdk.peripherals.peripheral import Peripheral, Peripherals
+
+if TYPE_CHECKING:
+    from majordom_integration_sdk.controller.platform import Context
 
 
-@dataclass(frozen=True)
-class Service:
-    """What the integration provides to its environment: a companion server it brings along, such as
-    Matter's matterjs-server. The runtime runs it as a container only while something is bound to one
-    of its endpoints.
+class ServiceHost(Protocol):
+    """What runs a `Service`'s container: the runtime's Docker Compose."""
 
-    ``compose`` is its Docker Compose service definition (image, environment, volumes, …); its strings
-    may hold ``{data}``, ``{peripherals.<family>.url}``, ``{settings.<field>}``, ``{context.<field>}``,
+    def provides(self, service: Service) -> Sequence[Endpoint]:
+        """Its ``provides`` rendered: the host ports it got, the params it renders."""
+        ...
+
+    async def up(self, service: Service): ...
+    async def down(self, service: Service): ...
+
+    def is_current(self, service: Service) -> bool:
+        """Whether its container still runs what it would render now."""
+        ...
+
+
+class _NoHost:
+    def provides(self, service: Service) -> Sequence[Endpoint]:
+        return service.templates
+
+    async def up(self, service: Service):
+        raise NotImplementedError(f"Nothing runs containers here: run {service.name} yourself and pin what it provides")
+
+    async def down(self, service: Service):
+        pass
+
+    def is_current(self, service: Service) -> bool:
+        return True
+
+
+class Service(Peripheral):
+    """A companion server an integration brings along, such as Matter's matterjs-server: a container that runs only
+    while something that runs is bound to one of its endpoints. List it in the controller's ``services``.
+
+    ``compose`` is its Docker Compose service definition (image, environment, volumes, …); its strings may hold
+    ``{data}``, ``{peripherals.<family>.url}``, ``{settings.<field>}``, ``{context.<field>}``,
     ``{host.interface|uid|gid}`` and ``{ports.<name>}``. A format spec turns a value into text: ``{x:!text}`` renders
     ``text`` when ``x`` is empty, ``{x:?text}`` when it isn't; a list item that renders empty is left out, so
     ``"volumes": ["{peripherals.ble.url:?/run/dbus:/run/dbus:ro}"]`` mounts D-Bus only while an adapter is bound.
     The ``params`` of the ``provides`` endpoints render the same way, which is how a consumer learns what its service
-    got: ``params={"adapter": "{peripherals.ble.url}"}``.
+    got: ``params={"adapter": "{peripherals.ble.url}"}``. ``settings`` is the pydantic model of its options.
 
-    ``ports`` names the host ports it listens on, each with the port it *prefers*, not a fixed one: the runtime
-    uses it when free, else assigns another (45800-45999), keeps the choice across restarts, and fills
-    ``{ports.<name>}`` in ``compose`` and in the ``provides`` URLs. Integrations never read a port: they connect
-    through ``self.peripherals.endpoint(<family>).url``.
+    ``ports`` names the host ports it listens on, each with the port it *prefers*, not a fixed one: the runtime uses it
+    when free, else assigns another (45800-45999), keeps the choice across restarts, and fills ``{ports.<name>}`` in
+    ``compose`` and in the ``provides`` URLs. Integrations never read a port: they connect through
+    ``self.peripherals.endpoint(<family>).url``.
 
-    Subclass it to hook into the runtime: `provision` sets up what it runs, `learn` reads `Context`
-    facts from what it provides.
+    It is ready once its container runs, its ports answer, `provision` finished and `is_healthy` says so. Subclass it
+    to hook in: `provision` sets up what it runs, `learn` reads `Context` facts from it, `is_healthy` checks more.
     """
 
-    name: str
-    compose: Mapping[str, Any]
-    needs: Sequence[Need] = ()
-    provides: Sequence[Endpoint] = ()
-    settings: type[BaseModel] | None = None
-    ports: Mapping[str, int] = field(default_factory=dict)  # name -> PREFERRED host port; see the docstring
+    is_on_demand = True
+    is_ready_on_start = False
 
-    async def provision(self, endpoint: Endpoint, settings: BaseModel | None) -> None:
-        """Set up one of its bound endpoints once it answers, e.g. form a network. Called each time the
-        runtime (re)creates this service, cancelled when it changes again: keep it idempotent."""
+    def __init__(
+        self,
+        name: str,
+        compose: Mapping[str, Any],
+        needs: Sequence[Need] = (),
+        provides: Sequence[Endpoint] = (),
+        settings: type[BaseModel] | None = None,
+        ports: Mapping[str, int] = {},  # name -> PREFERRED host port; see the docstring
+    ):
+        self.name, self.compose, self.needs, self.templates = name, compose, needs, provides
+        self.Settings, self.ports = settings, ports
+        self.host: ServiceHost = _NoHost()  # the runtime's
+        self._peripherals = Peripherals()
+
+    @property
+    def provides(self) -> Sequence[Endpoint]:
+        return self.host.provides(self)
+
+    @property
+    def peripherals(self) -> Peripherals:
+        return self._peripherals
+
+    async def start(self):
+        await self.host.up(self)
+
+    async def stop(self):
+        await self.host.down(self)
+
+    async def context_did_change(self, before: Context) -> bool:
+        return self.host.is_current(self)
+
+    async def provision(self, endpoint: Endpoint):
+        """Set up one of its endpoints once it answers, e.g. form a network. Called each time its container is
+        (re)created, cancelled when it stops: keep it idempotent."""
+        return
 
     async def learn(self, endpoint: Endpoint) -> Mapping[str, Any]:
-        """`Context` fields to read from a bound endpoint of the kind this service provides, once known:
-        a border router's Thread network. Also called for such an endpoint someone else runs (pinned)."""
+        """`Context` fields to read from one of its endpoints once ready: a border router's Thread network."""
         return {}
+
+    async def is_healthy(self) -> bool:
+        """A check of its own on top of its ports answering; asked until it says yes."""
+        return True
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.name!r})"

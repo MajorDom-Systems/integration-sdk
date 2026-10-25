@@ -9,14 +9,13 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import ClassVar, cast, final
+from typing import Any, ClassVar, cast, final
 from uuid import UUID, uuid5
 
-from pydantic import BaseModel
 from slugify import slugify
 
 from majordom_integration_sdk.controller.platform import Context, Platform
-from majordom_integration_sdk.peripherals import Bound, Endpoint, Need, PeripheralChange, Peripherals, Service
+from majordom_integration_sdk.peripherals import Bound, Need, Peripheral, PeripheralChange, Peripherals
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 
@@ -39,10 +38,23 @@ def _titleize(class_name: str) -> str:
     return " ".join(words) or base
 
 
-class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
+class AbstractController[TDevice: Device, TParameter: Parameter](Peripheral, ABC):
     """
     Base class for all integration controllers.
     Defines the interface the Hub uses to interact with an integration — the Hub instantiates the subclass and drives it by calling these methods.
+
+    A controller is a `Peripheral` like any other: the runtime starts it once its required needs are bound and ready,
+    stops it when one is lost, and hands moved needs, settings and context over to its hooks. It holds:
+
+    - ``self.platform``: the app's services from the Hub (output, device repository, documents folder, context);
+    - ``self.settings``: its validated ``Settings``, when it declares its options as a nested ``class Settings(BaseModel)``
+      (annotate ``settings: Settings`` to type it); None without;
+    - ``self.peripherals``: the endpoints its needs are bound to (``endpoint()``, ``endpoints()``, ``instance()``), and the
+      peripherals it brought along, its ``services`` first (``restart()`` one).
+
+    In library mode, with no runtime, hand the bound needs over yourself::
+
+        controller = HueController(platform, {"mdns": Endpoint("mdns", "zeroconf", instance=zeroconf)})
     """
 
     def __init_subclass__(cls, **kwargs) -> None:
@@ -53,10 +65,12 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
 
     def __init__(self, platform: Platform, peripherals: Mapping[str, Bound] | None = None):
         """
-        Called by the Hub with the app's services and the bound needs. Do not change this signature.
+        Called by the Hub with the app's services; ``peripherals`` binds the needs in library mode, the runtime does
+        it otherwise. Do not change this signature.
         """
         self.platform = platform
-        self.peripherals = peripherals if isinstance(peripherals, Peripherals) else Peripherals(peripherals or {})
+        self.settings = self.Settings() if self.Settings is not None else None
+        self._peripherals = Peripherals(self.services, peripherals)
 
     # Abstract
 
@@ -71,7 +85,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
         # TODO: save datetime and remove expired
         return {}
 
-    name: ClassVar[str]
+    name: str
     """
     Human-readable name of the integration (e.g. "HomeKit", "ZigBee").
 
@@ -87,47 +101,42 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
     peripherals and platform *before* the controller exists.
     """
 
-    needs: ClassVar[Sequence[Need]] = ()
+    needs: Sequence[Need] = ()
     """What the integration requires from its environment: everything external, which something else must provide —
     radios (``Need("zigbee", ["ezsp"])``), the Bluetooth router (``Need("ble", ["router"])``), DNS-SD
     (``Need("mdns", ["zeroconf"])``), SSDP (``Need("upnp", ["ssdp"])``) and the services it brings. Bound ones arrive in
-    ``self.peripherals`` keyed by family; in library mode pass them yourself. Never need raw Bluetooth: the router
-    holds every radio."""
+    ``self.peripherals`` keyed by family; in library mode pass them yourself. A required need that can't be bound keeps
+    the integration from starting, with the reason the Hub shows. Never need raw Bluetooth: the router holds every
+    radio."""
 
-    services: ClassVar[Sequence[Service]] = ()
-    """What the integration provides to its environment: companion servers it brings along (Matter:
-    matterjs-server), run by the runtime only while something is bound to them. The controller then
-    `Need`s what they provide."""
+    services: ClassVar[Sequence[Peripheral]] = ()
+    """What the integration brings along: companion servers (Matter: matterjs-server), run by the runtime only while
+    something is bound to them, or a USB driver that recognises its radios. The controller then `Need`s what they
+    provide. They come first in ``self.peripherals``."""
 
-    settings: ClassVar[type[BaseModel] | None] = None
-    """User-facing options as a pydantic model; the validated instance arrives in ``platform.settings``."""
+    @property
+    def peripherals(self) -> Peripherals:
+        return self._peripherals
 
-    @classmethod
-    async def probe(cls, path: str) -> Endpoint | None:
-        """Tell whether an unidentified serial device at ``path`` speaks one of your protocols, and
-        what it offers then, e.g. ``Endpoint("zigbee", "znp", path)``. The runtime asks this only
-        about devices no radio driver recognised."""
-        return None
-
-    async def peripheral_did_change(self, change: PeripheralChange) -> bool:
+    async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:
         """A bound need was lost, appeared, or moved; ``self.peripherals`` is already updated.
 
         Return True when handled in place (e.g. Matter keeps working over IP without Thread).
-        False lets the Hub restart the integration, or stop it while a required need is unbound.
+        False (the default) restarts the integration. A lost required need stops it instead, until it is back.
         """
         return False
 
-    async def settings_did_change(self, before: BaseModel | None) -> bool:
-        """The integration's settings changed; ``platform.settings`` already holds the new ones.
+    async def settings_did_change(self, before: Any) -> bool:
+        """The integration's settings changed; ``self.settings`` already holds the new ones.
 
-        Return True when applied in place; False (the default) has the Hub restart the integration.
+        Return True when applied in place; False (the default) restarts the integration.
         """
         return False
 
     async def context_did_change(self, before: Context) -> bool:
         """Hub-wide facts changed (region, Wi-Fi, Thread network); ``platform.context`` holds the new ones.
 
-        Return True when applied in place; False (the default) has the Hub restart the integration.
+        Return True when applied in place; False (the default) restarts the integration.
         """
         return False
 

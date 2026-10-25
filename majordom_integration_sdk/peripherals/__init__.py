@@ -1,13 +1,29 @@
-"""The language integrations and the runtime share to describe what they need and what they offer.
+"""The language integrations and the runtime share to describe what they need and what they provide.
 
-A capability is ``family/dialect``: ``zigbee/ezsp``, ``thread/spinel``, ``matter/matter-server``, ``ble/router``.
-Controllers, services and the runtime's own providers declare `Need`s; radios, services, the host and the providers
-offer `Endpoint`s. A runtime (`majordom_integration_sdk.runtime`, or you by hand in library mode) binds them and hands
-every consumer its `Peripherals`: an `Endpoint` per family, a list for an ``is_many`` need.
+Everything around an integration, and the integration itself, is a `Peripheral`: it ``needs`` capabilities, it
+``provides`` `Endpoint`s, and it may bring other peripherals along (its ``peripherals``). A capability is
+``family/dialect``: ``zigbee/ezsp``, ``thread/spinel``, ``matter/matter-server``, ``ble/router``. A runtime
+(`majordom_integration_sdk.runtime`, or you by hand in library mode) binds every `Need` to an endpoint and hands it
+over in the peripheral's `Peripherals`: an `Endpoint` per family, a list for an ``is_many`` need.
 """
 
-from majordom_integration_sdk.peripherals.endpoint import Bound, Endpoint, PeripheralChange, Peripherals
+from majordom_integration_sdk.peripherals.endpoint import Bound, Endpoint, PeripheralChange
 from majordom_integration_sdk.peripherals.need import Need
-from majordom_integration_sdk.peripherals.service import Service
+from majordom_integration_sdk.peripherals.peripheral import Peripheral, PeripheralOutput, Peripherals, Restart
+from majordom_integration_sdk.peripherals.service import Service, ServiceHost
+from majordom_integration_sdk.peripherals.usb import USB_DRIVER, UsbDriver
 
-__all__ = ["Need", "Endpoint", "Bound", "Peripherals", "PeripheralChange", "Service"]
+__all__ = [
+    "Need",
+    "Endpoint",
+    "Bound",
+    "Peripheral",
+    "PeripheralOutput",
+    "Peripherals",
+    "PeripheralChange",
+    "Restart",
+    "Service",
+    "ServiceHost",
+    "UsbDriver",
+    "USB_DRIVER",
+]
