@@ -33,6 +33,7 @@ log = logging.getLogger(__name__)
 PROBE_TIMEOUT = 60  # per driver: one that hangs (bellows resetting a busy port) is given up
 POLL = 2  # seconds between looks at the sticks plugged in
 FIRMWARE_CACHE = Path(tempfile.gettempdir()) / "majordom-firmware"  # downloads are checked against their checksum
+UNSEEN = "another program"  # one that locked a port: whether it let go shows only by opening it
 
 
 class Radio(Peripheral):
@@ -82,12 +83,10 @@ class Radio(Peripheral):
     async def identify(self, is_asking_again: bool = False) -> bool:
         """Ask the drivers which firmware it runs, each once unless ``is_asking_again``; True once one recognised it."""
         for driver in [d for d in self.drivers() if is_asking_again or all(d is not a for a in self._asked)]:
-            with contextlib.suppress(Exception):
-                async with asyncio.timeout(PROBE_TIMEOUT):
-                    if firmware := await driver.identify(self.path):
-                        self.driver, self.firmware = driver, firmware
-                        await self.check_bluetooth()
-                        return True
+            if firmware := await _firmware(driver, self.path):
+                self.driver, self.firmware = driver, firmware
+                await self.check_bluetooth()
+                return True
             self._asked.append(driver)
         log.info(f"No driver recognised {self.path}")
         return False
@@ -104,9 +103,11 @@ class Radio(Peripheral):
         if (driver := self.driver) is None:
             raise LookupError(f"No driver knows {self.name}: probe it first")
         async with self._busy():
-            await driver.flash(self.path, firmware, self.settings.firmware_channel, FIRMWARE_CACHE)
-            self.firmware, self.has_bluetooth = await driver.identify(self.path), False
-            await self.check_bluetooth()
+            try:
+                await driver.flash(self.path, firmware, self.settings.firmware_channel, FIRMWARE_CACHE)
+            finally:  # whether it took or not, what ran before may be gone
+                self.firmware, self.has_bluetooth = await _firmware(driver, self.path), False
+                await self.check_bluetooth()
 
     @contextlib.asynccontextmanager
     async def _busy(self):
@@ -203,7 +204,7 @@ class UsbScanner(Peripheral):
                 seen = found
                 continue
             is_moved = found != {radio.name: radio.node for radio in self.radios}
-            is_let_go = any(r.held_by and not _holder(r.path, is_opening_allowed=False) for r in self.radios)
+            is_let_go = any(r.held_by not in (None, UNSEEN) and not _holder(r.path) for r in self.radios)
             if is_moved or is_let_go:
                 await self._rescan()
 
@@ -213,6 +214,20 @@ class UsbScanner(Peripheral):
             await self.runtime.peripheral_did_change_provided(self)
         except Exception:
             log.exception("Following the USB sticks failed")
+
+
+async def _firmware(driver: UsbDriver, path: str) -> str | None:
+    """What ``driver`` recognises the device at ``path`` running; None when it doesn't, can't tell, or hangs."""
+    try:
+        async with asyncio.timeout(PROBE_TIMEOUT):
+            return await driver.identify(path)
+    except Exception as error:
+        log.warning(f"{driver.name} failed to identify {path}: {_failure(error)}")
+        return None
+
+
+def _failure(error: Exception) -> str:
+    return str(error) or type(error).__name__
 
 
 def _sticks() -> dict[str, str]:
@@ -236,8 +251,8 @@ def _usb_id(path: str) -> tuple[str, str] | None:
 
 def _holder(path: str, is_opening_allowed: bool = False) -> str | None:
     """The other program that has a serial port open: one whose open files we may read, or with
-    ``is_opening_allowed`` (it opens the port) one that locked it, whoever runs it. Our own containers see the port
-    under another name (/dev/ttyRCP), so they don't count."""
+    ``is_opening_allowed`` (it opens the port) one that locked it, whoever runs it (`UNSEEN`). Our own containers see
+    the port under another name (/dev/ttyRCP), so they don't count."""
     names = {path, os.path.realpath(path)}
     for fd in glob("/proc/[0-9]*/fd/*"):
         with contextlib.suppress(OSError):
@@ -248,11 +263,11 @@ def _holder(path: str, is_opening_allowed: bool = False) -> str | None:
     try:
         port = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
     except OSError as error:
-        return "another program" if error.errno == errno.EBUSY else None  # EBUSY: opened exclusively (TIOCEXCL)
+        return UNSEEN if error.errno == errno.EBUSY else None  # EBUSY: opened exclusively (TIOCEXCL)
     try:
         fcntl.flock(port, fcntl.LOCK_EX | fcntl.LOCK_NB)  # pyserial's and node-serialport's exclusive lock
     except OSError:
-        return "another program"
+        return UNSEEN
     finally:
         os.close(port)
     return None

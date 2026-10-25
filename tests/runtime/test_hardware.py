@@ -123,6 +123,23 @@ async def test_a_stick_is_used_once_the_other_program_lets_go(tmp_path, sticks, 
     await until(runtime, lambda: state(runtime, integration) == PeripheralState.RUNNING)
 
 
+async def test_a_stick_held_out_of_sight_isnt_looked_at_again_and_again(tmp_path, sticks, monkeypatch):
+    plug(sticks, "sky")  # its holder locked it: no open file of it can be read
+    monkeypatch.setattr(
+        usb, "_holder", lambda path, is_opening_allowed=False: is_opening_allowed and "another program" or None
+    )
+    scanner, rescans = UsbScanner([Driver(sky="zigbee-ncp")]), []
+
+    async def rescan():
+        rescans.append(scanner.radios[0].held_by)
+
+    monkeypatch.setattr(scanner, "_rescan", rescan)
+    await run(tmp_path, scanner)
+    assert scanner.radios[0].held_by == "another program"
+    await asyncio.sleep(0.1)  # ten looks
+    assert rescans == []
+
+
 async def test_a_stick_plugged_in_or_out_is_followed(tmp_path, sticks):
     scanner, integration = UsbScanner([Driver(sky="zigbee-ncp")]), zigbee()
     runtime = await run(tmp_path, scanner, integration)
@@ -223,6 +240,25 @@ async def test_a_radio_is_released_before_it_is_flashed_and_used_again_after(tmp
     await settle(runtime)
     assert seen_while_flashed == [PeripheralState.WAITING]  # it let go of the stick first
     assert (state(runtime, integration), state(runtime, multipan)) == (PeripheralState.WAITING, PeripheralState.RUNNING)
+
+
+async def test_a_radio_whose_flash_failed_serves_what_it_runs_now(tmp_path, sticks):
+    class Bricking(Driver):
+        def flashable(self, path: str, channel: str) -> list[str]:
+            return ["multipan-rcp"]
+
+        async def flash(self, path: str, firmware: str, channel: str, cache: Path):
+            del self.recognised["sky"]  # left in its bootloader
+            raise RuntimeError("the flasher crashed")
+
+    plug(sticks, "sky")
+    integration, scanner = zigbee(), UsbScanner([Bricking(sky="zigbee-ncp")])
+    runtime = await run(tmp_path, scanner, integration)
+    with pytest.raises(RuntimeError, match="crashed"):
+        await scanner.radios[0].flash("multipan-rcp")
+    await settle(runtime)
+    assert (scanner.radios[0].firmware, scanner.radios[0].provides) == (None, [])
+    assert state(runtime, integration) == PeripheralState.WAITING
 
 
 async def test_the_firmware_offered_follows_the_radios_channel(tmp_path):
