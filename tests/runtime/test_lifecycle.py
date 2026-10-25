@@ -10,6 +10,7 @@ from support import changed, run, settle, state, until
 from majordom_integration_sdk import Context, Endpoint, Need, PeripheralChange
 from majordom_integration_sdk.runtime import MemoryDisabledStore, PeripheralStatus, Runtime
 from majordom_integration_sdk.runtime import PeripheralState as S
+from majordom_integration_sdk.runtime import StatusKind as K
 from majordom_integration_sdk.runtime import runtime as module
 from majordom_integration_sdk.testing import FakePeripheral, RecordingRuntimeOutput
 
@@ -45,9 +46,10 @@ async def test_boot_without_a_required_need_waits_and_says_why(tmp_path):
     integration = zigbee()
     runtime = await run(tmp_path, integration, output=output)
 
-    assert runtime.status(integration) == PeripheralStatus(S.WAITING, UNBOUND)
+    assert runtime.status(integration) == PeripheralStatus(S.WAITING, K.NEEDS_UNBOUND, UNBOUND)
     assert runtime.unbound(integration) == {"zigbee": UNBOUND}
-    assert output.statuses == [("zigbee", PeripheralStatus(S.WAITING, UNBOUND))]
+    assert output.statuses == [("zigbee", PeripheralStatus(S.WAITING, K.NEEDS_UNBOUND, UNBOUND))]
+    assert str(runtime.status(integration)) == f"waiting: {UNBOUND}"  # for logs and the CLI
     assert integration.calls == []
 
 
@@ -65,7 +67,7 @@ async def test_it_starts_once_its_need_appears_and_waits_again_while_it_is_lost(
 
     stick.provided = []  # unplugged
     await changed(runtime, stick)
-    assert runtime.status(integration) == PeripheralStatus(S.WAITING, UNBOUND)
+    assert runtime.status(integration) == PeripheralStatus(S.WAITING, K.NEEDS_UNBOUND, UNBOUND)
     assert integration.changes == []  # a lost required need stops it without asking
 
     stick.provided = [ZIGBEE]  # plugged in again
@@ -122,7 +124,7 @@ async def test_a_hook_that_hangs_times_out(tmp_path, monkeypatch):
     runtime = await run(tmp_path, stick, integration)
     stick.provided = [MOVED]
     await changed(runtime, stick)
-    expected = PeripheralStatus(S.WAITING, "didn't take the change within 0.01 s; trying again in 0.01 s")
+    expected = PeripheralStatus(S.WAITING, K.RETRYING, "didn't take the change within 0.01 s; trying again in 0.01 s")
     assert runtime.status(integration) == expected
 
 
@@ -132,7 +134,7 @@ async def test_a_hook_that_raises_restarts_it_through_the_retries(tmp_path):
 
     stick.provided = [MOVED]
     await changed(runtime, stick)
-    assert runtime.status(integration) == PeripheralStatus(S.WAITING, "confused; trying again in 0.01 s")
+    assert runtime.status(integration) == PeripheralStatus(S.WAITING, K.RETRYING, "confused; trying again in 0.01 s")
     assert integration.calls == ["start", "stop"]
 
     await until(runtime, lambda: state(runtime, integration) == S.RUNNING)
@@ -154,7 +156,7 @@ async def test_hook_failures_in_a_row_give_it_up(tmp_path):
     stick, integration = radio(ZIGBEE), zigbee(answer=RuntimeError("confused"))
     runtime = await run(tmp_path, stick, integration)
     await moves(runtime, stick, integration, len(module.RETRY_DELAYS) + 1)
-    assert runtime.status(integration) == PeripheralStatus(S.FAILED, "confused")
+    assert runtime.status(integration) == PeripheralStatus(S.FAILED, K.GAVE_UP, "confused")
 
 
 async def test_a_failure_after_a_stable_run_starts_the_retries_over(tmp_path, monkeypatch):
@@ -172,12 +174,12 @@ async def test_a_start_that_raises_is_tried_again_then_given_up_on(tmp_path):
     output = RecordingRuntimeOutput()
     broken = FakePeripheral("broken", failures=10)
     runtime = await run(tmp_path, broken, output=output)
-    assert runtime.status(broken) == PeripheralStatus(S.WAITING, "broken broke; trying again in 0.01 s")
+    assert runtime.status(broken) == PeripheralStatus(S.WAITING, K.RETRYING, "broken broke; trying again in 0.01 s")
 
     await until(runtime, lambda: state(runtime, broken) == S.FAILED)
-    assert runtime.status(broken) == PeripheralStatus(S.FAILED, "broken broke")
+    assert runtime.status(broken) == PeripheralStatus(S.FAILED, K.GAVE_UP, "broken broke")
     assert broken.calls == ["start", "stop"] * 4  # the first, then one per retry delay; each releases what it holds
-    assert output.last("broken") == PeripheralStatus(S.FAILED, "broken broke")
+    assert output.last("broken") == PeripheralStatus(S.FAILED, K.GAVE_UP, "broken broke")
 
 
 async def test_a_start_that_hangs_times_out_and_is_tried_again(tmp_path, monkeypatch):
@@ -191,7 +193,9 @@ async def test_a_start_that_hangs_times_out_and_is_tried_again(tmp_path, monkeyp
 
     hangs = Hangs("hangs")
     runtime = await run(tmp_path, hangs)
-    assert runtime.status(hangs) == PeripheralStatus(S.WAITING, "didn't start within 0.01 s; trying again in 0.01 s")
+    assert runtime.status(hangs) == PeripheralStatus(
+        S.WAITING, K.RETRYING, "didn't start within 0.01 s; trying again in 0.01 s"
+    )
     await until(runtime, lambda: state(runtime, hangs) == S.RUNNING)
     assert hangs.calls == ["start", "stop", "start"]
 
@@ -205,7 +209,9 @@ async def test_a_start_cancelled_from_inside_is_a_failure(tmp_path):
 
     cancelled = Cancelled("cancelled")
     runtime = await run(tmp_path, cancelled)
-    assert runtime.status(cancelled) == PeripheralStatus(S.WAITING, "CancelledError; trying again in 0.01 s")
+    assert runtime.status(cancelled) == PeripheralStatus(
+        S.WAITING, K.RETRYING, "CancelledError; trying again in 0.01 s"
+    )
     await until(runtime, lambda: state(runtime, cancelled) == S.RUNNING)
 
 
@@ -311,10 +317,10 @@ async def test_one_that_stops_by_itself_waits_for_its_needs_to_change(tmp_path):
     runtime = await run(tmp_path, stick, integration)
 
     await integration.runtime.peripheral_did_stop(integration)
-    assert runtime.status(integration) == PeripheralStatus(S.WAITING, STOPPED)
+    assert runtime.status(integration) == PeripheralStatus(S.WAITING, K.STOPPED_ITSELF, STOPPED)
     assert integration.calls == ["start", "stop"]
     await runtime.refresh()
-    assert runtime.status(integration) == PeripheralStatus(S.WAITING, STOPPED)
+    assert runtime.status(integration) == PeripheralStatus(S.WAITING, K.STOPPED_ITSELF, STOPPED)
 
     stick.provided = []  # replugged
     await changed(runtime, stick)
@@ -339,7 +345,9 @@ async def test_one_that_crashes_is_started_again_then_given_up(tmp_path):
     for _ in range(len(module.RETRY_DELAYS) + 1):
         await until(runtime, lambda: state(runtime, integration) == S.RUNNING)
         await integration.runtime.peripheral_did_fail(integration, "Lost the connection to the Zigbee radio.")
-    assert runtime.status(integration) == PeripheralStatus(S.FAILED, "Lost the connection to the Zigbee radio.")
+    assert runtime.status(integration) == PeripheralStatus(
+        S.FAILED, K.GAVE_UP, "Lost the connection to the Zigbee radio."
+    )
 
     await runtime.restart(integration)
     await settle(runtime)
@@ -357,7 +365,7 @@ async def test_a_failure_told_from_inside_its_start_fails_that_start(tmp_path):
     hue = GivesUp("hue")
     runtime = await run(tmp_path, hue)
     assert runtime.status(hue) == PeripheralStatus(
-        S.WAITING, "Wrong credentials: re-enter them.; trying again in 0.01 s"
+        S.WAITING, K.RETRYING, "Wrong credentials: re-enter them.; trying again in 0.01 s"
     )
     await until(runtime, lambda: state(runtime, hue) == S.RUNNING)
     assert hue.calls == ["start", "stop", "start"]
@@ -424,7 +432,7 @@ async def test_a_server_runs_while_what_needs_it_runs(tmp_path):
 
     await runtime.disable(matter)
     assert server.calls == ["start", "stop"]
-    assert runtime.status(server) == PeripheralStatus(S.WAITING, "nothing that runs uses it")
+    assert runtime.status(server) == PeripheralStatus(S.WAITING, K.UNUSED, "nothing that runs uses it")
 
     await runtime.enable(matter)
     await settle(runtime)
@@ -437,7 +445,7 @@ async def test_a_server_only_a_failed_one_needs_stops(tmp_path):
     for _ in range(len(module.RETRY_DELAYS) + 1):
         await until(runtime, lambda: state(runtime, matter) == S.RUNNING)
         await matter.runtime.peripheral_did_fail(matter, "gave up")
-    assert runtime.status(server) == PeripheralStatus(S.WAITING, "nothing that runs uses it")
+    assert runtime.status(server) == PeripheralStatus(S.WAITING, K.UNUSED, "nothing that runs uses it")
 
 
 async def test_what_it_brought_along_while_running_goes_when_it_stops(tmp_path):
@@ -491,7 +499,7 @@ async def test_one_that_failed_stays_failed_when_brought_along_anew(tmp_path):
     again = FakePeripheral("aa")  # the node connected again
     esphome.provided[:] = [again]
     await changed(runtime, esphome)
-    assert runtime.status(again) == PeripheralStatus(S.FAILED, "aa broke")
+    assert runtime.status(again) == PeripheralStatus(S.FAILED, K.GAVE_UP, "aa broke")
 
     await runtime.restart(again)
     await settle(runtime)
@@ -504,11 +512,11 @@ async def test_a_second_one_of_a_name_fails_saying_why(tmp_path):
     one, two = FakePeripheral("one", [Need("mqtt", ["a"])]), FakePeripheral("two", [Need("mqtt", ["b"])])
     runtime = await run(tmp_path, first, one, second, two)
 
-    assert runtime.status(second) == PeripheralStatus(S.FAILED, "another peripheral is named mqtt")
+    assert runtime.status(second) == PeripheralStatus(S.FAILED, K.NAME_TAKEN, "another peripheral is named mqtt")
     assert second in runtime.peripherals
     assert (state(runtime, one), runtime.status(two)) == (
         S.RUNNING,
-        PeripheralStatus(S.WAITING, "need mqtt/b: nothing offers it"),
+        PeripheralStatus(S.WAITING, K.NEEDS_UNBOUND, "need mqtt/b: nothing offers it"),
     )
 
 
@@ -544,14 +552,14 @@ async def test_one_on_demand_runs_only_while_something_that_runs_binds_it(tmp_pa
     assert state(runtime, router) == S.RUNNING
 
     await runtime.disable(matter)
-    assert runtime.status(router) == PeripheralStatus(S.WAITING, "nothing that runs uses it")
+    assert runtime.status(router) == PeripheralStatus(S.WAITING, K.UNUSED, "nothing that runs uses it")
     assert router.calls == ["start", "stop"]
 
 
 async def test_one_on_demand_that_nothing_binds_never_starts(tmp_path):
     router = FakePeripheral("router", provides=[Endpoint("ble", "router", is_shared=True)], is_on_demand=True)
     runtime = await run(tmp_path, router)
-    assert runtime.status(router) == PeripheralStatus(S.WAITING, "nothing that runs uses it")
+    assert runtime.status(router) == PeripheralStatus(S.WAITING, K.UNUSED, "nothing that runs uses it")
     assert router.calls == []
 
 
@@ -560,7 +568,7 @@ async def test_one_on_demand_stops_once_what_needs_it_cant_run(tmp_path):
     matter = FakePeripheral("matter", [Need("matter"), Need("zigbee")])
     runtime = await run(tmp_path, server, matter)
     assert state(runtime, server) == S.WAITING  # matter waits for zigbee: no reason to run its server
-    assert runtime.status(matter).reason == UNBOUND
+    assert runtime.status(matter).detail == UNBOUND
 
 
 # readiness
@@ -583,7 +591,7 @@ async def test_what_needs_a_provider_starts_once_its_start_returned(tmp_path):
     matter = FakePeripheral("matter", [Need("matter")])
     runtime = await run(tmp_path, server, matter, settled=False)
     await until(runtime, lambda: state(runtime, server) == S.STARTING, settled=False)
-    assert runtime.status(matter) == PeripheralStatus(S.WAITING, "waiting for matter-server")
+    assert runtime.status(matter) == PeripheralStatus(S.WAITING, K.NEEDS_STARTING, "waiting for matter-server")
 
     server.gate.set()
     await settle(runtime)
@@ -691,7 +699,9 @@ async def test_invalid_stored_settings_fail_only_their_peripheral(tmp_path):
     runtime = await run(tmp_path, host, integration)
     assert state(runtime, host) == S.RUNNING
     assert runtime.status(integration) == PeripheralStatus(
-        S.FAILED, "Invalid settings: channel: Input should be a valid integer, unable to parse string as an integer"
+        S.FAILED,
+        K.INVALID_SETTINGS,
+        "Invalid settings: channel: Input should be a valid integer, unable to parse string as an integer",
     )
 
     await runtime.update_settings(integration, {"channel": 15})
@@ -708,7 +718,7 @@ async def test_one_that_cant_say_what_it_provides_provides_nothing(tmp_path):
     host, integration = FakePeripheral("host"), zigbee()
     runtime = await run(tmp_path, host, Broken("broken"), integration)
     assert state(runtime, host) == S.RUNNING
-    assert runtime.status(integration) == PeripheralStatus(S.WAITING, UNBOUND)
+    assert runtime.status(integration) == PeripheralStatus(S.WAITING, K.NEEDS_UNBOUND, UNBOUND)
 
 
 async def test_an_output_that_raises_stops_nothing(tmp_path):

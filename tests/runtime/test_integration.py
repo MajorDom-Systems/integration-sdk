@@ -8,6 +8,7 @@ from support import run, settle
 
 from majordom_integration_sdk import AbstractController, Endpoint, Need, Service
 from majordom_integration_sdk.runtime import HostNetwork, PeripheralState, PeripheralStatus
+from majordom_integration_sdk.runtime import StatusKind as K
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter
 from majordom_integration_sdk.testing import FakeCompose, build_test_platform
 
@@ -105,6 +106,8 @@ async def test_an_integration_waits_with_a_reason_when_its_server_cant_run(tmp_p
     server, echo = integration()
     runtime = await run(tmp_path, FakeCompose(), server, echo)  # no network for the server
     assert runtime.status(echo) == PeripheralStatus(
-        PeripheralState.WAITING, "need example/echo: echo-server can't run (need ip/*: nothing offers it)"
+        PeripheralState.WAITING,
+        K.NEEDS_UNBOUND,
+        "need example/echo: echo-server can't run (need ip/*: nothing offers it)",
     )
     assert echo.started_with == []

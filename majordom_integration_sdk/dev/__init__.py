@@ -114,8 +114,7 @@ class LoggingRuntimeOutput:
     """A ``RuntimeOutput`` that logs every change of status: why a peripheral waits or failed."""
 
     def peripheral_did_change_status(self, peripheral: Peripheral, status: PeripheralStatus):
-        reason = f": {status.reason}" if status.reason else ""
-        logger.info("%s %s%s", peripheral.name, status.state, reason)
+        logger.info("%s %s", peripheral.name, status)
 
     def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
         logger.info("%s learned %s", peripheral.name, ", ".join(facts))

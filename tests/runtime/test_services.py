@@ -11,6 +11,7 @@ from support import run, settle, state, until
 
 from majordom_integration_sdk import Context, Endpoint, Need, Service
 from majordom_integration_sdk.runtime import PeripheralState, PeripheralStatus
+from majordom_integration_sdk.runtime import StatusKind as K
 from majordom_integration_sdk.runtime.peripherals.services import builtin
 from majordom_integration_sdk.runtime.peripherals.services.compose import Compose
 from majordom_integration_sdk.testing import FakeCompose, FakePeripheral, RecordingRuntimeOutput
@@ -86,7 +87,9 @@ async def test_a_multipan_stick_serves_zigbee_and_matter_through_one_container(t
     assert runtime.users(radio) == ["silabs-multiprotocol", "zigbee", "matterjs-server", "matter"]
     assert runtime.uses(app) == ["matterjs-server", "host", "silabs-multiprotocol", "compose", "sky"]
     assert runtime.reach([MULTIPAN]) == ["thread", "zigbee"]  # through the containers it would run
-    assert runtime.status(otbr) == PeripheralStatus(PeripheralState.WAITING, "need thread/spinel: nothing offers it")
+    assert runtime.status(otbr) == PeripheralStatus(
+        PeripheralState.WAITING, K.NEEDS_UNBOUND, "need thread/spinel: nothing offers it"
+    )
 
 
 async def test_a_multiprotocol_stick_joins_the_hubs_thread_network(tmp_path):
@@ -276,7 +279,7 @@ async def test_what_needs_a_service_waits_for_its_setup_then_hears_what_it_learn
     thread = FakePeripheral("thread", [Need("thread")])
     runtime = await run(tmp_path, FakeCompose(), host(), router, thread, output=output, settled=False)
     await until(runtime, lambda: state(runtime, router) == PeripheralState.STARTING, settled=False)
-    assert runtime.status(thread) == PeripheralStatus(PeripheralState.WAITING, "waiting for router")
+    assert runtime.status(thread) == PeripheralStatus(PeripheralState.WAITING, K.NEEDS_STARTING, "waiting for router")
 
     await runtime.refresh()  # something else changed meanwhile: its setup goes on
     router.release.set()
@@ -354,9 +357,9 @@ async def test_without_docker_the_services_wait_saying_so(tmp_path, docker):
     containers = Compose()
     runtime = await run(tmp_path, containers, host(), server, app)
     await until(runtime, lambda: state(runtime, containers) == PeripheralState.FAILED)
-    assert runtime.status(containers).reason.startswith("Docker isn't reachable: docker info")
+    assert runtime.status(containers).detail.startswith("Docker isn't reachable: docker info")
     reason = "need matter/matter-server-ws: matterjs-server can't run (need container/compose: compose is failed)"
-    assert runtime.status(app) == PeripheralStatus(PeripheralState.WAITING, reason)
+    assert runtime.status(app) == PeripheralStatus(PeripheralState.WAITING, K.NEEDS_UNBOUND, reason)
 
 
 async def test_a_port_stays_while_docker_cant_tell_what_runs(tmp_path, docker, listening):
@@ -380,7 +383,7 @@ async def test_a_failed_compose_up_is_tried_again(tmp_path, docker):
     app, server = matter()
     runtime = await run(tmp_path, Compose(), host(), server, app)
     assert runtime.status(server).state == PeripheralState.WAITING
-    assert "Conflict. The container name is already in use" in runtime.status(server).reason
+    assert "Conflict. The container name is already in use" in runtime.status(server).detail
 
     docker.failure = b""
     await until(runtime, lambda: state(runtime, app) == PeripheralState.RUNNING)
@@ -392,7 +395,7 @@ async def test_a_container_is_ready_once_compose_runs_it_and_its_ports_answer(tm
     app, server = matter()
     runtime = await run(tmp_path, Compose(), host(), server, app, settled=False)
     await until(runtime, lambda: state(runtime, server) == PeripheralState.STARTING, settled=False)
-    assert runtime.status(app).reason == "waiting for matterjs-server"
+    assert runtime.status(app).detail == "waiting for matterjs-server"
 
     docker.is_answering = True
     await until(runtime, lambda: state(runtime, app) == PeripheralState.RUNNING)
@@ -404,8 +407,8 @@ async def test_a_container_that_never_answers_fails_its_start(tmp_path, docker, 
     app, server = matter()
     runtime = await run(tmp_path, Compose(), host(), server, app)
     await until(runtime, lambda: state(runtime, server) == PeripheralState.FAILED)
-    assert runtime.status(server) == PeripheralStatus(PeripheralState.FAILED, "didn't start within 0.05 s")
-    assert runtime.status(app).reason == "need matter/matter-server-ws: matterjs-server is failed"
+    assert runtime.status(server) == PeripheralStatus(PeripheralState.FAILED, K.GAVE_UP, "didn't start within 0.05 s")
+    assert runtime.status(app).detail == "need matter/matter-server-ws: matterjs-server is failed"
 
 
 async def test_restarting_a_service_recreates_only_its_container(tmp_path, docker):

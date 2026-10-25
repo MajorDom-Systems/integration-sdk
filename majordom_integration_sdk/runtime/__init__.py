@@ -23,6 +23,7 @@ from majordom_integration_sdk.runtime.runtime import (
     PeripheralStatus,
     Runtime,
     RuntimeOutput,
+    StatusKind,
 )
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "RuntimeOutput",
     "PeripheralState",
     "PeripheralStatus",
+    "StatusKind",
     "DisabledStore",
     "MemoryDisabledStore",
     "RETRY_DELAYS",

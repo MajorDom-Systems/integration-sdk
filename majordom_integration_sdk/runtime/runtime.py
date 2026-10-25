@@ -45,10 +45,27 @@ class PeripheralState(StrEnum):
     FAILED = "failed"  # given up on: until restarted or its settings change
 
 
+class StatusKind(StrEnum):
+    """Why a peripheral waits or failed, for its owner to act on; the status's ``detail`` says it in words."""
+
+    NEEDS_UNBOUND = "needs-unbound"  # waiting: a required need can't be bound
+    NEEDS_STARTING = "needs-starting"  # waiting: its needs are bound, to providers that don't run yet
+    UNUSED = "unused"  # waiting: on demand, and nothing that runs uses it
+    RETRYING = "retrying"  # waiting: it failed, and starts again after a delay
+    STOPPED_ITSELF = "stopped-itself"  # waiting: until its needs change or the user restarts it
+    GAVE_UP = "gave-up"  # failed: its retries are spent
+    INVALID_SETTINGS = "invalid-settings"  # failed: its stored settings don't validate
+    NAME_TAKEN = "name-taken"  # failed: another peripheral has its name
+
+
 @dataclass(frozen=True)
 class PeripheralStatus:
     state: PeripheralState
-    reason: str = ""  # why it waits or failed, for the user
+    kind: StatusKind | None = None  # why it waits or failed
+    detail: str = ""  # the same in words, for logs and the CLI
+
+    def __str__(self) -> str:
+        return f"{self.state}: {self.detail}" if self.detail else self.state
 
 
 class RuntimeOutput(Protocol):
@@ -100,7 +117,8 @@ class _Entry:
     name: str  # what it is known by here
     contributor: str | None  # the name of what brought it along
     state: PeripheralState
-    reason: str = ""
+    kind: StatusKind | None = None
+    detail: str = ""
     attempts: int = 0  # failures in a row
     running_since: float | None = None  # monotonic
     retry_at: float = 0.0  # monotonic: a waiting one starts no earlier
@@ -114,7 +132,7 @@ class _Entry:
 
     @property
     def status(self) -> PeripheralStatus:
-        return PeripheralStatus(self.state, self.reason)
+        return PeripheralStatus(self.state, self.kind, self.detail)
 
     @property
     def is_started(self) -> bool:
@@ -479,9 +497,10 @@ class Runtime:
                     entry.stopped_with = None
         for entry in self._entries.values():
             if entry.state == PeripheralState.WAITING:
-                entry.reason = self._why_waiting(entry)
-                if not entry.reason:
+                if (status := self._why_waiting(entry)) is None:
                     self._start(entry)
+                else:
+                    entry.kind, entry.detail = status.kind, status.detail
         return is_changed or self._snapshot() != before
 
     def _snapshot(self) -> list[tuple[str, tuple[Endpoint | Peripheral, ...]]]:
@@ -521,22 +540,24 @@ class Runtime:
 
     def _adopt(self, peripheral: Peripheral, name: str, contributor: str | None) -> _Entry:
         peripheral.runtime, peripheral.data = self, self.data / "peripherals" / name
-        failure = self._failed.get(name, "")
+        status = _waiting()
+        if name in self._failed:
+            status = PeripheralStatus(PeripheralState.FAILED, StatusKind.GAVE_UP, self._failed[name])
         try:
             self._load_settings(peripheral, name)
         except ValidationError as error:
-            failure = "Invalid settings: " + "; ".join(
-                f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors()
+            invalid = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
+            status = PeripheralStatus(
+                PeripheralState.FAILED, StatusKind.INVALID_SETTINGS, f"Invalid settings: {invalid}"
             )
         if self.disabled.is_disabled(name):
-            return _Entry(peripheral, name, contributor, PeripheralState.DISABLED)
-        state = PeripheralState.FAILED if failure else PeripheralState.WAITING
-        return _Entry(peripheral, name, contributor, state, failure)
+            status = PeripheralStatus(PeripheralState.DISABLED)
+        return _Entry(peripheral, name, contributor, status.state, status.kind, status.detail)
 
     def _clash(self, peripheral: Peripheral, name: str, contributor: str | None) -> _Entry:
         log.error(f"Two peripherals are named {name}: the second fails")
-        failure = f"another peripheral is named {name}"
-        return _Entry(peripheral, name, contributor, PeripheralState.FAILED, failure)
+        detail = f"another peripheral is named {name}"
+        return _Entry(peripheral, name, contributor, PeripheralState.FAILED, StatusKind.NAME_TAKEN, detail)
 
     def _load_settings(self, peripheral: Peripheral, name: str):
         if (model := peripheral.Settings) is None:
@@ -621,23 +642,24 @@ class Runtime:
         is_kept = any(kept.get(endpoint.family) == endpoint.url and name != owner for name, kept in reserved)
         return not is_kept and (provider.name, endpoint.family, endpoint.url) not in taken
 
-    def _why_waiting(self, entry: _Entry) -> str:
-        """Why a waiting one doesn't start now; empty when it can."""
+    def _why_waiting(self, entry: _Entry) -> PeripheralStatus | None:
+        """Why a waiting one doesn't start now; None when it can."""
         if entry.stopped_with is not None:
-            return "stopped by itself: waits for its needs to change or a restart"
+            return _waiting(StatusKind.STOPPED_ITSELF, "stopped by itself: waits for its needs to change or a restart")
         contributor = self._entries.get(entry.contributor or "")
         if contributor is not None and contributor.state != PeripheralState.RUNNING:  # it goes with the next pass
-            return f"comes with {contributor.name}, which stopped"
+            return _waiting(StatusKind.UNUSED, f"comes with {contributor.name}, which stopped")
         if entry.name not in self._wanted:
             required = {need.family for need in entry.peripheral.needs if need.is_required}
-            reasons = [why for family, why in self._unbound.get(entry.name, {}).items() if family in required]
-            return "; ".join(reasons) or "nothing that runs uses it"
+            if reasons := [why for family, why in self._unbound.get(entry.name, {}).items() if family in required]:
+                return _waiting(StatusKind.NEEDS_UNBOUND, "; ".join(reasons))
+            return _waiting(StatusKind.UNUSED, "nothing that runs uses it")
         if entry.retry_at > monotonic():
-            return entry.failure
+            return _waiting(StatusKind.RETRYING, entry.failure)
         bound = self._bound[entry.name]
         required = [n.family for n in entry.peripheral.needs if n.is_required and n.family in bound]
         pending = dict.fromkeys(p.name for family in required for p, _ in bound[family] if not self._is_serving(p.name))
-        return f"waiting for {', '.join(pending)}" if pending else ""
+        return _waiting(StatusKind.NEEDS_STARTING, f"waiting for {', '.join(pending)}") if pending else None
 
     def _is_serving(self, name: str) -> bool:
         entry = self._entries[name]
@@ -647,7 +669,7 @@ class Runtime:
         entry.peripheral.peripherals = Peripherals(_view(entry.peripheral, bound))
 
     def _start(self, entry: _Entry):
-        entry.state, entry.reason = PeripheralState.STARTING, ""
+        entry.state, entry.kind, entry.detail = PeripheralState.STARTING, None, ""
         entry.bindings, entry.told_failure, entry.is_stopping_itself = self._bound[entry.name], "", False
         self._bind_view(entry, entry.bindings)
         entry.task = self._spawn(self._run_start(entry))
@@ -686,12 +708,17 @@ class Runtime:
         """Count a failure: wait to try again, or give up once the retries are spent."""
         entry.attempts += 1
         if entry.attempts > len(RETRY_DELAYS):
-            entry.state, entry.reason, entry.attempts = PeripheralState.FAILED, reason, 0
+            entry.state, entry.kind, entry.detail, entry.attempts = (
+                PeripheralState.FAILED,
+                StatusKind.GAVE_UP,
+                reason,
+                0,
+            )
             self._failed[entry.name] = reason
             return
         delay = RETRY_DELAYS[entry.attempts - 1]
-        entry.state, entry.retry_at = PeripheralState.WAITING, monotonic() + delay
-        entry.reason = entry.failure = f"{reason}; trying again in {delay} s"
+        entry.state, entry.kind, entry.retry_at = PeripheralState.WAITING, StatusKind.RETRYING, monotonic() + delay
+        entry.detail = entry.failure = f"{reason}; trying again in {delay} s"
 
     async def _stop(self, entry: _Entry, status: PeripheralStatus):
         """Stop it if it runs or starts, and leave it in ``status``."""
@@ -711,7 +738,7 @@ class Runtime:
                 await _within(STOP_TIMEOUT, entry.peripheral.stop(), f"didn't stop within {STOP_TIMEOUT} s")
             except Exception as error:
                 log.error(f"{entry.name} failed to stop cleanly: {error}", exc_info=error)
-        entry.state, entry.reason, entry.bindings = status.state, status.reason, {}
+        entry.state, entry.kind, entry.detail, entry.bindings = status.state, status.kind, status.detail, {}
 
     async def _deliver(self, entry: _Entry, bound: dict[str, list[Binding]]):
         """Tell one that runs what moved; restart it unless it handles every change."""
@@ -890,8 +917,8 @@ def _is_using(user: _Entry, provider: _Entry) -> bool:
     return any(p is provider for bindings in user.bindings.values() for p, _ in bindings)
 
 
-def _waiting(reason: str = "") -> PeripheralStatus:
-    return PeripheralStatus(PeripheralState.WAITING, reason)
+def _waiting(kind: StatusKind | None = None, detail: str = "") -> PeripheralStatus:
+    return PeripheralStatus(PeripheralState.WAITING, kind, detail)
 
 
 def _view(peripheral: Peripheral, bound: Mapping[str, list[Binding]]) -> dict[str, Bound]:
@@ -915,6 +942,7 @@ __all__ = [
     "RuntimeOutput",
     "PeripheralState",
     "PeripheralStatus",
+    "StatusKind",
     "DisabledStore",
     "MemoryDisabledStore",
     "RETRY_DELAYS",

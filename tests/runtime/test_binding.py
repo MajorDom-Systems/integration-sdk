@@ -5,6 +5,7 @@ from support import run
 
 from majordom_integration_sdk import Endpoint, Need
 from majordom_integration_sdk.runtime import PeripheralState, PeripheralStatus
+from majordom_integration_sdk.runtime import StatusKind as K
 from majordom_integration_sdk.testing import FakePeripheral
 
 ADAPTERS = [Endpoint("ble", "bluez", "hci0"), Endpoint("ble", "bluez", "hci1")]
@@ -68,7 +69,7 @@ async def test_a_router_nothing_uses_leaves_the_adapters_to_who_needs_them_raw(t
     ble, raw = router(), FakePeripheral("raw", [Need("ble", ["bluez"])])
     runtime = await run(tmp_path, adapters(), ble, raw)
 
-    assert runtime.status(ble) == PeripheralStatus(PeripheralState.WAITING, "nothing that runs uses it")
+    assert runtime.status(ble) == PeripheralStatus(PeripheralState.WAITING, K.UNUSED, "nothing that runs uses it")
     assert runtime.status(raw).state == PeripheralState.RUNNING
     assert raw.peripherals.endpoint("ble") == ADAPTERS[0]
 
@@ -78,7 +79,9 @@ async def test_on_demand_peripherals_binding_only_each_other_dont_run(tmp_path):
     b = FakePeripheral("b", [Need("a", is_required=False)], [Endpoint("b", is_shared=True)], is_on_demand=True)
     runtime = await run(tmp_path, a, b)
     assert (
-        runtime.status(a) == runtime.status(b) == PeripheralStatus(PeripheralState.WAITING, "nothing that runs uses it")
+        runtime.status(a)
+        == runtime.status(b)
+        == PeripheralStatus(PeripheralState.WAITING, K.UNUSED, "nothing that runs uses it")
     )
     assert a.calls == b.calls == []
 
@@ -131,7 +134,7 @@ async def test_a_need_one_that_doesnt_run_could_bind_has_no_reason(tmp_path):
     server = FakePeripheral("server", [Need("ip")], [Endpoint("matter")], is_on_demand=True)
     runtime = await run(tmp_path, host, server)
     assert runtime.unbound(server) == {}
-    assert runtime.status(server).reason == "nothing that runs uses it"
+    assert runtime.status(server).detail == "nothing that runs uses it"
 
 
 async def test_what_a_firmware_would_serve_through_what_runs_here(tmp_path):
