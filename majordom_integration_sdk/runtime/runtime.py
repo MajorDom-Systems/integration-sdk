@@ -113,8 +113,8 @@ class Runtime:
         data: Path,
         consumers: Mapping[str, Consumer] = {},
         *,
-        docker: bool = True,
-        scan: bool = True,
+        is_docker_enabled: bool = True,
+        is_scan_enabled: bool = True,
         devices: Mapping[str, str] = {},
         board: Sequence[Mapping[str, str]] = (),
         pinned: Mapping[str, Endpoint] = {},
@@ -125,15 +125,16 @@ class Runtime:
     ):
         """
         consumers: integration controller classes by slug, bound in this order after the providers.
-        docker: run the bound services; False leaves them to you (pin their endpoints).
-        scan: look for USB sticks in /dev/serial/by-id; `devices` adds paths by id.
+        is_docker_enabled: run the bound services; False leaves them to you (pin their endpoints).
+        is_scan_enabled: look for USB sticks in /dev/serial/by-id; `devices` adds paths by id.
         board: soldered radios, ``{"id", "path", "driver", "firmware"}``, used without asking; ``"params"``
             overrides the firmware's serial settings where the board wires its UART differently.
         pinned: endpoints you provide yourself by family; they win over anything found.
         builtins: the peripherals run in this process (the Bluetooth router, DNS-SD, SSDP); None runs one of each
             whose extra is installed.
         """
-        self.data, self.consumers, self.docker, self.scan = data, dict(consumers), docker, scan
+        self.data, self.consumers = data, dict(consumers)
+        self.is_docker_enabled, self.is_scan_enabled = is_docker_enabled, is_scan_enabled
         self.devices, self.board, self.pinned = dict(devices), list(board), dict(pinned)
         self.default_wifi, self.on_change, self.poll = default_wifi, on_change, poll
         self.builtins = {p.name: p for p in (builtin_providers() if builtins is None else builtins)}
@@ -185,7 +186,7 @@ class Runtime:
             self._held = {}
             for radio_id, path in self._present.items():
                 known, trusted = radio_id in self.state["radios"], self._trusted(radio_id, path)
-                if holder := self._holder(radio_id, open_it=not known and trusted):
+                if holder := self._holder(radio_id, is_opening_allowed=not known and trusted):
                     self._held[radio_id] = holder
                 if not known and (holder or radio_id in self._busy):
                     continue  # identified once the other program lets go of it, or by the probe that holds it
@@ -227,17 +228,17 @@ class Runtime:
             return
         entry["bluetooth"] = firmware in driver.bluetooth or await cpc_hci.has_bluetooth(entry["path"])
 
-    def _follow(self, recreated: bool):
+    def _follow(self, is_recreated: bool):
         """Have services set up what runs and learn facts from what is bound; known facts stay until read
         again, and go with their provider."""
         sources = self._sources()
-        for key in [key for key in self._tasks if recreated or key not in sources]:
+        for key in [key for key in self._tasks if is_recreated or key not in sources]:
             for task in self._tasks.pop(key):
                 task.cancel()
         self._learned = {key: facts for key, facts in self._learned.items() if key in sources}
         for key, (service, endpoint) in sources.items():
             running = any(not task.done() for task in self._tasks.get(key, []))
-            if recreated or key not in self._learned and not running:  # a source unchanged keeps setting up
+            if is_recreated or key not in self._learned and not running:  # a source unchanged keeps setting up
                 self._tasks[key] = [asyncio.create_task(self._learn(key, service, endpoint))]
                 if key[0] == service.name:  # never someone else's (pinned)
                     settings = self.settings(service.name)
@@ -361,7 +362,7 @@ class Runtime:
         """Restart a running service's container; nothing else changes, so integrations aren't told."""
         if service not in self._running_services():
             raise LookupError(f"{service} isn't running")
-        if not self.docker:
+        if not self.is_docker_enabled:
             return  # you run the services
         async with self._lock:  # not while compose is recreating it
             process = await asyncio.create_subprocess_exec(
@@ -454,16 +455,16 @@ class Runtime:
     # Internals
 
     def _find(self) -> dict[str, str]:
-        found = {Path(p).name: p for p in glob("/dev/serial/by-id/*")} if self.scan else {}
+        found = {Path(p).name: p for p in glob("/dev/serial/by-id/*")} if self.is_scan_enabled else {}
         found |= {r["id"]: r["path"] for r in self.board if Path(r["path"]).exists()}
         return found | {i: p for i, p in self.devices.items() if Path(p).exists()}
 
-    def _holder(self, radio_id: str, open_it: bool) -> str | None:
+    def _holder(self, radio_id: str, is_opening_allowed: bool) -> str | None:
         """The other program that has a radio open, unless the user claimed it or it is being flashed."""
         claimed = self.state["radios"].get(radio_id, {}).get("claimed") or radio_id in self.state["pins"].values()
         if claimed or radio_id in self._busy or (path := self._present.get(radio_id)) is None:
             return None
-        return _holder(path, open_it=open_it)
+        return _holder(path, is_opening_allowed=is_opening_allowed)
 
     def _trusted(self, radio_id: str, path: str) -> bool:
         """Safe to open unasked: given explicitly, soldered on the board, or a known radio's USB id."""
@@ -620,7 +621,7 @@ class Runtime:
 
     async def _running(self) -> set[str]:
         """Our services whose containers are up."""
-        if not self.docker:
+        if not self.is_docker_enabled:
             return set()
         process = await asyncio.create_subprocess_exec(
             "docker", "compose", "-p", "majordom", "ps", "--status", "running", "--services",
@@ -684,7 +685,7 @@ class Runtime:
         if compose == self._compose:
             return False
         (self.data / "compose.json").write_text(compose)
-        if not self.docker:
+        if not self.is_docker_enabled:
             self._compose = compose
             return True
         args = ["up", "-d", "--remove-orphans"] if services else ["down"]  # integrations retry while services start
@@ -740,16 +741,16 @@ def _usb_id(path: str) -> tuple[str, str] | None:
     return None
 
 
-def _holder(path: str, open_it: bool = False) -> str | None:
-    """The other program that has a serial port open: one whose open files we may read, or with ``open_it``
-    (it opens the port) one that locked it, whoever runs it. Our own containers see the port under another
-    name (/dev/ttyRCP), so they don't count."""
+def _holder(path: str, is_opening_allowed: bool = False) -> str | None:
+    """The other program that has a serial port open: one whose open files we may read, or with
+    ``is_opening_allowed`` (it opens the port) one that locked it, whoever runs it. Our own containers see the port
+    under another name (/dev/ttyRCP), so they don't count."""
     names = {path, os.path.realpath(path)}
     for fd in glob("/proc/[0-9]*/fd/*"):
         with contextlib.suppress(OSError):
             if (pid := fd.split("/")[2]) != str(os.getpid()) and os.readlink(fd) in names:
                 return Path(f"/proc/{pid}/comm").read_text().strip()
-    if not open_it:
+    if not is_opening_allowed:
         return None
     try:
         port = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)

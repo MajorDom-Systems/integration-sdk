@@ -278,15 +278,16 @@ async def run_cli(
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
     peripherals: Mapping[str, Bound] | None = None,
-    docker: bool = True,
-    scan: bool = True,
+    is_docker_enabled: bool = True,
+    is_scan_enabled: bool = True,
     pinned: Mapping[str, Endpoint] = {},
     **platform: Any,
 ) -> None:
     """Start ``controller_type`` under the runtime (or with ``peripherals`` you give) with a local repository and
     drop into an interactive prompt. ``platform`` overrides fields of `Platform` (``settings``, ``context``);
-    ``docker``, ``scan`` and ``pinned`` go to the runtime. ``db_path`` file-backs the repository so paired devices
-    survive restarts; omit it for in-memory. ``exit`` / Ctrl-D leaves the prompt and stops everything cleanly."""
+    ``is_docker_enabled``, ``is_scan_enabled`` and ``pinned`` go to the runtime. ``db_path`` file-backs the repository
+    so paired devices survive restarts; omit it for in-memory. ``exit`` / Ctrl-D leaves the prompt and stops
+    everything cleanly."""
     # Capture all logs + warnings into a buffer for the duration of the session so they don't break
     # the interactive TUI; the buffer is dumped to stderr on exit/crash (see the finally block).
     # The CLI's own discovery/event/command output (via _print) stays visible and prompt-safe.
@@ -302,7 +303,9 @@ async def run_cli(
 
     # Identity is class-level, so the repository/documents folder are scoped before construction;
     # the output also persists state.
-    runner = _runner(controller_type, storage_root, db_path, peripherals, docker, scan, pinned, None, platform)
+    runner = _runner(
+        controller_type, storage_root, db_path, peripherals, is_docker_enabled, is_scan_enabled, pinned, None, platform
+    )
     controller = runner.controller
     controller.platform = runner.base = runner.base.copy(
         output=_CliControllerOutput(runner.base.make_device_repository)
@@ -310,7 +313,7 @@ async def run_cli(
     session = _CliSession(controller, runner.runtime)
 
     await runner.start()
-    state = "started" if runner.running else "waiting for its needs (see `needs`)"
+    state = "started" if runner.is_running else "waiting for its needs (see `needs`)"
     _print(f"{controller.name} {state}. Type 'help' for commands, 'exit' to quit.")
 
     # Shell commands run in a worker thread (typer-shell blocks); hop back onto this loop to call

@@ -35,7 +35,9 @@ def adapters(monkeypatch):
 
 
 def runtime(tmp_path, consumers: dict[str, Any], *builtins, **kwargs) -> Runtime:
-    return Runtime(tmp_path / "data", consumers, docker=False, scan=False, builtins=list(builtins), **kwargs)
+    return Runtime(
+        tmp_path / "data", consumers, is_docker_enabled=False, is_scan_enabled=False, builtins=list(builtins), **kwargs
+    )
 
 
 async def test_a_many_need_binds_every_free_matching_endpoint(tmp_path):
@@ -159,7 +161,14 @@ async def test_a_radio_whose_firmware_serves_bluetooth_offers_it_too(tmp_path, m
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "state.json").write_text(json.dumps(state))
     router = RecordingRouter()
-    rt = Runtime(tmp_path / "data", {}, docker=False, scan=False, devices={"sky": str(path)}, builtins=[router])
+    rt = Runtime(
+        tmp_path / "data",
+        {},
+        is_docker_enabled=False,
+        is_scan_enabled=False,
+        devices={"sky": str(path)},
+        builtins=[router],
+    )
     await rt.refresh()
     await rt.refresh()
 
@@ -175,7 +184,14 @@ async def test_a_radio_without_bluetooth_offers_none(tmp_path):
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "state.json").write_text(json.dumps(state))
     router = RecordingRouter()
-    rt = Runtime(tmp_path / "data", {}, docker=False, scan=False, devices={"zb": str(path)}, builtins=[router])
+    rt = Runtime(
+        tmp_path / "data",
+        {},
+        is_docker_enabled=False,
+        is_scan_enabled=False,
+        devices={"zb": str(path)},
+        builtins=[router],
+    )
     await rt.refresh()
     assert router.changes[-1].after == ADAPTERS
     assert "bluetooth" not in rt.state["radios"]["zb"]  # not a multi-PAN firmware: nothing to ask

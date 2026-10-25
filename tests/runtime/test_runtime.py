@@ -57,7 +57,8 @@ def held(monkeypatch):
     """Other programs holding a stick open, by its file name; none unless a test says so."""
     holders: dict[str, str] = {}
     monkeypatch.setattr(
-        "majordom_integration_sdk.runtime.runtime._holder", lambda path, open_it=False: holders.get(Path(path).name)
+        "majordom_integration_sdk.runtime.runtime._holder",
+        lambda path, is_opening_allowed=False: holders.get(Path(path).name),
     )
     return holders
 
@@ -83,8 +84,8 @@ def runtime(tmp_path, devices=(), **kwargs):
     return Runtime(
         tmp_path / "data",
         kwargs.pop("consumers", {"zigbee": Zigbee, "matter": Matter}),
-        docker=False,
-        scan=False,
+        is_docker_enabled=False,
+        is_scan_enabled=False,
         devices={d.rsplit("/", 1)[1]: d for d in devices},
         **{"builtins": [], **kwargs},
     )
@@ -277,7 +278,7 @@ async def test_services_preferring_the_same_port_get_different_ones(tmp_path, st
 
     consumers: dict[str, Any] = {"zigbee": Zigbee, "matter": Bridged}
     path = stick("sky", driver="silabs", firmware="multipan-rcp")
-    rt = Runtime(tmp_path / "data", consumers, docker=False, scan=False, devices={"sky": path})
+    rt = Runtime(tmp_path / "data", consumers, is_docker_enabled=False, is_scan_enabled=False, devices={"sky": path})
     await rt.refresh()
     zigbee, matter = rt.peripherals("zigbee"), rt.peripherals("matter")
     assert zigbee and matter
@@ -308,7 +309,7 @@ async def test_services_set_up_what_the_runtime_runs_and_teach_it_facts(tmp_path
         settings = None
 
     consumers: dict[str, Any] = {"thread": Thread}
-    rt = Runtime(tmp_path / "ours", consumers, docker=False, scan=False)
+    rt = Runtime(tmp_path / "ours", consumers, is_docker_enabled=False, is_scan_enabled=False)
     await rt.refresh()
     await settle(rt)
     assert sorted(calls) == [("learn", "http://ours"), ("provision", "http://ours")]
@@ -316,7 +317,7 @@ async def test_services_set_up_what_the_runtime_runs_and_teach_it_facts(tmp_path
 
     calls.clear()
     pinned = {"thread": Endpoint("thread", "rest", "http://theirs")}
-    rt = Runtime(tmp_path / "theirs", consumers, docker=False, scan=False, pinned=pinned)
+    rt = Runtime(tmp_path / "theirs", consumers, is_docker_enabled=False, is_scan_enabled=False, pinned=pinned)
     await rt.refresh()
     await settle(rt)
     assert calls == [("learn", "http://theirs")]  # someone else's router is read, never set up
@@ -340,7 +341,7 @@ async def test_a_refresh_that_changes_nothing_lets_setup_finish(tmp_path):
         services = [Router("router", {"image": "router"}, [Need("ip")], [Endpoint("thread", "rest", "http://ours")])]
         settings = None
 
-    rt = Runtime(tmp_path / "data", {"thread": Thread}, docker=False, scan=False)
+    rt = Runtime(tmp_path / "data", {"thread": Thread}, is_docker_enabled=False, is_scan_enabled=False)
     await rt.refresh()
     await asyncio.sleep(0)
     await rt.refresh()  # recreates nothing
@@ -385,7 +386,7 @@ async def test_only_known_radios_are_opened_until_asked(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "DRIVERS", {"silabs": Silabs()})
     monkeypatch.setattr(module, "glob", lambda pattern: [f"/dev/serial/by-id/{name}" for name in usb])
     monkeypatch.setattr(module, "_usb_id", lambda path: usb[path.rsplit("/", 1)[1]])
-    rt = Runtime(tmp_path / "data", {"zigbee": Zigbee}, docker=False)
+    rt = Runtime(tmp_path / "data", {"zigbee": Zigbee}, is_docker_enabled=False)
 
     await rt.refresh()
     assert opened == ["sky"]
@@ -411,7 +412,7 @@ async def test_a_stick_another_program_holds_is_left_alone_until_claimed(tmp_pat
     monkeypatch.setattr(module, "_usb_id", lambda path: ("10c4", "ea60"))
     held["sky"] = "zigbee2mqtt"
     consumers: dict[str, Any] = {"zigbee": Zigbee}
-    rt = Runtime(tmp_path / "data", consumers, docker=False)
+    rt = Runtime(tmp_path / "data", consumers, is_docker_enabled=False)
 
     await rt.refresh()
     assert opened == []  # never opened: probing would reset the radio under zigbee2mqtt
@@ -501,7 +502,7 @@ async def test_a_failed_compose_up_is_retried_on_the_next_refresh(tmp_path, stic
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", docker)
     rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan-rcp")])
-    rt.docker = True
+    rt.is_docker_enabled = True
 
     await rt.refresh()
     Process.returncode = 0
@@ -554,7 +555,7 @@ async def test_restarting_a_service_restarts_only_its_container(tmp_path, stick,
     rt = runtime(tmp_path, [stick("sky", driver="silabs", firmware="multipan-rcp")], on_change=changed)
     await rt.refresh()
     monkeypatch.setattr("asyncio.create_subprocess_exec", docker)
-    rt.docker = True
+    rt.is_docker_enabled = True
 
     await rt.restart("silabs-multiprotocol")
     assert calls[-1][-2:] == ("restart", "silabs-multiprotocol")

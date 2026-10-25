@@ -273,7 +273,7 @@ async def needs_session(tmp_path, monkeypatch):
         "majordom_integration_sdk.runtime.runtime._host_endpoints",
         lambda: [Endpoint("ble", "bluez", "hci0", instance=FakeBLESource("hci0"))],
     )
-    runtime = build_runtime(_ZigbeeController, tmp_path / "runtime", docker=False, scan=False)
+    runtime = build_runtime(_ZigbeeController, tmp_path / "runtime", is_docker_enabled=False, is_scan_enabled=False)
     runner = Runner(_ZigbeeController, build_test_platform(integration=INTEGRATION), runtime)
     await runner.start()
     yield _CliSession(runner.controller, runtime), runner
@@ -288,7 +288,7 @@ async def test_needs_show_what_is_unbound_and_why(needs_session):
         "ble/bluez (optional)  unbound: need ble/bluez: every provider taken by ble-router"
         ' — use Need("ble", ["router"])',
     ]
-    assert not runner.running
+    assert not runner.is_running
 
 
 async def test_a_pinned_endpoint_binds_the_need_and_starts_the_integration(needs_session):
@@ -299,11 +299,11 @@ async def test_a_pinned_endpoint_binds_the_need_and_starts_the_integration(needs
     assert runner.controller.peripherals.endpoint("zigbee") == Endpoint(
         "zigbee", "ezsp", "socket://192.168.1.5:6638", is_shared=True
     )
-    assert runner.running
+    assert runner.is_running
 
     await session.unpin("zigbee")
     assert session.needs()[0].startswith("zigbee/ezsp|znp  unbound")
-    assert not runner.running
+    assert not runner.is_running
     await session.resolve()  # nothing new: still waiting
 
 

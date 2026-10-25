@@ -12,8 +12,9 @@ watch what it discovers/reports on the console.
 
     asyncio.run(run_controller(HueController))
 
-Without Docker or radios, ``docker=False, scan=False`` and ``pinned={"zwave": Endpoint(...)}`` bind
-only what you give; ``peripherals={...}`` skips the runtime altogether (library mode).
+Without Docker or radios, ``is_docker_enabled=False, is_scan_enabled=False`` and
+``pinned={"zwave": Endpoint(...)}`` bind only what you give; ``peripherals={...}`` skips the
+runtime altogether (library mode).
 """
 
 from __future__ import annotations
@@ -114,8 +115,8 @@ def build_runtime(
     controller_type: type[AbstractController],
     data: Path,
     *,
-    docker: bool = True,
-    scan: bool = True,
+    is_docker_enabled: bool = True,
+    is_scan_enabled: bool = True,
     pinned: Mapping[str, Endpoint] = {},
     **runtime: Any,
 ) -> Runtime:
@@ -128,7 +129,14 @@ def build_runtime(
         )
     from majordom_integration_sdk.runtime import Runtime
 
-    return Runtime(data, {controller_type.slug(): controller_type}, docker=docker, scan=scan, pinned=pinned, **runtime)
+    return Runtime(
+        data,
+        {controller_type.slug(): controller_type},
+        is_docker_enabled=is_docker_enabled,
+        is_scan_enabled=is_scan_enabled,
+        pinned=pinned,
+        **runtime,
+    )
 
 
 class Runner:
@@ -145,7 +153,7 @@ class Runner:
         self.slug, self.base, self.runtime = controller_type.slug(), platform, runtime
         self.controller = controller_type(platform)
         self.controller.peripherals = Peripherals(peripherals or {})
-        self.running = False
+        self.is_running = False
         self._lock = asyncio.Lock()
         if runtime:
             runtime.on_change = self.sync
@@ -157,9 +165,9 @@ class Runner:
             await self._start()
 
     async def stop(self):
-        if self.running:
+        if self.is_running:
             await self.controller.stop()
-            self.running = False
+            self.is_running = False
         if self.runtime:
             await self.runtime.stop()
 
@@ -170,14 +178,14 @@ class Runner:
             if peripherals is None:
                 for family, reason in self.runtime.unbound(self.slug).items():
                     logger.warning("%s isn't bound: %s", family, reason)
-                if self.running:
+                if self.is_running:
                     await self.controller.stop()
-                    self.running = False
+                    self.is_running = False
                 return
             platform = self.runtime.platform(self.slug, self.base)
             before, current = self.controller.peripherals, self.controller.platform
             self.controller.peripherals, self.controller.platform = peripherals, platform
-            if not self.running:
+            if not self.is_running:
                 return await self._start()
             handled = True
             for family in sorted(before.keys() | peripherals.keys()):
@@ -194,7 +202,7 @@ class Runner:
 
     async def _start(self):
         await self.controller.start()
-        self.running = True
+        self.is_running = True
         logger.info("%s started — watching for devices.", self.controller.name)
 
 
@@ -204,16 +212,18 @@ async def run_controller(
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
     peripherals: Mapping[str, Bound] | None = None,
-    docker: bool = True,
-    scan: bool = True,
+    is_docker_enabled: bool = True,
+    is_scan_enabled: bool = True,
     pinned: Mapping[str, Endpoint] = {},
     **platform: Any,
 ) -> None:
     """Start ``controller_type`` under the runtime (or with ``peripherals`` you give) and run until interrupted
     (Ctrl-C), then stop everything cleanly. ``platform`` overrides fields of `Platform`, e.g. ``settings``;
-    ``docker``, ``scan`` and ``pinned`` go to the runtime (`build_runtime`)."""
+    ``is_docker_enabled``, ``is_scan_enabled`` and ``pinned`` go to the runtime (`build_runtime`)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    runner = _runner(controller_type, storage_root, db_path, peripherals, docker, scan, pinned, None, platform)
+    runner = _runner(
+        controller_type, storage_root, db_path, peripherals, is_docker_enabled, is_scan_enabled, pinned, None, platform
+    )
     await runner.start()
     try:
         await asyncio.Event().wait()  # run forever until cancelled
@@ -229,8 +239,8 @@ def _runner(
     storage_root: Path | None,
     db_path: str | Path | None,
     peripherals: Mapping[str, Bound] | None,
-    docker: bool,
-    scan: bool,
+    is_docker_enabled: bool,
+    is_scan_enabled: bool,
     pinned: Mapping[str, Endpoint],
     output: ControllerOutput | None,
     overrides: Mapping[str, Any],
@@ -244,7 +254,13 @@ def _runner(
     base = base.copy(output=output or base.output, **overrides)
     if peripherals is not None:
         return Runner(controller_type, base, peripherals=Peripherals(peripherals))
-    runtime = build_runtime(controller_type, root / "runtime", docker=docker, scan=scan, pinned=pinned)
+    runtime = build_runtime(
+        controller_type,
+        root / "runtime",
+        is_docker_enabled=is_docker_enabled,
+        is_scan_enabled=is_scan_enabled,
+        pinned=pinned,
+    )
     return Runner(controller_type, base, runtime)
 
 

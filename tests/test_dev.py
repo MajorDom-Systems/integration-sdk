@@ -131,7 +131,7 @@ def test_without_the_runtime_extra_the_runner_says_what_to_install(tmp_path, mon
 
 
 async def test_the_runner_starts_the_controller_once_its_needs_are_bound(tmp_path, offline_providers):
-    runtime = build_runtime(_RecordingController, tmp_path / "runtime", docker=False, scan=False)
+    runtime = build_runtime(_RecordingController, tmp_path / "runtime", is_docker_enabled=False, is_scan_enabled=False)
     runner = Runner(_RecordingController, build_platform(storage_root=tmp_path), runtime)
     await runner.start()
     controller = cast(_RecordingController, runner.controller)
@@ -151,7 +151,11 @@ async def test_the_runner_starts_the_controller_once_its_needs_are_bound(tmp_pat
 
 async def test_the_runner_hands_a_moved_peripheral_over_or_restarts(tmp_path):
     runtime = build_runtime(
-        _RecordingController, tmp_path / "runtime", docker=False, scan=False, pinned={"zwave": ZWAVE}
+        _RecordingController,
+        tmp_path / "runtime",
+        is_docker_enabled=False,
+        is_scan_enabled=False,
+        pinned={"zwave": ZWAVE},
     )
     runner = Runner(_RecordingController, build_platform(storage_root=tmp_path), runtime)
     await runner.start()
@@ -191,7 +195,9 @@ async def test_run_controller_starts_and_stops_cleanly_under_the_runtime(tmp_pat
     _RecordingController.instances.clear()
     pinned = {"zwave": ZWAVE}
     task = asyncio.create_task(
-        run_controller(_RecordingController, storage_root=tmp_path, docker=False, scan=False, pinned=pinned)
+        run_controller(
+            _RecordingController, storage_root=tmp_path, is_docker_enabled=False, is_scan_enabled=False, pinned=pinned
+        )
     )
 
     async with asyncio.timeout(5):
