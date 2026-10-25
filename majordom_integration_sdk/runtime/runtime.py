@@ -123,6 +123,7 @@ class _Entry:
     stopped_with: _Identity | None = None  # what it was bound to when it stopped by itself: it waits for a change
     told_failure: str = ""  # while starting
     is_stopping_itself: bool = False  # told while starting
+    context_before: Context | None = None  # what the context was when it changed while starting: told once it runs
     task: asyncio.Task | None = None  # its start
     reported: PeripheralStatus | None = None
 
@@ -359,14 +360,14 @@ class Runtime:
 
     async def context_did_change(self, before: Context):
         """The Hub-wide facts changed: every peripheral that runs hears it (`Peripheral.context_did_change`); one
-        still starting may have read the ones before, so it starts anew."""
+        still starting may have read the ones before, so it hears it once it runs."""
 
         async def apply():
             for entry in list(self._entries.values()):
                 if entry.state == PeripheralState.RUNNING:
                     await self._ask(entry, entry.peripheral.context_did_change(before))
-                elif entry.state == PeripheralState.STARTING:
-                    await self._stop(entry, _waiting())
+                elif entry.state == PeripheralState.STARTING and entry.context_before is None:
+                    entry.context_before = before
 
         await self._act(apply)
 
@@ -681,6 +682,7 @@ class Runtime:
     def _start(self, entry: _Entry):
         entry.state, entry.kind, entry.detail = PeripheralState.STARTING, None, ""
         entry.bindings, entry.told_failure, entry.is_stopping_itself = self._handed(entry), "", False
+        entry.context_before = None
         self._bind_view(entry, entry.bindings)
         entry.task = self._spawn(self._run_start(entry))
 
@@ -707,6 +709,9 @@ class Runtime:
                 await self._stop_itself(entry)
             else:
                 entry.state, entry.running_since = PeripheralState.RUNNING, monotonic()
+                if (before := entry.context_before) is not None:
+                    entry.context_before = None
+                    await self._ask(entry, peripheral.context_did_change(before))
         await self.refresh()
 
     async def _stop_itself(self, entry: _Entry):

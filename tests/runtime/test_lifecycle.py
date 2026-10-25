@@ -738,7 +738,7 @@ async def test_a_changed_context_is_handed_over_or_restarts_it(tmp_path):
     assert (handles.calls, restarts.calls) == (["start"], ["start", "stop", "start"])
 
 
-async def test_a_changed_context_starts_anew_one_still_starting(tmp_path):
+async def test_a_changed_context_reaches_one_still_starting_once_it_runs(tmp_path):
     gate = asyncio.Event()
 
     class Slow(FakePeripheral):
@@ -746,17 +746,18 @@ async def test_a_changed_context_starts_anew_one_still_starting(tmp_path):
             await super().start()
             await gate.wait()
 
-    slow = Slow("slow")
-    runtime = Runtime(tmp_path / "data", [slow])
-    await runtime.start()
-    await asyncio.sleep(0)
-    assert state(runtime, slow) == S.STARTING
+    handles, restarts = Slow("handles", answer=True), Slow("restarts")
+    runtime = await run(tmp_path, handles, restarts, settled=False)
+    await until(runtime, lambda: state(runtime, handles) == state(runtime, restarts) == S.STARTING, settled=False)
 
     await runtime.context_did_change(Context(region="Europe"))  # it may have read the one before
+    await runtime.context_did_change(Context(region="USA"))
+    assert handles.changes == restarts.changes == []
     gate.set()
     await settle(runtime)
-    assert slow.calls == ["start", "stop", "start"] and state(runtime, slow) == S.RUNNING
-    await runtime.stop()
+    assert handles.changes == restarts.changes == [("context", Context(region="Europe"))]  # once, since what it read
+    assert (handles.calls, restarts.calls) == (["start"], ["start", "stop", "start"])
+    assert state(runtime, handles) == state(runtime, restarts) == S.RUNNING
 
 
 async def test_any_peripheral_reads_the_context_and_tells_what_it_learned(tmp_path):

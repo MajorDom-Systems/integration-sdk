@@ -208,6 +208,32 @@ async def test_a_service_renders_only_when_it_is_created(tmp_path):
     assert compose(tmp_path)["radio"]["environment"]["REGION"] == "Europe"  # not recreated behind its back
 
 
+async def test_a_container_still_starting_is_recreated_once_it_serves_only_if_the_context_renders_it(tmp_path):
+    gate, region, containers, created = asyncio.Event(), Context(region="Europe"), FakeCompose(), set()
+
+    class Slow(Service):
+        async def is_healthy(self) -> bool:
+            created.add(self.name)
+            await gate.wait()
+            return True
+
+    environment = {"REGION": "{context.region}"}
+    renders = Slow("renders", {"image": "r", "environment": environment}, [Need("ip")], [Endpoint("r")])
+    plain = Slow("plain", {"image": "plain"}, [Need("ip")], [Endpoint("plain")])
+    user = FakePeripheral("user", [Need("r"), Need("plain")])
+    runtime = await run(tmp_path, containers, host(), renders, plain, user, settled=False, context=lambda: region)
+    await until(runtime, lambda: created == {"renders", "plain"}, settled=False)
+    applied = len(containers.calls)
+
+    before, region = region, Context(region="USA")
+    await runtime.context_did_change(before)
+    gate.set()
+    await settle(runtime)
+    assert compose(tmp_path)["renders"]["environment"]["REGION"] == "USA"
+    assert len([call for call in containers.calls[applied:] if "-f" in call]) == 2  # renders' only: down, then up
+    assert state(runtime, user) == PeripheralState.RUNNING
+
+
 async def test_services_get_free_host_ports_and_keep_them(tmp_path, listening):
     async def ezsp() -> tuple[str, str]:
         """The zigbee URL bound after a (re)boot, and the port the container got."""
