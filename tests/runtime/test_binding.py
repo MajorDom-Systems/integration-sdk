@@ -1,7 +1,7 @@
 """How the runtime binds needs: in the order it is given, single-use endpoints once, and why a need stays unbound."""
 
 import pytest
-from support import run
+from support import run, settle
 
 from majordom_integration_sdk import Endpoint, Need
 from majordom_integration_sdk.runtime import PeripheralState, PeripheralStatus
@@ -84,6 +84,20 @@ async def test_on_demand_peripherals_binding_only_each_other_dont_run(tmp_path):
         == PeripheralStatus(PeripheralState.WAITING, K.UNUSED, "nothing that runs uses it")
     )
     assert a.calls == b.calls == []
+
+
+async def test_a_single_use_endpoint_goes_to_the_first_given_and_then_to_the_next(tmp_path):
+    stick = FakePeripheral("stick", provides=[Endpoint("zigbee", "ezsp", "/dev/ttyUSB0")])
+    first, second = FakePeripheral("first", [Need("zigbee")]), FakePeripheral("second", [Need("zigbee")])
+    runtime = await run(tmp_path, stick, first, second)
+    assert runtime.status(first).state == PeripheralState.RUNNING
+    assert runtime.status(second) == PeripheralStatus(
+        PeripheralState.WAITING, K.NEEDS_UNBOUND, "need zigbee/*: every provider taken by first"
+    )
+
+    await runtime.disable(first)
+    await settle(runtime)
+    assert runtime.status(second).state == PeripheralState.RUNNING
 
 
 async def test_a_reserved_adapter_goes_to_its_owner_before_the_router(tmp_path):

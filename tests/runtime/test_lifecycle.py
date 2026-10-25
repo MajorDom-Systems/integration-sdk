@@ -611,6 +611,73 @@ async def test_a_running_peripheral_rides_out_its_provider_restarting(tmp_path):
     server.gate.set()
 
 
+async def test_an_optional_need_bound_to_a_provider_still_starting_doesnt_hold_it_back(tmp_path):
+    border = Gated("otbr", provides=[THREAD], is_on_demand=True)
+    matter = FakePeripheral("matter", [Need("thread", is_required=False)])
+    runtime = await run(tmp_path, border, matter, settled=False)
+    await until(runtime, lambda: state(runtime, matter) == S.RUNNING, settled=False)
+    assert state(runtime, border) == S.STARTING
+    assert matter.peripherals.endpoint("thread") == THREAD  # handed over at once: it copes until it answers
+    border.gate.set()
+
+
+# a start cut short
+
+
+async def starting(tmp_path, *peripherals: FakePeripheral):
+    """A runtime of ``peripherals`` with the last one in the middle of its start, held there."""
+    runtime = await run(tmp_path, *peripherals, settled=False)
+    await until(runtime, lambda: peripherals[-1].calls == ["start"], settled=False)
+    return runtime
+
+
+async def test_a_start_cut_short_by_disabling_it_stays_disabled(tmp_path):
+    slow = Gated("slow")
+    runtime = await starting(tmp_path, slow)
+    await runtime.disable(slow)
+    slow.gate.set()
+    await settle(runtime)
+    assert (state(runtime, slow), slow.calls) == (S.DISABLED, ["start", "stop"])
+
+
+async def test_a_start_cut_short_by_a_restart_or_new_settings_starts_anew(tmp_path):
+    slow = Gated("slow", settings=Channel)
+    runtime = await starting(tmp_path, slow)
+    await runtime.restart(slow)
+    await until(runtime, lambda: slow.calls == ["start", "stop", "start"], settled=False)
+    await runtime.update_settings(slow, {"channel": 15})
+    slow.gate.set()
+    await settle(runtime)
+    assert (state(runtime, slow), slow.calls) == (S.RUNNING, ["start", "stop", "start", "stop", "start"])
+
+
+async def test_a_start_cut_short_by_losing_its_need_waits_for_it(tmp_path):
+    stick, slow = radio(ZIGBEE), Gated("zigbee", [Need("zigbee")])
+    runtime = await starting(tmp_path, stick, slow)
+    stick.provided = []
+    await changed(runtime, stick)
+    assert runtime.status(slow) == PeripheralStatus(S.WAITING, K.NEEDS_UNBOUND, UNBOUND)
+    assert slow.calls == ["start", "stop"]
+
+
+async def test_a_start_cut_short_by_the_runtime_stopping_is_stopped(tmp_path):
+    slow = Gated("slow")
+    runtime = await starting(tmp_path, slow)
+    await runtime.stop()
+    assert slow.calls == ["start", "stop"]
+
+
+async def test_one_replaced_by_another_of_its_name_goes_and_the_other_runs(tmp_path):
+    output, old, new = RecordingRuntimeOutput(), FakePeripheral("aa"), FakePeripheral("aa")
+    esphome = FakePeripheral("esphome", provides=[old])
+    runtime = await run(tmp_path, esphome, output=output)
+
+    esphome.provided[:] = [new]  # the node reconnected
+    await changed(runtime, esphome)
+    assert (old.calls, output.disappeared) == (["start", "stop"], [old])
+    assert state(runtime, new) == S.RUNNING and runtime.peripheral("esphome/aa") is new
+
+
 # settings and context
 
 
