@@ -14,6 +14,8 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Protocol
 
+from pydantic import ValidationError
+
 from majordom_integration_sdk.controller.platform import Context
 from majordom_integration_sdk.peripherals import (
     Bound,
@@ -253,7 +255,7 @@ class Runtime:
             families = reached
             reached = families.union(
                 *(
-                    {e.family for e in entry.peripheral.provides}
+                    {e.family for e in _read(entry.peripheral, "provides")}
                     for entry in self._entries.values()
                     if entry.peripheral.is_on_demand and _satisfied(entry.peripheral.needs, families)
                 )
@@ -298,7 +300,7 @@ class Runtime:
         if (model := peripheral.Settings) is None:
             raise KeyError(f"{peripheral.name} has no settings")
         before = peripheral.settings
-        peripheral.settings = model.model_validate(before.model_dump() | dict(values))
+        peripheral.settings = model.model_validate(self.state["settings"].get(peripheral.name, {}) | dict(values))
         self.state["settings"][peripheral.name] = peripheral.settings.model_dump(mode="json")
         self._save()
 
@@ -434,7 +436,11 @@ class Runtime:
 
     def _snapshot(self) -> list[tuple[str, tuple[Endpoint, ...], tuple[str, ...]]]:
         return [
-            (entry.name, tuple(entry.peripheral.provides), tuple(p.name for p in entry.peripheral.peripherals))
+            (
+                entry.name,
+                tuple(_read(entry.peripheral, "provides")),
+                tuple(p.name for p in _read(entry.peripheral, "peripherals")),
+            )
             for entry in self._entries.values()
         ]
 
@@ -454,7 +460,7 @@ class Runtime:
                     gone.append(entry)  # replaced by another of the same name
                 entry = self._adopt(peripheral, contributor)
             entries[peripheral.name] = entry
-            for child in peripheral.peripherals:
+            for child in _read(peripheral, "peripherals"):
                 walk(child, peripheral.name)
 
         for peripheral in self.given:
@@ -467,19 +473,25 @@ class Runtime:
         peripheral.output = self
         if isinstance(peripheral, Service):
             peripheral.host = self.compose
-        peripheral.settings = self._settings(peripheral)
-        is_disabled = self.disabled.is_disabled(peripheral.name)
-        return _Entry(peripheral, contributor, PeripheralState.DISABLED if is_disabled else PeripheralState.WAITING)
+        failure = ""
+        try:
+            self._load_settings(peripheral)
+        except ValidationError as error:
+            failure = "Invalid settings: " + "; ".join(
+                f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors()
+            )
+        if self.disabled.is_disabled(peripheral.name):
+            return _Entry(peripheral, contributor, PeripheralState.DISABLED)
+        return _Entry(peripheral, contributor, PeripheralState.FAILED if failure else PeripheralState.WAITING, failure)
 
-    def _settings(self, peripheral: Peripheral) -> Any:
+    def _load_settings(self, peripheral: Peripheral):
         if (model := peripheral.Settings) is None:
-            return None
+            return
         stored = self.state["settings"].get(peripheral.name, {})
-        current = model.model_validate(stored)
-        if (dumped := current.model_dump(mode="json")) != stored:  # freeze generated defaults (e.g. keys)
+        peripheral.settings = model.model_validate(stored)
+        if (dumped := peripheral.settings.model_dump(mode="json")) != stored:  # freeze generated defaults (e.g. keys)
             self.state["settings"][peripheral.name] = dumped
             self._save()
-        return current
 
     def _is_run_anyway(self, entry: _Entry) -> bool:
         """It, or what brought it along, runs whether something uses it or not."""
@@ -502,7 +514,7 @@ class Runtime:
         """The ones that should run: from the ones alive that run anyway, down through what they bind, binding in order
         with single-use endpoints taken; one whose required need finds nothing is left out, and it all binds anew."""
         alive = {name for name, entry in self._entries.items() if self._is_alive(entry)}
-        provides = {name: list(entry.peripheral.provides) for name, entry in self._entries.items()}
+        provides = {name: _read(entry.peripheral, "provides") for name, entry in self._entries.items()}
         left_out: set[str] = set()
         while True:
             among = alive - left_out
@@ -677,7 +689,8 @@ class Runtime:
             if entry.reported != (status := entry.status):
                 entry.reported = status
                 if self.output:
-                    self.output.peripheral_did_change_status(entry.peripheral, status)
+                    with _logged(f"Reporting {entry.name} {status.state}"):
+                        self.output.peripheral_did_change_status(entry.peripheral, status)
 
     def _schedule_retry(self):
         if self._timer:
@@ -691,7 +704,8 @@ class Runtime:
 
     def _learned(self, peripheral: Peripheral, facts: Mapping[str, Any]):
         if self.output:
-            self.output.peripheral_did_learn(peripheral, facts)
+            with _logged(f"Reporting what {peripheral.name} learned"):
+                self.output.peripheral_did_learn(peripheral, facts)
 
     def _save(self):
         self.data.mkdir(parents=True, exist_ok=True)
@@ -754,6 +768,24 @@ class _Reasons:
         """What to need instead when what took the endpoint offers the same family itself: the router for raw BLE."""
         endpoint = next((e for e in self.provides.get(taker, []) if e.family == family), None)
         return f' — use Need("{family}", ["{endpoint.dialect}"])' if endpoint else ""
+
+
+def _read(peripheral: Peripheral, name: str) -> list[Any]:
+    """A sequence ``peripheral`` holds; one that can't say holds nothing, and the others run on."""
+    try:
+        return list(getattr(peripheral, name))
+    except Exception as error:
+        log.error(f"{peripheral.name} failed to say what it {name}: {error}", exc_info=error)
+        return []
+
+
+@contextlib.contextmanager
+def _logged(what: str):
+    """A call into the runtime's owner that raises is logged: the runtime goes on."""
+    try:
+        yield
+    except Exception as error:
+        log.error(f"{what} failed: {error}", exc_info=error)
 
 
 def _users_first(entries: list[_Entry]) -> list[_Entry]:

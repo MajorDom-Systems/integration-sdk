@@ -1,6 +1,7 @@
 """Every row of the peripheral state machine, the one lifetime rule, retries and readiness."""
 
 import asyncio
+import json
 
 import pytest
 from pydantic import BaseModel
@@ -472,3 +473,47 @@ async def test_a_changed_context_is_handed_over_or_restarts_it(tmp_path):
     await settle(runtime)
     assert handles.changes == restarts.changes == [("context", Context(region="Europe"))]
     assert (handles.calls, restarts.calls) == (["start"], ["start", "stop", "start"])
+
+
+# one that misbehaves stops nothing else
+
+
+class Channel(BaseModel):
+    channel: int = 11
+
+
+async def test_invalid_stored_settings_fail_only_their_peripheral(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "state.json").write_text(json.dumps({"settings": {"zigbee": {"channel": "eleven"}}}))
+    host, integration = FakePeripheral("host"), FakePeripheral("zigbee", settings=Channel)
+    runtime = await run(tmp_path, host, integration)
+    assert state(runtime, host) == S.RUNNING
+    assert runtime.status(integration) == PeripheralStatus(
+        S.FAILED, "Invalid settings: channel: Input should be a valid integer, unable to parse string as an integer"
+    )
+
+    await runtime.update_settings(integration, {"channel": 15})
+    await settle(runtime)
+    assert state(runtime, integration) == S.RUNNING and integration.settings == Channel(channel=15)
+
+
+async def test_one_that_cant_say_what_it_provides_provides_nothing(tmp_path):
+    class Broken(FakePeripheral):
+        @property
+        def provides(self):
+            raise RuntimeError("confused")
+
+    host, integration = FakePeripheral("host"), zigbee()
+    runtime = await run(tmp_path, host, Broken("broken"), integration)
+    assert state(runtime, host) == S.RUNNING
+    assert runtime.status(integration) == PeripheralStatus(S.WAITING, UNBOUND)
+
+
+async def test_an_output_that_raises_stops_nothing(tmp_path):
+    class Output(RecordingRuntimeOutput):
+        def peripheral_did_change_status(self, peripheral, status):
+            raise RuntimeError("the Hub broke")
+
+    host = FakePeripheral("host")
+    runtime = await run(tmp_path, host, output=Output())
+    assert state(runtime, host) == S.RUNNING
