@@ -13,9 +13,9 @@ on:
 jobs:
   test:
     uses: ParkerIndustries/workflows/.github/workflows/test.yml@v1
-    # Defaults to the team matrix ["3.12", "3.13"]. Uncomment to customize:
-    # with:
-    #   python-versions: '["3.12", "3.13", "3.14"]'
+    # The team matrix is ["3.12", "3.13"]; the SDK needs 3.13 (type parameter defaults).
+    with:
+      python-versions: '["3.13"]'
     #   # Runs after `poetry install`, before checks (system deps, Cython build_ext,
     #   # starting service containers, ...):
     #   setup-script: |
