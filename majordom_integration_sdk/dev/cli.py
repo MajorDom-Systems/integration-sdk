@@ -268,6 +268,9 @@ class _CliControllerOutput(ControllerOutput):
     async def controller_did_resolve_error(self, controller, error_id):
         _print(f"[error resolved] {error_id}")
 
+    async def controller_did_emit_notification(self, controller, notification):
+        _print(f"[notification] {notification.type.value}/{notification.priority.value}: {notification.message}")
+
 
 # --- the REPL ----------------------------------------------------------------------------------
 

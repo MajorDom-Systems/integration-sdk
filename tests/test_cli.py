@@ -21,6 +21,7 @@ from majordom_integration_sdk.schemas.device import (
     ProvidedCredentials,
 )
 from majordom_integration_sdk.schemas.event import DeviceParameterChange
+from majordom_integration_sdk.schemas.notification import Notification, NotificationType
 from majordom_integration_sdk.schemas.parameter import (
     ParameterDataType,
     ParameterRole,
@@ -213,6 +214,13 @@ async def test_output_delegate_prints_reported_and_resolved_errors(capsys):
 
     out = capsys.readouterr().out
     assert "stick-unplugged: Re-plug it" in out and out.rstrip().endswith("stick-unplugged")
+
+
+async def test_output_delegate_prints_notifications(capsys):
+    output, controller = _CliControllerOutput(), FakeController(build_test_platform())
+    notification = Notification(message="Firmware update available", type=NotificationType.warning)
+    await output.controller_did_emit_notification(controller, notification)
+    assert "warning/normal: Firmware update available" in capsys.readouterr().out
 
 
 def test_prompt_safe_print_is_a_noop_safe_call(capsys):
