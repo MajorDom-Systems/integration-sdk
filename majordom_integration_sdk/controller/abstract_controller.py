@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast, final
 from uuid import UUID, uuid5
 
+from pydantic import BaseModel
 from slugify import slugify
 
 from majordom_integration_sdk.controller.platform import Context, Platform
@@ -43,17 +44,25 @@ class AbstractController[TDevice: Device, TParameter: Parameter](Peripheral, ABC
     Base class for all integration controllers.
     Defines the interface the Hub uses to interact with an integration — the Hub instantiates the subclass and drives it by calling these methods.
 
-    A controller is a `Peripheral` like any other: the runtime starts it once its required needs are bound and ready,
-    stops it when one is lost, and hands moved needs, settings and context over to its hooks. It holds:
+    A controller is a `Peripheral` like any other: the runtime starts it once its required needs are bound to what
+    runs, stops it when one is lost, and hands moved needs, settings and context over to its hooks. Its integration
+    package exports it next to the servers it needs, which run while it does::
 
-    - ``self.platform``: the app's services from the Hub (output, device repository, documents folder, context);
+        def peripherals() -> list[Peripheral]:
+            return [matterjs_server(), MatterController()]
+
+    It holds:
+
+    - ``self.platform``: the app's services (output, device repository, documents folder, context), which the Hub sets
+      before the runtime starts it;
     - ``self.settings``: its validated ``Settings``, when it declares its options as a nested ``class Settings(BaseModel)``
       (annotate ``settings: Settings`` to type it); None without;
     - ``self.peripherals``: the endpoints its needs are bound to (``endpoint()``, ``endpoints()``, ``instance()``).
 
-    In library mode, with no runtime, hand the bound needs over yourself::
+    In library mode give the platform and any settings to the constructor; with no runtime, hand the bound needs over
+    yourself::
 
-        controller = HueController(platform)
+        controller = HueController(platform, settings=HueController.Settings(bridge="192.168.1.2"))
         controller.peripherals = Peripherals({"mdns": Endpoint("mdns", "zeroconf", instance=zeroconf)})
     """
 
@@ -63,10 +72,15 @@ class AbstractController[TDevice: Device, TParameter: Parameter](Peripheral, ABC
         if "name" not in cls.__dict__:
             cls.name = _titleize(cls.__name__)
 
-    def __init__(self, platform: Platform):
-        """Called by the Hub with the app's services. Do not change this signature."""
-        self.platform = platform
-        self.settings = self.Settings() if self.Settings is not None else None
+    platform: Platform
+
+    def __init__(self, platform: Platform | None = None, *, settings: BaseModel | None = None):
+        """``platform`` is set by the Hub when the integration's ``peripherals()`` built it without one. ``settings``
+        hold until the user changes them (the runtime keeps them): the defaults of ``Settings`` without. Keep these
+        parameters when you override it."""
+        if platform is not None:
+            self.platform = platform
+        self.settings = settings if settings is not None or self.Settings is None else self.Settings()
 
     # Abstract
 

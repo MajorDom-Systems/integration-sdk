@@ -685,6 +685,19 @@ async def test_any_peripheral_reads_the_context_and_tells_what_it_learned(tmp_pa
     assert output.learned == [("my-border-router", {"thread_dataset": "0e08"})]
 
 
+async def test_one_added_while_it_runs_runs_and_one_removed_is_gone(tmp_path):
+    output, hue = RecordingRuntimeOutput(), FakePeripheral("hue")
+    runtime = await run(tmp_path, FakePeripheral("host"), output=output)
+
+    await runtime.add(hue)  # installed while the hub runs
+    await settle(runtime)
+    assert state(runtime, hue) == S.RUNNING
+
+    await runtime.remove(hue)
+    assert hue.calls == ["start", "stop"] and hue not in runtime.peripherals
+    assert output.disappeared == [hue]
+
+
 # one that misbehaves stops nothing else
 
 

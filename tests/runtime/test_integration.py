@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel
 from support import run, settle
 
-from majordom_integration_sdk import AbstractController, Endpoint, Need, Service
+from majordom_integration_sdk import AbstractController, Endpoint, Need, Peripheral, Platform, Service
 from majordom_integration_sdk.runtime import HostNetwork, PeripheralState, PeripheralStatus
 from majordom_integration_sdk.runtime import StatusKind as K
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter
@@ -36,8 +36,8 @@ class EchoController(AbstractController[Device, Parameter]):
 
     settings: Settings
 
-    def __init__(self, platform):
-        super().__init__(platform)
+    def __init__(self, platform: Platform | None = None, *, settings: Settings | None = None):
+        super().__init__(platform, settings=settings)
         self.started_with: list[tuple[str, bool]] = []
 
     @property
@@ -69,9 +69,17 @@ class EchoController(AbstractController[Device, Parameter]):
         pass
 
 
+def peripherals() -> list[Peripheral]:
+    """What the integration package exports: its server, and the controller that needs it."""
+    return [echo_server(), EchoController()]
+
+
 def integration() -> tuple[Service, EchoController]:
-    """What the integration package provides: its server, and the controller that needs it."""
-    return echo_server(), EchoController(build_test_platform())
+    """What the integration exports, the controller given its platform as the Hub does."""
+    server, echo = peripherals()
+    assert isinstance(server, Service) and isinstance(echo, EchoController)
+    echo.platform = build_test_platform()
+    return server, echo
 
 
 async def test_an_integration_runs_once_the_server_it_provides_serves(tmp_path):
@@ -111,3 +119,13 @@ async def test_an_integration_waits_with_a_reason_when_its_server_cant_run(tmp_p
         "need example/echo: echo-server can't run (need ip/*: nothing offers it)",
     )
     assert echo.started_with == []
+
+
+async def test_a_controller_given_its_settings_keeps_them_until_the_user_changes_them(tmp_path):
+    echo = EchoController(build_test_platform(), settings=EchoController.Settings(is_loud=True))  # library mode
+    await run(tmp_path, HostNetwork(), FakeCompose(), echo_server(), echo)
+    assert echo.started_with == [("ws://127.0.0.1:5600", True)]
+
+    server, again = integration()  # after a reboot
+    await run(tmp_path, HostNetwork(), FakeCompose(), server, again)
+    assert again.started_with == [("ws://127.0.0.1:5600", True)]

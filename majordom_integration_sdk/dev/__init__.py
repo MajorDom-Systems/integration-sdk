@@ -7,10 +7,10 @@ adapters, DNS-SD, SSDP and the containers it runs — and starts it once its nee
 you watch what it discovers/reports on the console.
 
     import asyncio
+    import majordom_hue  # your integration
     from majordom_integration_sdk.dev import run_controller
-    from majordom_hue import HueController  # your integration
 
-    asyncio.run(run_controller(HueController))
+    asyncio.run(run_controller(majordom_hue.peripherals()))  # its controller and the servers it needs
 
 Without Docker, ``pinned=[Endpoint(...)]`` gives the endpoints of the servers you run yourself;
 ``runtime_peripherals=[HostNetwork(), ...]`` runs only those around it (no USB scanning);
@@ -22,14 +22,14 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from majordom_integration_sdk.controller.abstract_controller import AbstractController
 from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
-from majordom_integration_sdk.controller.platform import Platform
+from majordom_integration_sdk.controller.platform import Context, Platform
 from majordom_integration_sdk.peripherals import Bound, Endpoint, Peripheral, Peripherals
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtocol
@@ -124,14 +124,15 @@ class LoggingRuntimeOutput:
 
 
 def build_runtime(
-    controller: AbstractController,
+    integration: Sequence[Peripheral],
     data: Path,
     *,
     runtime_peripherals: Sequence[Peripheral] | None = None,
     pinned: Sequence[Endpoint] = (),
+    context: Callable[[], Context] = Context,
 ) -> Runtime:
-    """The runtime for one controller, as under the Hub: the endpoints you pin first, then ``runtime_peripherals``
-    (`default_peripherals()` by default), then the controller. Needs the ``runtime`` extra."""
+    """The runtime for one integration, as under the Hub: the endpoints you pin first, then ``runtime_peripherals``
+    (`default_peripherals()` by default), then what the integration exports. Needs the ``runtime`` extra."""
     if importlib.util.find_spec("serial") is None:
         raise ImportError(
             "Resolving needs takes the runtime — install it with:\n"
@@ -141,7 +142,7 @@ def build_runtime(
     from majordom_integration_sdk.runtime import Pinned, Runtime, default_peripherals
 
     around = default_peripherals() if runtime_peripherals is None else runtime_peripherals
-    return Runtime(data, [Pinned(*pinned), *around, controller], output=LoggingRuntimeOutput())
+    return Runtime(data, [Pinned(*pinned), *around, *integration], context=context, output=LoggingRuntimeOutput())
 
 
 class Runner:
@@ -177,7 +178,7 @@ class Runner:
 
 
 async def run_controller(
-    controller_type: type[AbstractController],
+    integration: Sequence[Peripheral],
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
@@ -186,11 +187,12 @@ async def run_controller(
     pinned: Sequence[Endpoint] = (),
     **platform: Any,
 ):
-    """Start ``controller_type`` under the runtime (or with the ``peripherals`` you bind) and run until interrupted
-    (Ctrl-C), then stop everything cleanly. ``platform`` overrides fields of `Platform`, e.g. ``context``;
-    ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`)."""
+    """Start what ``integration`` exports (its ``peripherals()``: the controller and the servers it needs) under the
+    runtime, or only its controller with the ``peripherals`` you bind, and run until interrupted (Ctrl-C), then stop
+    everything cleanly. ``platform`` overrides fields of `Platform`, e.g. ``context``; ``runtime_peripherals`` and
+    ``pinned`` go to the runtime (`build_runtime`)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    runner = _runner(controller_type, storage_root, db_path, peripherals, runtime_peripherals, pinned, platform)
+    runner = _runner(integration, storage_root, db_path, peripherals, runtime_peripherals, pinned, platform)
     await runner.start()
     try:
         await asyncio.Event().wait()  # run forever until cancelled
@@ -198,11 +200,11 @@ async def run_controller(
         pass
     finally:
         await runner.stop()
-        logger.info("%s stopped.", controller_type.name)
+        logger.info("%s stopped.", runner.controller.name)
 
 
 def _runner(
-    controller_type: type[AbstractController],
+    integration: Sequence[Peripheral],
     storage_root: Path | None,
     db_path: str | Path | None,
     peripherals: Mapping[str, Bound] | None,
@@ -210,17 +212,24 @@ def _runner(
     pinned: Sequence[Endpoint],
     overrides: Mapping[str, Any],
 ) -> Runner:
-    # The integration's identity is class-level, so its repository and documents folder can be
-    # scoped before it's constructed.
-    root = Path(storage_root) if storage_root is not None else Path(".majordom-dev")
-    base = build_platform(
-        storage_root=root, db_path=db_path, integration=controller_type.name, slug=controller_type.slug()
-    )
-    controller = controller_type(base.copy(**overrides))
+    """Its one controller given its platform, as the Hub does: a repository and documents folder of its own."""
+    controllers = [peripheral for peripheral in integration if isinstance(peripheral, AbstractController)]
+    if len(controllers) != 1:
+        raise ValueError(f"An integration exports one controller, not {len(controllers)}: {list(integration)}")
+    controller, root = controllers[0], Path(storage_root) if storage_root is not None else Path(".majordom-dev")
+    kind = type(controller)
+    platform = build_platform(storage_root=root, db_path=db_path, integration=kind.name, slug=kind.slug())
+    controller.platform = platform.copy(**overrides)
     if peripherals is not None:
         controller.peripherals = Peripherals(peripherals)
         return Runner(controller)
-    runtime = build_runtime(controller, root / "runtime", runtime_peripherals=runtime_peripherals, pinned=pinned)
+    runtime = build_runtime(
+        integration,
+        root / "runtime",
+        runtime_peripherals=runtime_peripherals,
+        pinned=pinned,
+        context=lambda: controller.platform.context,
+    )
     return Runner(controller, runtime)
 
 

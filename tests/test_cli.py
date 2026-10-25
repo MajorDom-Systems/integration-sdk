@@ -276,7 +276,7 @@ async def needs_session(tmp_path):
     matter = FakePeripheral("matter", [Need("ble", ["router"])])  # runs the router: it takes the adapter
     controller = _ZigbeeController(build_test_platform(integration=INTEGRATION))
     runtime = build_runtime(
-        controller,
+        [controller],
         tmp_path / "runtime",
         runtime_peripherals=[adapter, FakeCompose(), silabs_multiprotocol(), FakeBLERouter(), matter],
     )

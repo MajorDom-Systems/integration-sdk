@@ -33,7 +33,7 @@ class _RecordingController(AbstractController[Device, Parameter]):
     instances: list["_RecordingController"] = []
     handles_changes = True
 
-    def __init__(self, platform):
+    def __init__(self, platform=None):
         super().__init__(platform)
         self.started = self.stopped = 0
         self.changes: list[PeripheralChange] = []
@@ -78,7 +78,7 @@ def runner(tmp_path, router: FakeBLERouter, pinned=()) -> tuple[Runner, _Recordi
     """A controller under the runtime, among peripherals without radios or sockets."""
     controller = _RecordingController(build_platform(storage_root=tmp_path))
     runtime = build_runtime(
-        controller,
+        [controller],
         tmp_path / "runtime",
         runtime_peripherals=[router, FakeSSDP()],
         pinned=pinned,
@@ -142,7 +142,7 @@ async def test_build_platform_sqlite_persists_to_file(tmp_path):
 def test_without_the_runtime_extra_the_runner_says_what_to_install(tmp_path, monkeypatch):
     monkeypatch.setattr(dev.importlib.util, "find_spec", lambda name: None)
     with pytest.raises(ImportError, match=r"majordom-integration-sdk\[runtime"):
-        build_runtime(_RecordingController(build_platform(storage_root=tmp_path)), tmp_path)
+        build_runtime([_RecordingController(build_platform(storage_root=tmp_path))], tmp_path)
 
 
 async def test_the_runner_starts_the_controller_once_its_needs_are_bound(tmp_path, router):
@@ -185,7 +185,7 @@ async def test_the_runner_hands_a_moved_peripheral_over_or_restarts(tmp_path, ro
 async def test_run_controller_with_peripherals_given_runs_without_the_runtime(tmp_path):
     _RecordingController.instances.clear()
     task = asyncio.create_task(
-        run_controller(_RecordingController, storage_root=tmp_path, peripherals={"zwave": ZWAVE})
+        run_controller([_RecordingController()], storage_root=tmp_path, peripherals={"zwave": ZWAVE})
     )
 
     async with asyncio.timeout(5):
@@ -198,14 +198,20 @@ async def test_run_controller_with_peripherals_given_runs_without_the_runtime(tm
     controller = _RecordingController.instances[-1]
     assert controller.started and controller.stopped
     assert controller.peripherals.endpoint("zwave") == ZWAVE
+    assert controller.platform.documents_folder == tmp_path / "dev-example"  # given its platform, as by the Hub
     assert not (tmp_path / "runtime").exists()
+
+
+async def test_run_controller_wants_one_controller_among_what_an_integration_exports(tmp_path):
+    with pytest.raises(ValueError, match="one controller, not 2"):
+        await run_controller([_RecordingController(), _RecordingController()], storage_root=tmp_path)
 
 
 async def test_run_controller_starts_and_stops_cleanly_under_the_runtime(tmp_path):
     _RecordingController.instances.clear()
     task = asyncio.create_task(
         run_controller(
-            _RecordingController,
+            [_RecordingController()],
             storage_root=tmp_path,
             runtime_peripherals=[FakeSSDP()],
             pinned=[ZWAVE],

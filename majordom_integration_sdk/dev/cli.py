@@ -11,9 +11,9 @@ Needs the ``cli`` extra (typer-shell + rich)::
 
     import asyncio
     from majordom_integration_sdk.dev import run_cli
-    from majordom_matter import MatterController  # your integration
+    import majordom_matter  # your integration
 
-    asyncio.run(run_cli(MatterController, db_path="devices.db"))
+    asyncio.run(run_cli(majordom_matter.peripherals(), db_path="devices.db"))
 """
 
 from __future__ import annotations
@@ -280,7 +280,7 @@ class _CliControllerOutput(ControllerOutput):
 
 
 async def run_cli(
-    controller_type: type[AbstractController],
+    integration: Sequence[Peripheral],
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
@@ -289,11 +289,11 @@ async def run_cli(
     pinned: Sequence[Endpoint] = (),
     **platform: Any,
 ):
-    """Start ``controller_type`` under the runtime (or with the ``peripherals`` you bind) with a local repository and
-    drop into an interactive prompt. ``platform`` overrides fields of `Platform` (``context``);
-    ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`). ``db_path``
-    file-backs the repository so paired devices survive restarts; omit it for in-memory. ``exit`` / Ctrl-D leaves the
-    prompt and stops everything cleanly."""
+    """Start what ``integration`` exports (its ``peripherals()``) under the runtime, or only its controller with the
+    ``peripherals`` you bind, with a local repository and drop into an interactive prompt. ``platform`` overrides
+    fields of `Platform` (``context``); ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`).
+    ``db_path`` file-backs the repository so paired devices survive restarts; omit it for in-memory. ``exit`` / Ctrl-D
+    leaves the prompt and stops everything cleanly."""
     # Capture all logs + warnings into a buffer for the duration of the session so they don't break
     # the interactive TUI; the buffer is dumped to stderr on exit/crash (see the finally block).
     # The CLI's own discovery/event/command output (via _print) stays visible and prompt-safe.
@@ -309,7 +309,7 @@ async def run_cli(
 
     # Identity is class-level, so the repository/documents folder are scoped before construction;
     # the output also persists state.
-    runner = _runner(controller_type, storage_root, db_path, peripherals, runtime_peripherals, pinned, platform)
+    runner = _runner(integration, storage_root, db_path, peripherals, runtime_peripherals, pinned, platform)
     controller = runner.controller
     controller.platform = controller.platform.copy(
         output=_CliControllerOutput(controller.platform.make_device_repository)

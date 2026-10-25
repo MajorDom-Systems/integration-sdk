@@ -303,6 +303,16 @@ class Runtime:
 
     # What the Hub (or you) changes
 
+    async def add(self, peripheral: Peripheral):
+        """Run ``peripheral`` too, as if given last: an integration installed while the hub runs."""
+        self.given.append(peripheral)
+        await self._settle()
+
+    async def remove(self, peripheral: Peripheral):
+        """Stop running ``peripheral``, given or added; its owner hears it is gone (``peripheral_did_disappear``)."""
+        self.given = [given for given in self.given if given is not peripheral]
+        await self._settle()
+
     async def enable(self, peripheral: Peripheral):
         entry = self._entry(peripheral)
         self.disabled.set_disabled(entry.name, False)
@@ -552,10 +562,14 @@ class Runtime:
         return _Entry(peripheral, name, contributor, PeripheralState.FAILED, StatusKind.NAME_TAKEN, detail)
 
     def _load_settings(self, peripheral: Peripheral, name: str):
+        """The ones kept, else the ones it was given or the defaults, kept from now on."""
         if (model := peripheral.Settings) is None:
             return
-        stored = self.state["settings"].get(name, {})
-        peripheral.settings = model.model_validate(stored)
+        stored = self.state["settings"].get(name)
+        if stored is not None:
+            peripheral.settings = model.model_validate(stored)
+        elif not isinstance(peripheral.settings, model):
+            peripheral.settings = model()
         if (dumped := peripheral.settings.model_dump(mode="json")) != stored:  # freeze generated defaults (e.g. keys)
             self.state["settings"][name] = dumped
             self._save()
