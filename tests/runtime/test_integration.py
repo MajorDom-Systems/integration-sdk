@@ -36,7 +36,7 @@ class EchoController(AbstractController[Device, Parameter]):
 
     settings: Settings
 
-    def __init__(self, platform: Platform | None = None, *, settings: Settings | None = None):
+    def __init__(self, platform: Platform, *, settings: Settings | None = None):
         super().__init__(platform, settings=settings)
         self.started_with: list[tuple[str, bool]] = []
 
@@ -69,16 +69,15 @@ class EchoController(AbstractController[Device, Parameter]):
         pass
 
 
-def peripherals() -> list[Peripheral]:
+def peripherals(platform: Platform) -> list[Peripheral]:
     """What the integration package exports: its server, and the controller that needs it."""
-    return [echo_server(), EchoController()]
+    return [echo_server(), EchoController(platform)]
 
 
 def integration() -> tuple[Service, EchoController]:
-    """What the integration exports, the controller given its platform as the Hub does."""
-    server, echo = peripherals()
+    """What the integration exports, given its platform as by the Hub."""
+    server, echo = peripherals(build_test_platform())
     assert isinstance(server, Service) and isinstance(echo, EchoController)
-    echo.platform = build_test_platform()
     return server, echo
 
 

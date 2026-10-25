@@ -13,7 +13,7 @@ Needs the ``cli`` extra (typer-shell + rich)::
     from majordom_integration_sdk.dev import run_cli
     import majordom_matter  # your integration
 
-    asyncio.run(run_cli(majordom_matter.peripherals(), db_path="devices.db"))
+    asyncio.run(run_cli(majordom_matter.peripherals, majordom_matter.MatterController, db_path="devices.db"))
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from ..schemas.command import DeviceCommand
 from ..schemas.credentials import CredentialsType, ProvidedCredentials
 from ..schemas.event import DeviceParameterChange
 from ..schemas.parameter import ParameterRole
-from . import _runner
+from . import Integration, _platform, _runner
 
 if TYPE_CHECKING:
     from ..runtime import Pinned, Runtime
@@ -280,7 +280,8 @@ class _CliControllerOutput(ControllerOutput):
 
 
 async def run_cli(
-    integration: Sequence[Peripheral],
+    integration: Integration,
+    controller: type[AbstractController],
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
@@ -289,8 +290,9 @@ async def run_cli(
     pinned: Sequence[Endpoint] = (),
     **platform: Any,
 ):
-    """Start what ``integration`` exports (its ``peripherals()``) under the runtime, or only its controller with the
-    ``peripherals`` you bind, with a local repository and drop into an interactive prompt. ``platform`` overrides
+    """Start what ``integration`` exports (its ``peripherals``: the ``controller`` and the servers it needs) under the
+    runtime, or only its controller with the ``peripherals`` you bind, with a local repository and drop into an
+    interactive prompt. ``platform`` overrides
     fields of `Platform` (``context``); ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`).
     ``db_path`` file-backs the repository so paired devices survive restarts; omit it for in-memory. ``exit`` / Ctrl-D
     leaves the prompt and stops everything cleanly."""
@@ -309,12 +311,10 @@ async def run_cli(
 
     # Identity is class-level, so the repository/documents folder are scoped before construction;
     # the output also persists state.
-    runner = _runner(integration, storage_root, db_path, peripherals, runtime_peripherals, pinned, platform)
-    controller = runner.controller
-    controller.platform = controller.platform.copy(
-        output=_CliControllerOutput(controller.platform.make_device_repository)
-    )
-    session = _CliSession(controller, runner.runtime)
+    base = _platform(controller, storage_root, db_path)
+    base = base.copy(output=_CliControllerOutput(base.make_device_repository), **platform)
+    runner = _runner(integration(base), controller, storage_root, peripherals, runtime_peripherals, pinned)
+    session = _CliSession(runner.controller, runner.runtime)
 
     await runner.start()
     state = "started" if runner.is_running else "waiting for its needs (see `needs`)"

@@ -33,7 +33,7 @@ class _RecordingController(AbstractController[Device, Parameter]):
     instances: list["_RecordingController"] = []
     handles_changes = True
 
-    def __init__(self, platform=None):
+    def __init__(self, platform):
         super().__init__(platform)
         self.started = self.stopped = 0
         self.changes: list[PeripheralChange] = []
@@ -67,6 +67,11 @@ class _RecordingController(AbstractController[Device, Parameter]):
 
     async def send_command(self, command: DeviceCommand, device: Device, parameter: Parameter):
         pass
+
+
+def peripherals(platform) -> list[_RecordingController]:
+    """What its integration package exports."""
+    return [_RecordingController(platform)]
 
 
 @pytest.fixture
@@ -185,7 +190,7 @@ async def test_the_runner_hands_a_moved_peripheral_over_or_restarts(tmp_path, ro
 async def test_run_controller_with_peripherals_given_runs_without_the_runtime(tmp_path):
     _RecordingController.instances.clear()
     task = asyncio.create_task(
-        run_controller([_RecordingController()], storage_root=tmp_path, peripherals={"zwave": ZWAVE})
+        run_controller(peripherals, _RecordingController, storage_root=tmp_path, peripherals={"zwave": ZWAVE})
     )
 
     async with asyncio.timeout(5):
@@ -203,15 +208,16 @@ async def test_run_controller_with_peripherals_given_runs_without_the_runtime(tm
 
 
 async def test_run_controller_wants_one_controller_among_what_an_integration_exports(tmp_path):
-    with pytest.raises(ValueError, match="one controller, not 2"):
-        await run_controller([_RecordingController(), _RecordingController()], storage_root=tmp_path)
+    with pytest.raises(ValueError, match="one _RecordingController, not 2"):
+        await run_controller(lambda platform: peripherals(platform) * 2, _RecordingController, storage_root=tmp_path)
 
 
 async def test_run_controller_starts_and_stops_cleanly_under_the_runtime(tmp_path):
     _RecordingController.instances.clear()
     task = asyncio.create_task(
         run_controller(
-            [_RecordingController()],
+            peripherals,
+            _RecordingController,
             storage_root=tmp_path,
             runtime_peripherals=[FakeSSDP()],
             pinned=[ZWAVE],

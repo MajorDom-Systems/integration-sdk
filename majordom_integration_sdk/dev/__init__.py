@@ -10,7 +10,7 @@ you watch what it discovers/reports on the console.
     import majordom_hue  # your integration
     from majordom_integration_sdk.dev import run_controller
 
-    asyncio.run(run_controller(majordom_hue.peripherals()))  # its controller and the servers it needs
+    asyncio.run(run_controller(majordom_hue.peripherals, majordom_hue.HueController))
 
 Without Docker, ``pinned=[Endpoint(...)]`` gives the endpoints of the servers you run yourself;
 ``runtime_peripherals=[HostNetwork(), ...]`` runs only those around it (no USB scanning);
@@ -175,8 +175,12 @@ class Runner:
             self._is_started = False
 
 
+type Integration = Callable[[Platform], Sequence[Peripheral]]  # what an integration package exports: peripherals
+
+
 async def run_controller(
-    integration: Sequence[Peripheral],
+    integration: Integration,
+    controller: type[AbstractController],
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
@@ -185,12 +189,13 @@ async def run_controller(
     pinned: Sequence[Endpoint] = (),
     **platform: Any,
 ):
-    """Start what ``integration`` exports (its ``peripherals()``: the controller and the servers it needs) under the
+    """Start what ``integration`` exports (its ``peripherals``: the ``controller`` and the servers it needs) under the
     runtime, or only its controller with the ``peripherals`` you bind, and run until interrupted (Ctrl-C), then stop
-    everything cleanly. ``platform`` overrides fields of `Platform`, e.g. ``context``; ``runtime_peripherals`` and
-    ``pinned`` go to the runtime (`build_runtime`)."""
+    everything cleanly. It is given its platform as by the Hub, ``platform`` overriding fields of `Platform`, e.g.
+    ``context``; ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    runner = _runner(integration, storage_root, db_path, peripherals, runtime_peripherals, pinned, platform)
+    exported = integration(_platform(controller, storage_root, db_path).copy(**platform))
+    runner = _runner(exported, controller, storage_root, peripherals, runtime_peripherals, pinned)
     await runner.start()
     try:
         await asyncio.Event().wait()  # run forever until cancelled
@@ -201,28 +206,31 @@ async def run_controller(
         logger.info(f"{runner.controller.name} stopped.")
 
 
-def _runner(
-    integration: Sequence[Peripheral],
+def _platform(controller: type[AbstractController], storage_root: Path | None, db_path: str | Path | None) -> Platform:
+    """The platform the Hub gives the integration of ``controller``: a repository and documents folder of its own."""
+    return build_platform(
+        storage_root=storage_root, db_path=db_path, integration=controller.name, slug=controller.slug()
+    )
+
+
+def _runner[C: AbstractController](
+    exported: Sequence[Peripheral],
+    kind: type[C],
     storage_root: Path | None,
-    db_path: str | Path | None,
     peripherals: Mapping[str, Bound] | None,
     runtime_peripherals: Sequence[Peripheral] | None,
     pinned: Sequence[Endpoint],
-    overrides: Mapping[str, Any],
 ) -> Runner:
-    """Its one controller given its platform, as the Hub does: a repository and documents folder of its own."""
-    controllers = [peripheral for peripheral in integration if isinstance(peripheral, AbstractController)]
+    """What an integration exported, run around its one controller of ``kind``."""
+    controllers = [peripheral for peripheral in exported if isinstance(peripheral, kind)]
     if len(controllers) != 1:
-        raise ValueError(f"An integration exports one controller, not {len(controllers)}: {list(integration)}")
+        raise ValueError(f"An integration exports one {kind.__name__}, not {len(controllers)}: {list(exported)}")
     controller, root = controllers[0], Path(storage_root) if storage_root is not None else Path(".majordom-dev")
-    kind = type(controller)
-    platform = build_platform(storage_root=root, db_path=db_path, integration=kind.name, slug=kind.slug())
-    controller.platform = platform.copy(**overrides)
     if peripherals is not None:
         controller.peripherals = Peripherals(peripherals)
         return Runner(controller)
     runtime = build_runtime(
-        integration,
+        exported,
         root / "runtime",
         runtime_peripherals=runtime_peripherals,
         pinned=pinned,
