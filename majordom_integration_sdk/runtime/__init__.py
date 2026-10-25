@@ -7,6 +7,9 @@ from majordom_integration_sdk.runtime.peripherals.hardware.fixed import FixedPer
 from majordom_integration_sdk.runtime.peripherals.hardware.host import BluetoothAdapters, HostNetwork
 from majordom_integration_sdk.runtime.peripherals.hardware.usb import Radio, UsbScanner
 from majordom_integration_sdk.runtime.peripherals.pinned import Pinned
+from majordom_integration_sdk.runtime.peripherals.providers.ble.proxy import BLEProxy
+from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
+from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
 from majordom_integration_sdk.runtime.runtime import (
     RETRY_DELAYS,
     DisabledStore,
@@ -35,4 +38,7 @@ __all__ = [
     "BluetoothAdapters",
     "HostNetwork",
     "Pinned",
+    "BLEService",
+    "BLEProxy",
+    "SSDPDiscoveryService",
 ]

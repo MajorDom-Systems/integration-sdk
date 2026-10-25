@@ -517,19 +517,29 @@ async def test_a_proxy_without_a_free_connection_slot_is_tried_last():
     await ble.stop()
 
 
-async def test_the_runtime_binds_and_unbinds_radios_as_sources():
-    from majordom_integration_sdk import Endpoint, PeripheralChange
+async def test_the_router_hears_through_the_proxies_an_integration_brings_along(tmp_path):
+    from support import changed, run
 
-    ble = BLEService()
-    await ble.start()
-    proxy = FakeBLESource("esphome:aa")
-    lent = Endpoint("ble", "esphome-proxy", "esphome:aa", instance=proxy)
+    from majordom_integration_sdk import Need
+    from majordom_integration_sdk.runtime import BLEProxy
+    from majordom_integration_sdk.testing import FakePeripheral
 
-    await ble.peripheral_did_change(PeripheralChange("ble", None, [lent]))
+    ble, proxy = BLEService(), FakeBLESource("esphome:aa")
+    esphome = FakePeripheral("esphome", [Need("ble", ["router"], is_required=False)], answer=True)
+    runtime = await run(tmp_path, ble, esphome)
+
+    esphome.peripherals.append(BLEProxy(proxy))  # a node connected
+    await changed(runtime, esphome)
     assert proxy.on_advertisement is not None  # heard through
-    await ble.peripheral_did_change(PeripheralChange("ble", [lent], []))
-    assert proxy.on_advertisement is None
-    await ble.stop()
+
+    again = FakeBLESource("esphome:aa")  # it reconnected: another source under the same name
+    esphome.peripherals[:] = [BLEProxy(again)]
+    await changed(runtime, esphome)
+    assert proxy.on_advertisement is None and again.on_advertisement is not None
+
+    esphome.peripherals.clear()  # gone
+    await changed(runtime, esphome)
+    assert again.on_advertisement is None
 
 
 async def test_a_manufacturer_id_alone_selects_devices_that_advertise_no_service(radios):
@@ -557,19 +567,3 @@ async def test_changed_manufacturer_data_is_an_update(radios):
         near.advertise("BB", manufacturer_data={APPLE: data})
         await settle()
     assert (len(listener.found), len(listener.updated)) == (1, 1)
-
-
-async def test_fake_offers_lend_the_router_what_an_integration_offers():
-    from majordom_integration_sdk import Endpoint
-    from majordom_integration_sdk.testing import FakeOffers
-
-    ble = BLEService()
-    await ble.start()
-    offers, proxy = FakeOffers(ble), FakeBLESource("esphome:aa")
-    lent = Endpoint("ble", "esphome-proxy", "esphome:aa", instance=proxy)
-
-    await offers.offer(lent)
-    assert offers.offered == [lent] and proxy.on_advertisement is not None
-    await offers.withdraw(lent)
-    assert offers.offered == [] and proxy.on_advertisement is None
-    await ble.stop()

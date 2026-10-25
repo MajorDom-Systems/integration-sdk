@@ -12,7 +12,7 @@ from time import monotonic
 from typing import NamedTuple
 
 from majordom_integration_sdk.capabilities.ssdp import SSDPDiscoveryInfo, SSDPDiscoveryListener
-from majordom_integration_sdk.peripherals import Endpoint, Need, PeripheralChange
+from majordom_integration_sdk.peripherals import Endpoint, Peripheral
 
 logger = logging.getLogger(__name__)
 
@@ -46,18 +46,19 @@ class _SocketSubscribers:
     )  # search_target -> list of Subscriber
 
 
-class SSDPDiscoveryService:
-    """An `SSDP`."""
+class SSDPDiscoveryService(Peripheral):
+    """An `SSDP`, on demand."""
 
     name = "ssdp"
-    needs: list[Need] = []
+    is_on_demand = True
 
     @property
     def endpoint(self) -> Endpoint:
         return Endpoint("upnp", "ssdp", "ssdp", is_shared=True, instance=self)
 
-    async def peripheral_did_change(self, change: PeripheralChange) -> None:
-        pass
+    @property
+    def provides(self) -> list[Endpoint]:
+        return [self.endpoint]
 
     def __init__(self):
         # Single dict: Endpoint -> SocketSubscribers(socket, [Subscriber])
@@ -117,6 +118,9 @@ class SSDPDiscoveryService:
     # Putting workers together
 
     async def start(self):
+        for es in self._endpoints_subscribers.values():
+            if es.scan_socket.fileno() == -1:  # closed when it stopped: the subscriptions go on
+                es.scan_socket = self._create_scan_socket()
         self._is_running = True
         self._tasks = [
             asyncio.create_task(self._start_scanning()),

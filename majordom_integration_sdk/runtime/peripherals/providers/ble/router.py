@@ -2,7 +2,8 @@
 `majordom_integration_sdk.capabilities.ble` for the contract integrations use).
 
 It needs every raw radio, ``ble/bluez`` adapters, ``ble/silabs-cpc-hci`` and the ``ble/esphome-proxy`` nodes ESPHome
-offers, and offers itself as the one shared ``ble/router``. Sources come and go as the runtime rebinds it.
+brings along (`BLEProxy`), and provides itself as the one shared ``ble/router``, on demand. Sources come and go as the
+runtime rebinds it.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from majordom_integration_sdk.capabilities.ble import (
     PausableBLESource,
     ScanModeBLESource,
 )
-from majordom_integration_sdk.peripherals import Endpoint, Need, PeripheralChange, Peripherals
+from majordom_integration_sdk.peripherals import Endpoint, Need, Peripheral, PeripheralChange, Peripherals
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
@@ -66,17 +67,19 @@ class _BLETrackedDevice:
         return [source for _, source in sorted(recent, reverse=True)]
 
 
-class BLEService:
+class BLEService(Peripheral):
     """Bluetooth LE across all sources: discovery for listeners, GATT connections on demand. A `BLERouter`."""
 
     name = "ble-router"
     needs = [Need("ble", RAW_BLE, is_many=True, is_required=False)]
+    is_on_demand = True
 
     def __init__(self, sources: Iterable[BLESource] = ()):
         """``sources``: radios to hear through besides the ones the runtime binds."""
+        self._peripherals = Peripherals()
         self._listeners: list[tuple[BLEDiscoveryListener, list[BLEMatcher]]] = []
         self._sources: dict[str, BLESource] = {s.name: s for s in sources}
-        self._bound: dict[str, str] = {}  # bound endpoint url -> the source it became
+        self._bound: dict[tuple[str, int], str] = {}  # bound endpoint (url, instance) -> the source it became
         self._is_running: bool = False
         self._leases: dict[str, asyncio.Lock] = {}  # source -> held while it is leased
         self._removal_grace_sec: float = 11.0  # seconds unheard by every source before did_remove is fired
@@ -93,23 +96,33 @@ class BLEService:
 
     @property
     def endpoint(self) -> Endpoint:
-        """What the runtime offers: this router, shared by every consumer."""
+        """This router, shared by every consumer: pass it to a controller in library mode."""
         return Endpoint("ble", "router", "router", is_shared=True, instance=self)
 
-    async def peripheral_did_change(self, change: PeripheralChange) -> None:
+    @property
+    def provides(self) -> list[Endpoint]:
+        return [self.endpoint]
+
+    @property
+    def peripherals(self) -> Peripherals:
+        return self._peripherals
+
+    async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:
         """The runtime bound other radios to it: hear through the new ones, let go of the lost ones."""
-        before = {e.url: e for e in Peripherals({"ble": change.before}).endpoints("ble")} if change.before else {}
-        after = {e.url: e for e in Peripherals({"ble": change.after}).endpoints("ble")} if change.after else {}
-        for url in before.keys() - after.keys():
-            if name := self._bound.pop(url, None):
-                await self.remove_source(name)
-        for url in after.keys() - before.keys():
+        await self._follow_bound()
+        return True
+
+    async def _follow_bound(self):
+        bound = {(e.url, id(e.instance)): e for e in self.peripherals.endpoints("ble")}
+        for key in self._bound.keys() - bound.keys():
+            await self.remove_source(self._bound.pop(key))
+        for key in bound.keys() - self._bound.keys():
             try:
-                source = source_of(after[url])
+                source = source_of(bound[key])
             except Exception as e:  # a radio that can't be used here (a missing extra) leaves the others working
-                logger.warning(f"BLE can't use {after[url].dialect} {url}: {e}")
+                logger.warning(f"BLE can't use {bound[key].dialect} {bound[key].url}: {e}")
                 continue
-            self._bound[url] = source.name
+            self._bound[key] = source.name
             await self.add_source(source)
 
     def register(self, listener: BLEDiscoveryListener, matchers: Iterable[BLEMatcher | UUID]) -> Callable[[], None]:
@@ -143,6 +156,7 @@ class BLEService:
             await source.stop()
 
     async def start(self):
+        await self._follow_bound()
         self._is_running = True
         await self._start_sources()
         self._spawn(self._eviction_loop())

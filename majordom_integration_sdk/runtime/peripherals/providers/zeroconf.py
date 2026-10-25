@@ -12,7 +12,7 @@ from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZerocon
 from zeroconf.const import _CLASS_IN, _TYPE_A, _TYPE_AAAA, _TYPE_PTR
 
 from majordom_integration_sdk.capabilities.zeroconf import ZeroconfDiscoveryInfo, ZeroconfDiscoveryListener
-from majordom_integration_sdk.peripherals import Endpoint, Need, PeripheralChange
+from majordom_integration_sdk.peripherals import Endpoint, Peripheral
 
 logger = logging.getLogger(__name__)
 
@@ -22,18 +22,19 @@ _CACHE_POLL_INTERVAL = 30  # seconds — how often to reconcile our state agains
 _EVICT_GRACE_MS = 10_000  # ms — grace window after A/AAAA expiry before probing; allows zeroconf to renew
 
 
-class ZeroconfDiscoveryService:
-    """A `Zeroconf`."""
+class ZeroconfDiscoveryService(Peripheral):
+    """A `Zeroconf`, on demand."""
 
     name = "zeroconf"
-    needs: list[Need] = []
+    is_on_demand = True
 
     @property
     def endpoint(self) -> Endpoint:
         return Endpoint("mdns", "zeroconf", "zeroconf", is_shared=True, instance=self)
 
-    async def peripheral_did_change(self, change: PeripheralChange) -> None:
-        pass
+    @property
+    def provides(self) -> list[Endpoint]:
+        return [self.endpoint]
 
     @property
     def async_zeroconf(self) -> AsyncZeroconf | None:
