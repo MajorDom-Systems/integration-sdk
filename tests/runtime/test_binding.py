@@ -106,15 +106,13 @@ async def test_a_reserved_endpoint_is_no_one_elses(tmp_path):
     assert sniffer.peripherals.endpoints("ble") == ADAPTERS[1:]
 
 
-async def test_the_users_pin_picks_between_two_providers(tmp_path):
+async def test_the_first_given_of_two_providers_serves_a_need(tmp_path):
     multipan = FakePeripheral("silabs-multiprotocol", provides=[Endpoint("thread", "otbr-rest", "a", is_shared=True)])
     otbr = FakePeripheral("otbr", provides=[Endpoint("thread", "otbr-rest", "b", is_shared=True)])
-    matter = FakePeripheral("matter", [Need("thread")], answer=True)
+    matter = FakePeripheral("matter", [Need("thread")])
     runtime = await run(tmp_path, multipan, otbr, matter)
-    assert runtime.providers(matter) == {"thread": "silabs-multiprotocol"}  # the first given
-
-    await runtime.pin("thread", "otbr")
-    assert runtime.providers(matter) == {"thread": "otbr"}
+    assert runtime.providers(matter) == {"thread": "silabs-multiprotocol"}
+    assert not hasattr(runtime, "pin")  # the order given and Pinned say what to prefer
 
 
 async def test_a_provider_that_cant_run_says_why(tmp_path):

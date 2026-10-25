@@ -141,23 +141,24 @@ class _Entry:
 
 class Runtime:
     """Runs every peripheral it is given, and what those bring along, by one rule (see `Peripheral`); binds their
-    needs, and is the `PeripheralOutput` of each::
+    needs, and is the ``runtime`` of each::
 
-        runtime = Runtime(data, peripherals=[*default_peripherals(), HueController(platform)])
+        runtime = Runtime(data, [Pinned(*mine), FixedPeripherals(*soldered), *default_peripherals(), *integrations])
         await runtime.start()
 
-    ``peripherals`` are bound in this order, what each brings along right after it: one listed first wins a single-use
-    endpoint (the Bluetooth router takes every adapter before the containers) and is preferred for a need (list
-    `Pinned` first). ``context`` gives the Hub-wide facts, which peripherals read and containers render; ``output``
-    hears every change of status, what is learned and what is gone; ``disabled`` keeps what the user disabled (in
-    memory by default). Its own state — the settings, the user's pins and reservations — goes to ``data``, and every
-    peripheral gets a folder there, ``peripherals/<name>``.
+    ``peripherals`` bind in the order given, what each brings along right after it: one given first wins a single-use
+    endpoint (the Bluetooth router takes every adapter before the containers) and serves a need first: `Pinned`,
+    then the hardware, the defaults and the integrations. ``context`` gives the Hub-wide facts, which peripherals read
+    and containers render; ``output`` hears every change of status, what is learned and what is gone; ``disabled``
+    keeps what the user disabled (in memory by default). Its own state, the settings and the user's reservations, goes
+    to ``data``; every peripheral gets a folder there, ``peripherals/<name>``.
 
-    A peripheral that isn't disabled or failed runs while what brought it along does, while something that runs binds
-    it if it ``is_on_demand``, and once every required need is bound to a provider that runs: its start returned. Only a
-    waiting one starts by itself: a stick plugged in again never revives a disabled or failed one. A start that raises
-    is tried again after each of `RETRY_DELAYS`, then the peripheral is failed; a hook that raises restarts it the same
-    way. Leaving the running state releases what it brought along: what it holds stops with it.
+    A peripheral that isn't disabled or failed runs while something that runs binds it if it ``is_on_demand``, while
+    what brought it along runs, and once every required need is bound to a provider that runs. Only a waiting one
+    starts by itself: a stick plugged in again never revives a disabled or failed one. A start that raises or takes too
+    long, a crash it tells (``peripheral_did_fail``) and a hook that raises are tried again after each of
+    `RETRY_DELAYS`, then it is failed; one that stops by itself (``peripheral_did_stop``) waits for its needs to
+    change. What it brought along goes when it stops.
     """
 
     def __init__(
@@ -171,7 +172,7 @@ class Runtime:
     ):
         self.data, self.given, self._context, self.output = data, list(peripherals), context, output
         self.disabled = disabled or MemoryDisabledStore()
-        self.state: dict[str, Any] = {"settings": {}, "pins": {}, "reserved": {}}
+        self.state: dict[str, Any] = {"settings": {}, "reserved": {}}
         saved = read_json(data / "state.json")
         self.state |= {key: saved[key] for key in saved.keys() & self.state.keys()}  # older keys start fresh
         self._entries: dict[str, _Entry] = {}  # in binding order
@@ -367,15 +368,6 @@ class Runtime:
                     await self._stop(entry, _waiting())
 
         await self._act(apply)
-
-    async def pin(self, family: str, provider: str | None):
-        """Prefer ``provider`` (a peripheral's name) for every need of ``family``; None goes back to the order given."""
-        if provider is None:
-            self.state["pins"].pop(family, None)
-        else:
-            self.state["pins"][family] = provider
-        self._save()
-        await self._settle()
 
     async def reserve(self, owner: str, family: str, url: str | None):
         """Keep the ``family`` endpoint at ``url`` for ``owner`` alone, bound to it before anything else can bind it,
@@ -622,7 +614,7 @@ class Runtime:
     def _candidates(
         self, owner: str, need: Need, among: set[str], provides: Mapping[str, list[Endpoint]]
     ) -> list[Binding]:
-        """What could serve ``need`` of ``owner``, best first: reserved for it, then the user's pin, then in order."""
+        """What could serve ``need`` of ``owner``, best first: reserved for it, then in the order given."""
         candidates = [
             (self._entries[name], endpoint)
             for name in self._entries
@@ -630,9 +622,8 @@ class Runtime:
             for endpoint in provides[name]
             if need.accepts(endpoint)
         ]
-        pin = self.state["pins"].get(need.family)
         reserved = self.state["reserved"].get(owner, {})
-        return sorted(candidates, key=lambda c: (reserved.get(c[1].family) != c[1].url, c[0].name != pin))
+        return sorted(candidates, key=lambda c: reserved.get(c[1].family) != c[1].url)
 
     def _is_free(
         self, provider: _Entry, endpoint: Endpoint, owner: str, taken: Mapping[tuple[str, str, str], str]
