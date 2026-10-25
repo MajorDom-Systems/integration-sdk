@@ -1,4 +1,4 @@
-"""Services the runtime itself runs between radios and integrations."""
+"""The containers the SDK brings between radios and integrations: Thread border routers."""
 
 from __future__ import annotations
 
@@ -40,9 +40,10 @@ class _BorderRouter(Service):
 class _FormingBorderRouter(_BorderRouter):
     """A border router that comes up without a network: the runtime joins the configured one or forms one."""
 
-    async def provision(self, endpoint: Endpoint, settings: BaseModel | None) -> None:
-        network = settings if isinstance(settings, ThreadNetwork) else ThreadNetwork()
-        await form_network(endpoint.url, network, FORM_PATIENCE)
+    settings: ThreadNetwork | None
+
+    async def provision(self, endpoint: Endpoint):
+        await form_network(endpoint.url, self.settings or ThreadNetwork(), FORM_PATIENCE)
 
 
 #: One multi-PAN RCP serving Zigbee (zigbeed, EZSP over TCP) and Thread (OTBR) through cpcd.
@@ -122,8 +123,6 @@ otbr = _FormingBorderRouter(
     },
 )
 
-SERVICES = [silabs_multiprotocol, otbr]
-
 
 def _call(url: str, method: str, path: str, body: str | None = None, kind: str = "text/plain") -> str:
     request = urllib.request.Request(
@@ -143,7 +142,7 @@ async def active_dataset(url: str) -> str:
         await asyncio.sleep(1)
 
 
-async def form_network(url: str, network: ThreadNetwork, patience: float = FORM_PATIENCE) -> None:
+async def form_network(url: str, network: ThreadNetwork, patience: float = FORM_PATIENCE):
     """Once the border router at ``url`` has answered for ``patience`` seconds without a network, join
     ``network.dataset`` or form a new network — once."""
 

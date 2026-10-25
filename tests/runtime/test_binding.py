@@ -122,5 +122,5 @@ async def test_what_a_firmware_would_serve_through_what_runs_here(tmp_path):
         is_on_demand=True,
     )
     runtime = await run(tmp_path, multipan, FakePeripheral("zigbee", [Need("zigbee")]))
-    assert runtime.reach([Endpoint("multipan", "silabs-cpc")]) == ["multipan", "zigbee"]  # thread: no one needs it
+    assert runtime.reach([Endpoint("multipan", "silabs-cpc")]) == ["zigbee"]  # thread: no one needs it
     assert runtime.reach([Endpoint("zwave")]) == []

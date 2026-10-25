@@ -16,7 +16,16 @@ from time import monotonic
 from typing import Any, Protocol
 
 from majordom_integration_sdk.controller.platform import Context
-from majordom_integration_sdk.peripherals import Bound, Endpoint, Need, Peripheral, PeripheralChange, Peripherals
+from majordom_integration_sdk.peripherals import (
+    Bound,
+    Endpoint,
+    Need,
+    Peripheral,
+    PeripheralChange,
+    Peripherals,
+    Service,
+)
+from majordom_integration_sdk.runtime.peripherals.services.compose import Compose
 
 log = logging.getLogger(__name__)
 
@@ -114,8 +123,10 @@ class Runtime:
     ``peripherals`` are bound in this order, what each brings along right after it: one listed first wins a single-use
     endpoint (the Bluetooth router takes every adapter before the containers) and is preferred for a need (list
     `Pinned` first). ``context`` gives the Hub-wide facts its containers render; ``output`` hears every change of
-    status and what is learned; ``disabled`` keeps what the user disabled (in memory by default). Its own state — the
-    settings, the user's pins and reservations — goes to ``data``.
+    status and what is learned; ``disabled`` keeps what the user disabled (in memory by default). It runs the
+    containers of the `Service`s through Docker Compose (`Compose`); without ``is_docker_enabled`` it only writes their
+    compose file, for you to run. Its own state — the settings, the user's pins and reservations, the containers' ports
+    — goes to ``data``.
 
     A peripheral that isn't disabled or failed runs while what brought it along does, while something that runs binds
     it if it ``is_on_demand``, and once every required need is bound to a provider that runs and is ready. Only a
@@ -132,13 +143,15 @@ class Runtime:
         context: Callable[[], Context] = Context,
         output: RuntimeOutput | None = None,
         disabled: DisabledStore | None = None,
+        is_docker_enabled: bool = True,
     ):
         self.data, self.given, self.context, self.output = data, list(peripherals), context, output
         self.disabled = disabled or MemoryDisabledStore()
-        self.state: dict[str, Any] = {"settings": {}, "pins": {}, "reserved": {}}
+        self.state: dict[str, Any] = {"settings": {}, "pins": {}, "reserved": {}, "ports": {}}
         with contextlib.suppress(FileNotFoundError):
             saved = json.loads((data / "state.json").read_text())
-            self.state |= {key: saved[key] for key in saved.keys() & {"settings", "pins", "reserved", "ports"}}
+            self.state |= {key: saved[key] for key in saved.keys() & self.state.keys()}  # older keys start fresh
+        self.compose = Compose(data, self.state["ports"], self._save, context, self._learned, is_docker_enabled)
         self._entries: dict[str, _Entry] = {}  # in binding order
         self._wanted: set[str] = set()  # the ones that should run
         self._bound: dict[str, dict[str, list[Binding]]] = {}
@@ -224,7 +237,8 @@ class Runtime:
 
     def reach(self, endpoints: Iterable[Endpoint]) -> list[str]:
         """The families ``endpoints`` would serve, themselves or through the on-demand peripherals here they would run,
-        that something here needs: what a radio's firmware is good for."""
+        that something running anyway needs, or what it brings along (an integration, its containers): what a radio's
+        firmware is good for."""
         families: set[str] = set()
         reached = {e.family for e in endpoints}
         while reached != families:
@@ -236,7 +250,8 @@ class Runtime:
                     if entry.peripheral.is_on_demand and _satisfied(entry.peripheral.needs, families)
                 )
             )
-        return sorted(families & {need.family for entry in self._entries.values() for need in entry.peripheral.needs})
+        anyway = [entry.peripheral for entry in self._entries.values() if self._is_run_anyway(entry)]
+        return sorted(families & {need.family for peripheral in anyway for need in peripheral.needs})
 
     # What the Hub (or you) changes
 
@@ -434,6 +449,8 @@ class Runtime:
 
     def _adopt(self, peripheral: Peripheral, contributor: str | None) -> _Entry:
         peripheral.output = self
+        if isinstance(peripheral, Service):
+            peripheral.host = self.compose
         peripheral.settings = self._settings(peripheral)
         is_disabled = self.disabled.is_disabled(peripheral.name)
         return _Entry(peripheral, contributor, PeripheralState.DISABLED if is_disabled else PeripheralState.WAITING)
@@ -447,6 +464,14 @@ class Runtime:
             self.state["settings"][peripheral.name] = dumped
             self._save()
         return current
+
+    def _is_run_anyway(self, entry: _Entry) -> bool:
+        """It, or what brought it along, runs whether something uses it or not."""
+        while entry.peripheral.is_on_demand:
+            if entry.contributor is None:
+                return False
+            entry = self._entries[entry.contributor]
+        return True
 
     def _is_alive(self, entry: _Entry) -> bool:
         """Neither it nor what brought it along is disabled or failed."""
@@ -465,15 +490,14 @@ class Runtime:
         wanted = set(alive)
         while True:
             bound, taken = self._bind(wanted, provides)
-            used = {p.name for owner, b in bound.items() for bindings in b.values() for p, _ in bindings}
-            still = {
-                name
-                for name in wanted
-                if name in bound and (not self._entries[name].peripheral.is_on_demand or name in used)
-            }
-            if still == wanted:
-                break
-            wanted = still
+            if unbound := wanted - bound.keys():  # first: what bound to one of these binds anew
+                wanted -= unbound
+                continue
+            used = {p.name for b in bound.values() for bindings in b.values() for p, _ in bindings}
+            if unused := {name for name in wanted if self._entries[name].peripheral.is_on_demand and name not in used}:
+                wanted -= unused
+                continue
+            break
         self._wanted, self._bound = wanted, bound
         self._unbound = _Reasons(self, alive, wanted, provides, taken).all()
 
