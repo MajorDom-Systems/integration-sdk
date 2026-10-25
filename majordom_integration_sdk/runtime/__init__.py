@@ -1,7 +1,10 @@
 """The runtime (the ``runtime`` extra): runs peripherals — radios, the host's adapters and network, containers, the
-in-process providers, integrations — and binds their needs.
+in-process providers, integrations — and binds their needs. `DEFAULT_PERIPHERALS` are what it runs around integrations
+(see `majordom_integration_sdk.runtime.defaults`); DNS-SD, the ``discovery`` extra, is in
+`majordom_integration_sdk.runtime.peripherals.providers.zeroconf`.
 """
 
+from majordom_integration_sdk.runtime.defaults import DEFAULT_PERIPHERALS
 from majordom_integration_sdk.runtime.peripherals.hardware.drivers import DEFAULT_USB_DRIVERS, Silabs, ZWave
 from majordom_integration_sdk.runtime.peripherals.hardware.fixed import FixedPeripherals, FixedRadio
 from majordom_integration_sdk.runtime.peripherals.hardware.host import BluetoothAdapters, HostNetwork
@@ -21,6 +24,7 @@ from majordom_integration_sdk.runtime.runtime import (
 )
 
 __all__ = [
+    "DEFAULT_PERIPHERALS",
     "Runtime",
     "RuntimeOutput",
     "PeripheralState",

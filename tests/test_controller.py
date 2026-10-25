@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from conftest import make_device_state
+from factories import make_device_state
 
 from majordom_integration_sdk import Context
 from majordom_integration_sdk.controller import AbstractController

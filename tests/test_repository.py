@@ -3,7 +3,7 @@
 from uuid import uuid4
 
 import pytest
-from conftest import make_device_state
+from factories import make_device_state
 
 from majordom_integration_sdk.repository import (
     DeviceRepositoryMemory,

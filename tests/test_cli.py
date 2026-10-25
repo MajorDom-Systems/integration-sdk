@@ -4,11 +4,12 @@ wiring on top is a thin layer over these same calls."""
 
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID, uuid4
 
 import pytest
 
-from majordom_integration_sdk import Endpoint, IntegrationError, Need, Peripherals
+from majordom_integration_sdk import Endpoint, IntegrationError, Need
 from majordom_integration_sdk.controller import AbstractController
 from majordom_integration_sdk.dev.cli import _CliControllerOutput, _CliSession, _print
 from majordom_integration_sdk.schemas.command import DeviceCommand
@@ -264,20 +265,32 @@ class _ZigbeeController(FakeController):
 
 
 @pytest.fixture
-async def needs_session(tmp_path, monkeypatch):
+async def needs_session(tmp_path):
     from majordom_integration_sdk.dev import Runner, build_runtime
-    from majordom_integration_sdk.testing import FakeBLERouter, FakeBLESource
+    from majordom_integration_sdk.runtime.peripherals.services.builtin import silabs_multiprotocol
+    from majordom_integration_sdk.testing import FakeBLERouter, FakeBLESource, FakePeripheral
 
-    monkeypatch.setattr("majordom_integration_sdk.runtime.runtime.builtin_providers", lambda: [FakeBLERouter()])
-    monkeypatch.setattr(
-        "majordom_integration_sdk.runtime.runtime._host_endpoints",
-        lambda: [Endpoint("ble", "bluez", "hci0", instance=FakeBLESource("hci0"))],
+    adapter = FakePeripheral(
+        "bluetooth-adapters", provides=[Endpoint("ble", "bluez", "hci0", instance=FakeBLESource())]
     )
-    runtime = build_runtime(_ZigbeeController, tmp_path / "runtime", is_docker_enabled=False, is_scan_enabled=False)
-    runner = Runner(_ZigbeeController, build_test_platform(integration=INTEGRATION), runtime)
+    matter = FakePeripheral("matter", [Need("ble", ["router"])])  # runs the router: it takes the adapter
+    controller = _ZigbeeController(build_test_platform(integration=INTEGRATION))
+    runtime = build_runtime(
+        controller,
+        tmp_path / "runtime",
+        runtime_peripherals=[adapter, silabs_multiprotocol, FakeBLERouter(), matter],
+        is_docker_enabled=False,
+    )
+    runner = Runner(controller, runtime)
     await runner.start()
-    yield _CliSession(runner.controller, runtime), runner
+    yield _CliSession(controller, runtime), runner
     await runner.stop()
+
+
+async def _until_running(runner, is_running: bool = True):
+    async with asyncio.timeout(2):
+        while runner.is_running != is_running:
+            await asyncio.sleep(0.01)
 
 
 async def test_needs_show_what_is_unbound_and_why(needs_session):
@@ -296,10 +309,10 @@ async def test_a_pinned_endpoint_binds_the_need_and_starts_the_integration(needs
     await session.pin("zigbee", "socket://192.168.1.5:6638")  # the need's first dialect
 
     assert session.needs()[0] == "zigbee/ezsp|znp  -> socket://192.168.1.5:6638  by pinned"
+    await _until_running(runner)
     assert runner.controller.peripherals.endpoint("zigbee") == Endpoint(
         "zigbee", "ezsp", "socket://192.168.1.5:6638", is_shared=True
     )
-    assert runner.is_running
 
     await session.unpin("zigbee")
     assert session.needs()[0].startswith("zigbee/ezsp|znp  unbound")
@@ -309,7 +322,7 @@ async def test_a_pinned_endpoint_binds_the_need_and_starts_the_integration(needs
 
 async def test_needs_without_a_runtime_list_what_was_given():
     controller = _ZigbeeController(build_test_platform(integration=INTEGRATION))
-    controller.peripherals = Peripherals({"zigbee": Endpoint("zigbee", "ezsp", "/dev/ttyUSB0")})
+    controller.peripherals.bind({"zigbee": Endpoint("zigbee", "ezsp", "/dev/ttyUSB0")})
     session = _CliSession(controller)
     assert session.needs()[0] == "zigbee/ezsp|znp  -> /dev/ttyUSB0  by you"
     with pytest.raises(RuntimeError, match="by hand"):

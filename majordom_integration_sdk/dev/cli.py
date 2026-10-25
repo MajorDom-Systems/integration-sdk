@@ -24,7 +24,7 @@ import json
 import logging
 import shutil
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -35,7 +35,7 @@ from typer_shell import make_typer_shell
 
 from ..controller.abstract_controller import AbstractController
 from ..controller.output import ControllerOutput
-from ..peripherals import Bound, Endpoint, Peripherals
+from ..peripherals import Bound, Endpoint, Peripheral
 from ..schemas.command import DeviceCommand
 from ..schemas.credentials import CredentialsType, ProvidedCredentials
 from ..schemas.event import DeviceParameterChange
@@ -43,7 +43,7 @@ from ..schemas.parameter import ParameterRole
 from . import _runner
 
 if TYPE_CHECKING:
-    from ..runtime import Runtime
+    from ..runtime import Pinned, Runtime
 
 logger = logging.getLogger("majordom_integration_sdk.dev")
 
@@ -180,37 +180,44 @@ class _CliSession:
 
     def needs(self) -> list[str]:
         """Each need: what it is bound to and who provides it, or why it isn't bound."""
-        slug, rows = self._controller.slug(), []
-        bound = (self._runtime.peripherals(slug) or Peripherals()) if self._runtime else self._controller.peripherals
-        providers = self._runtime.providers(slug) if self._runtime else {}
-        unbound = self._runtime.unbound(slug) if self._runtime else {}
-        for need in type(self._controller).needs:
+        controller, runtime, rows = self._controller, self._runtime, []
+        bound = runtime.bound(controller) if runtime else controller.peripherals.bound
+        providers = runtime.providers(controller) if runtime else {}
+        unbound = runtime.unbound(controller) if runtime else {}
+        for need in controller.needs:
             wanted = f"{need.family}/{'|'.join(need.dialects) or '*'}{' (many)' if need.is_many else ''}"
             wanted += "" if need.is_required else " (optional)"
-            if need.family in bound:
-                urls = ", ".join(e.url or e.dialect for e in bound.endpoints(need.family))
+            if (endpoints := bound.get(need.family)) is not None:
+                urls = ", ".join(
+                    e.url or e.dialect for e in (endpoints if isinstance(endpoints, list) else [endpoints])
+                )
                 rows.append(f"{wanted}  -> {urls}  by {providers.get(need.family, 'you')}")
             else:
                 rows.append(f"{wanted}  unbound: {unbound.get(need.family, 'not given')}")
         return rows
 
-    async def pin(self, family: str, url: str, dialect: str = "") -> None:
+    async def pin(self, family: str, url: str, dialect: str = ""):
         """Provide an endpoint yourself, e.g. ``zigbee socket://192.168.1.5:6638 ezsp``."""
         dialect = dialect or next(
-            (n.dialects[0] for n in type(self._controller).needs if n.family == family and n.dialects), ""
+            (n.dialects[0] for n in self._controller.needs if n.family == family and n.dialects), ""
         )
-        await self._require_runtime().pin_endpoint(Endpoint(family, dialect, url, is_shared=True))
+        await self._pinned().pin(Endpoint(family, dialect, url, is_shared=True))
 
-    async def unpin(self, family: str) -> None:
-        await self._require_runtime().pin_endpoint(None, family)
+    async def unpin(self, family: str):
+        await self._pinned().unpin(family)
 
-    async def resolve(self) -> None:
+    async def resolve(self):
         await self._require_runtime().refresh()
 
     def _require_runtime(self) -> Runtime:
         if self._runtime is None:
             raise RuntimeError("No runtime here: the peripherals were given by hand")
         return self._runtime
+
+    def _pinned(self) -> Pinned:
+        from ..runtime import Pinned
+
+        return next(p for p in self._require_runtime().peripherals if isinstance(p, Pinned))
 
 
 class _CliControllerOutput(ControllerOutput):
@@ -278,16 +285,16 @@ async def run_cli(
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
     peripherals: Mapping[str, Bound] | None = None,
+    runtime_peripherals: Sequence[Peripheral] | None = None,
+    pinned: Sequence[Endpoint] = (),
     is_docker_enabled: bool = True,
-    is_scan_enabled: bool = True,
-    pinned: Mapping[str, Endpoint] = {},
     **platform: Any,
-) -> None:
-    """Start ``controller_type`` under the runtime (or with ``peripherals`` you give) with a local repository and
-    drop into an interactive prompt. ``platform`` overrides fields of `Platform` (``settings``, ``context``);
-    ``is_docker_enabled``, ``is_scan_enabled`` and ``pinned`` go to the runtime. ``db_path`` file-backs the repository
-    so paired devices survive restarts; omit it for in-memory. ``exit`` / Ctrl-D leaves the prompt and stops
-    everything cleanly."""
+):
+    """Start ``controller_type`` under the runtime (or with the ``peripherals`` you bind) with a local repository and
+    drop into an interactive prompt. ``platform`` overrides fields of `Platform` (``context``);
+    ``runtime_peripherals``, ``pinned`` and ``is_docker_enabled`` go to the runtime (`build_runtime`). ``db_path``
+    file-backs the repository so paired devices survive restarts; omit it for in-memory. ``exit`` / Ctrl-D leaves the
+    prompt and stops everything cleanly."""
     # Capture all logs + warnings into a buffer for the duration of the session so they don't break
     # the interactive TUI; the buffer is dumped to stderr on exit/crash (see the finally block).
     # The CLI's own discovery/event/command output (via _print) stays visible and prompt-safe.
@@ -304,11 +311,11 @@ async def run_cli(
     # Identity is class-level, so the repository/documents folder are scoped before construction;
     # the output also persists state.
     runner = _runner(
-        controller_type, storage_root, db_path, peripherals, is_docker_enabled, is_scan_enabled, pinned, None, platform
+        controller_type, storage_root, db_path, peripherals, runtime_peripherals, pinned, is_docker_enabled, platform
     )
     controller = runner.controller
-    controller.platform = runner.base = runner.base.copy(
-        output=_CliControllerOutput(runner.base.make_device_repository)
+    controller.platform = controller.platform.copy(
+        output=_CliControllerOutput(controller.platform.make_device_repository)
     )
     session = _CliSession(controller, runner.runtime)
 

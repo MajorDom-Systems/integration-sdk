@@ -1,10 +1,10 @@
 """Run one integration controller standalone — no Hub process.
 
 This is the "run standalone, then bridge into the MajorDom language" half of the
-integration workflow: the runtime (the ``runtime`` extra) binds the controller's needs as under
-the Hub — the Bluetooth router over the local adapters, DNS-SD, SSDP, the radios it finds and the
-services it runs — and the controller starts with its ``peripherals`` and ``platform``, then you
-watch what it discovers/reports on the console.
+integration workflow: the runtime (the ``runtime`` extra) runs the controller among the SDK's
+`DEFAULT_PERIPHERALS` as under the Hub — the radios it finds, the Bluetooth router over the local
+adapters, DNS-SD, SSDP and the containers it runs — and starts it once its needs are bound, then
+you watch what it discovers/reports on the console.
 
     import asyncio
     from majordom_integration_sdk.dev import run_controller
@@ -12,9 +12,9 @@ watch what it discovers/reports on the console.
 
     asyncio.run(run_controller(HueController))
 
-Without Docker or radios, ``is_docker_enabled=False, is_scan_enabled=False`` and
-``pinned={"zwave": Endpoint(...)}`` bind only what you give; ``peripherals={...}`` skips the
-runtime altogether (library mode).
+Without Docker, ``is_docker_enabled=False`` and ``pinned=[Endpoint(...)]`` give the endpoints you run
+yourself; ``runtime_peripherals=[HostNetwork(), ...]`` runs only those around it (no USB scanning);
+``peripherals={...}`` skips the runtime altogether (library mode).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -30,7 +30,7 @@ from uuid import UUID
 from majordom_integration_sdk.controller.abstract_controller import AbstractController
 from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
 from majordom_integration_sdk.controller.platform import Platform
-from majordom_integration_sdk.peripherals import Bound, Endpoint, PeripheralChange, Peripherals
+from majordom_integration_sdk.peripherals import Bound, Endpoint, Peripheral
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtocol
 from majordom_integration_sdk.repository.sqlite import SqliteDeviceRepository
@@ -39,7 +39,7 @@ from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
 
 if TYPE_CHECKING:
-    from majordom_integration_sdk.runtime import Runtime
+    from majordom_integration_sdk.runtime import PeripheralStatus, Runtime
 
 logger = logging.getLogger("majordom_integration_sdk.dev")
 
@@ -111,99 +111,71 @@ def build_platform(
     )
 
 
+class LoggingRuntimeOutput:
+    """A ``RuntimeOutput`` that logs every change of status: why a peripheral waits or failed."""
+
+    def peripheral_did_change_status(self, peripheral: Peripheral, status: PeripheralStatus):
+        reason = f": {status.reason}" if status.reason else ""
+        logger.info("%s %s%s", peripheral.name, status.state, reason)
+
+    def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+        logger.info("%s learned %s", peripheral.name, ", ".join(facts))
+
+
 def build_runtime(
-    controller_type: type[AbstractController],
+    controller: AbstractController,
     data: Path,
     *,
+    runtime_peripherals: Sequence[Peripheral] | None = None,
+    pinned: Sequence[Endpoint] = (),
     is_docker_enabled: bool = True,
-    is_scan_enabled: bool = True,
-    pinned: Mapping[str, Endpoint] = {},
-    **runtime: Any,
 ) -> Runtime:
-    """The runtime for one controller: its needs bound like under the Hub. Needs the ``runtime`` extra."""
+    """The runtime for one controller, as under the Hub: the endpoints you pin first, then ``runtime_peripherals``
+    (`DEFAULT_PERIPHERALS` by default), then the controller. Needs the ``runtime`` extra."""
     if importlib.util.find_spec("serial") is None:
         raise ImportError(
             "Resolving needs takes the runtime — install it with:\n"
             '    pip install "majordom-integration-sdk[runtime,ble,discovery]"\n'
             "or pass peripherals={...} yourself."
         )
-    from majordom_integration_sdk.runtime import Runtime
+    from majordom_integration_sdk.runtime import DEFAULT_PERIPHERALS, Pinned, Runtime
 
+    around = DEFAULT_PERIPHERALS if runtime_peripherals is None else runtime_peripherals
     return Runtime(
-        data,
-        {controller_type.slug(): controller_type},
-        is_docker_enabled=is_docker_enabled,
-        is_scan_enabled=is_scan_enabled,
-        pinned=pinned,
-        **runtime,
+        data, [Pinned(*pinned), *around, controller], output=LoggingRuntimeOutput(), is_docker_enabled=is_docker_enabled
     )
 
 
 class Runner:
-    """Drives one controller as the Hub does: starts it once its required needs are bound, stops it when one is lost,
-    and hands moved peripherals, settings and context over — restarting it unless it handles them itself."""
+    """Runs one controller standalone: under ``runtime``, which starts it once its needs are bound and hands moved
+    peripherals, settings and context over as under the Hub; or, without, with the needs bound by hand."""
 
-    def __init__(
-        self,
-        controller_type: type[AbstractController],
-        platform: Platform,
-        runtime: Runtime | None = None,
-        peripherals: Mapping[str, Bound] | None = None,
-    ):
-        self.slug, self.base, self.runtime = controller_type.slug(), platform, runtime
-        self.controller = controller_type(platform)
-        self.controller.peripherals = Peripherals(peripherals or {})
-        self.is_running = False
-        self._lock = asyncio.Lock()
-        if runtime:
-            runtime.on_change = self.sync
+    def __init__(self, controller: AbstractController, runtime: Runtime | None = None):
+        self.controller, self.runtime = controller, runtime
+        self._is_started = False
+
+    @property
+    def is_running(self) -> bool:
+        if self.runtime is None:
+            return self._is_started
+        from majordom_integration_sdk.runtime import PeripheralState
+
+        return self.runtime.status(self.controller).state == PeripheralState.RUNNING
 
     async def start(self):
         if self.runtime:
-            await self.runtime.start()  # binds, then syncs through on_change
-        else:
-            await self._start()
+            await self.runtime.start()
+            return
+        await self.controller.start()
+        self._is_started = True
+        logger.info("%s started — watching for devices.", self.controller.name)
 
     async def stop(self):
-        if self.is_running:
-            await self.controller.stop()
-            self.is_running = False
         if self.runtime:
             await self.runtime.stop()
-
-    async def sync(self):
-        assert self.runtime
-        async with self._lock:
-            peripherals = self.runtime.peripherals(self.slug)
-            if peripherals is None:
-                for family, reason in self.runtime.unbound(self.slug).items():
-                    logger.warning("%s isn't bound: %s", family, reason)
-                if self.is_running:
-                    await self.controller.stop()
-                    self.is_running = False
-                return
-            platform = self.runtime.platform(self.slug, self.base)
-            before, current = self.controller.peripherals, self.controller.platform
-            self.controller.peripherals, self.controller.platform = peripherals, platform
-            if not self.is_running:
-                return await self._start()
-            handled = True
-            for family in sorted(before.keys() | peripherals.keys()):
-                if before.get(family) != peripherals.get(family):
-                    change = PeripheralChange(family, before.get(family), peripherals.get(family))
-                    handled = await self.controller.peripheral_did_change(change) and handled
-            if platform.settings != current.settings:
-                handled = await self.controller.settings_did_change(current.settings) and handled
-            if platform.context != current.context:
-                handled = await self.controller.context_did_change(current.context) and handled
-            if not handled:
-                await self.controller.stop()
-                await self.controller.start()
-
-    async def _start(self):
-        await self.controller.start()
-        self.is_running = True
-        logger.info("%s started — watching for devices.", self.controller.name)
+        elif self._is_started:
+            await self.controller.stop()
+            self._is_started = False
 
 
 async def run_controller(
@@ -212,17 +184,17 @@ async def run_controller(
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
     peripherals: Mapping[str, Bound] | None = None,
+    runtime_peripherals: Sequence[Peripheral] | None = None,
+    pinned: Sequence[Endpoint] = (),
     is_docker_enabled: bool = True,
-    is_scan_enabled: bool = True,
-    pinned: Mapping[str, Endpoint] = {},
     **platform: Any,
-) -> None:
-    """Start ``controller_type`` under the runtime (or with ``peripherals`` you give) and run until interrupted
-    (Ctrl-C), then stop everything cleanly. ``platform`` overrides fields of `Platform`, e.g. ``settings``;
-    ``is_docker_enabled``, ``is_scan_enabled`` and ``pinned`` go to the runtime (`build_runtime`)."""
+):
+    """Start ``controller_type`` under the runtime (or with the ``peripherals`` you bind) and run until interrupted
+    (Ctrl-C), then stop everything cleanly. ``platform`` overrides fields of `Platform`, e.g. ``context``;
+    ``runtime_peripherals``, ``pinned`` and ``is_docker_enabled`` go to the runtime (`build_runtime`)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     runner = _runner(
-        controller_type, storage_root, db_path, peripherals, is_docker_enabled, is_scan_enabled, pinned, None, platform
+        controller_type, storage_root, db_path, peripherals, runtime_peripherals, pinned, is_docker_enabled, platform
     )
     await runner.start()
     try:
@@ -239,10 +211,9 @@ def _runner(
     storage_root: Path | None,
     db_path: str | Path | None,
     peripherals: Mapping[str, Bound] | None,
+    runtime_peripherals: Sequence[Peripheral] | None,
+    pinned: Sequence[Endpoint],
     is_docker_enabled: bool,
-    is_scan_enabled: bool,
-    pinned: Mapping[str, Endpoint],
-    output: ControllerOutput | None,
     overrides: Mapping[str, Any],
 ) -> Runner:
     # The integration's identity is class-level, so its repository and documents folder can be
@@ -251,17 +222,17 @@ def _runner(
     base = build_platform(
         storage_root=root, db_path=db_path, integration=controller_type.name, slug=controller_type.slug()
     )
-    base = base.copy(output=output or base.output, **overrides)
+    controller = controller_type(base.copy(**overrides), peripherals)
     if peripherals is not None:
-        return Runner(controller_type, base, peripherals=Peripherals(peripherals))
+        return Runner(controller)
     runtime = build_runtime(
-        controller_type,
+        controller,
         root / "runtime",
-        is_docker_enabled=is_docker_enabled,
-        is_scan_enabled=is_scan_enabled,
+        runtime_peripherals=runtime_peripherals,
         pinned=pinned,
+        is_docker_enabled=is_docker_enabled,
     )
-    return Runner(controller_type, base, runtime)
+    return Runner(controller, runtime)
 
 
 def __getattr__(name: str):
@@ -279,4 +250,12 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["run_controller", "run_cli", "build_platform", "build_runtime", "Runner", "LoggingControllerOutput"]
+__all__ = [
+    "run_controller",
+    "run_cli",
+    "build_platform",
+    "build_runtime",
+    "Runner",
+    "LoggingControllerOutput",
+    "LoggingRuntimeOutput",
+]
