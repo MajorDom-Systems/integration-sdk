@@ -1,2 +1,2 @@
-"""What the runtime binds needs to: radios (`hardware`), the services it runs (`services`) and the peripherals it
-provides in-process (`providers`)."""
+"""The peripherals the runtime brings: hardware (`hardware`), the containers between radios and integrations
+(`services`), the ones it runs in-process (`providers`) and the endpoints you provide yourself (`pinned`)."""

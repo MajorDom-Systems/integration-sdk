@@ -299,6 +299,8 @@ class Runtime:
                 entry.state, entry.attempts = PeripheralState.WAITING, 0
             elif entry.state == PeripheralState.RUNNING:
                 await self._ask(entry, peripheral.settings_did_change(before))
+            elif entry.state == PeripheralState.STARTING:  # it may have read the ones before: start it anew
+                await self._stop(entry, _waiting())
 
         await self._act(apply)
         return peripheral.settings
@@ -339,8 +341,9 @@ class Runtime:
         await self._settle()
 
     async def peripheral_did_become_ready(self, peripheral: Peripheral):
-        entry = self._entry(peripheral)
-        entry.is_ready = entry.is_ready or entry.is_started
+        entry = self._entries.get(peripheral.name)
+        if entry is not None and entry.peripheral is peripheral:  # not one gone meanwhile
+            entry.is_ready = entry.is_ready or entry.is_started
         await self._settle()
 
     async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
@@ -580,7 +583,6 @@ class Runtime:
         entry.state, entry.reason, entry.is_ready = PeripheralState.STARTING, "", False
         entry.bindings = self._bound[entry.name]
         self._bind_view(entry, entry.bindings)
-        entry.peripheral.settings = self._settings(entry.peripheral)
         entry.task = self._spawn(self._run_start(entry))
 
     async def _run_start(self, entry: _Entry):

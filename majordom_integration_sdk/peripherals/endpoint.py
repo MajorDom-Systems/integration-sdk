@@ -9,7 +9,8 @@ from typing import Any
 
 @dataclass(frozen=True)
 class Endpoint:
-    """What a radio, a service, the host or an in-process provider offers — and, once bound, what a consumer uses.
+    """What a peripheral provides — a radio, a service, the host, an in-process provider — and, once bound, what the
+    peripheral that needs it uses.
 
     A radio firmware's ``url`` may hold ``{device}``, the stick's path; a service's ``{ports.<name>}``.
     ``params`` says how to talk to it, e.g. a serial port's ``baud`` and ``flow_control`` as the radio's

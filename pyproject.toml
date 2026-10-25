@@ -97,14 +97,12 @@ include = ["majordom_integration_sdk/repository/**"]
 [tool.ty.overrides.rules]
 invalid-parameter-default = "ignore"
 
-# The runtime's test consumers are bare classes standing in for integration controllers, and their drivers subclass
-# the registered driver's runtime class: ty can't match the former to the Consumer protocol nor follow the latter
+# The runtime's tests stand plain objects in for bleak's (a BleakClient): ty can't match them
 [[tool.ty.overrides]]
 include = ["tests/runtime/**"]
 
 [tool.ty.overrides.rules]
 invalid-argument-type = "ignore"
-unsupported-base = "ignore"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

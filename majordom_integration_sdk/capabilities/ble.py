@@ -2,7 +2,7 @@
 
 Integrations need it as ``Need("ble", ["router"])`` and get it at ``self.peripherals.instance("ble")``; never raw
 Bluetooth, which the router holds. Its sources are the radios the runtime binds to it (``ble/bluez`` adapters,
-``ble/silabs-cpc-hci``, ``ble/esphome-proxy`` nodes an integration offers): `BLESource`s.
+``ble/silabs-cpc-hci``, ``ble/esphome-proxy`` nodes an integration brings along): `BLESource`s.
 
 Listeners register `BLEMatcher`s and hear about matching devices whichever source saw them.
 `BLERouter.connect` opens a GATT connection through the source that hears the device best;

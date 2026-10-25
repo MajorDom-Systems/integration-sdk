@@ -1,1 +1,2 @@
-"""The services the runtime itself brings (`builtin`), with the container images they run (``images/``)."""
+"""Containers: how the runtime runs them (`compose`), the ones the SDK brings (`builtin`) and the images they run
+(``images/``)."""

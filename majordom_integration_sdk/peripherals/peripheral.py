@@ -84,7 +84,7 @@ class Peripheral(Protocol):
         return
 
     async def stop(self):
-        """Release everything it holds; what it brought along is stopped by then."""
+        """Release everything it holds, and let go of what it brought along while it ran."""
         return
 
     async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:
