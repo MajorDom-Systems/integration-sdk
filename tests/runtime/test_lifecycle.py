@@ -9,6 +9,7 @@ from support import changed, run, settle, state, until
 from majordom_integration_sdk import Context, Endpoint, Need, PeripheralChange
 from majordom_integration_sdk.runtime import MemoryDisabledStore, PeripheralStatus
 from majordom_integration_sdk.runtime import PeripheralState as S
+from majordom_integration_sdk.runtime import runtime as module
 from majordom_integration_sdk.testing import FakePeripheral, RecordingRuntimeOutput
 
 ZIGBEE = Endpoint("zigbee", "ezsp", "/dev/ttyUSB0")
@@ -120,6 +121,32 @@ async def test_a_hook_that_raises_restarts_it_through_the_retries(tmp_path):
 
     await until(runtime, lambda: state(runtime, integration) == S.RUNNING)
     assert integration.peripherals.endpoint("zigbee") == MOVED
+
+
+async def moves(runtime, stick: FakePeripheral, integration: FakePeripheral, times: int):
+    """The stick moves ``times``, each once the integration runs again."""
+    for endpoint in [MOVED, ZIGBEE] * times:
+        await until(runtime, lambda: state(runtime, integration) == S.RUNNING)
+        stick.provided = [endpoint]
+        await changed(runtime, stick)
+        times -= 1
+        if not times:
+            return
+
+
+async def test_hook_failures_in_a_row_give_it_up(tmp_path):
+    stick, integration = radio(ZIGBEE), zigbee(answer=RuntimeError("confused"))
+    runtime = await run(tmp_path, stick, integration)
+    await moves(runtime, stick, integration, len(module.RETRY_DELAYS) + 1)
+    assert runtime.status(integration) == PeripheralStatus(S.FAILED, "confused")
+
+
+async def test_a_failure_after_a_stable_run_starts_the_retries_over(tmp_path, monkeypatch):
+    monkeypatch.setattr(module, "STABLE_RUN", 0)
+    stick, integration = radio(ZIGBEE), zigbee(answer=RuntimeError("confused"))
+    runtime = await run(tmp_path, stick, integration)
+    await moves(runtime, stick, integration, len(module.RETRY_DELAYS) + 1)
+    assert state(runtime, integration) == S.WAITING
 
 
 # starting: retries

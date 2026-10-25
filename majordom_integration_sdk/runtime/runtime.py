@@ -29,6 +29,7 @@ from majordom_integration_sdk.runtime.peripherals.services.compose import Compos
 log = logging.getLogger(__name__)
 
 RETRY_DELAYS = (5, 30, 120)  # seconds before each new start of a peripheral that failed, then it is given up on
+STABLE_RUN = 300  # seconds of running that clear the failures in a row
 STOP_TIMEOUT = 15  # a stop stuck on a vanished radio (zigpy awaiting its dead I/O thread) is abandoned
 _PASSES = 10  # bound on the passes one change takes to settle: each may change what the next one binds
 
@@ -91,6 +92,7 @@ class _Entry:
     reason: str = ""
     is_ready: bool = False
     attempts: int = 0  # failures in a row
+    running_since: float | None = None  # monotonic
     retry_at: float = 0.0  # monotonic: a waiting one starts no earlier
     failure: str = ""  # why, and when it is tried again
     bindings: dict[str, list[Binding]] = field(default_factory=dict)  # what it was started or last told with
@@ -613,7 +615,7 @@ class Runtime:
             async with self._locked():
                 entry.task = None
                 if entry.state == PeripheralState.STARTING:
-                    entry.state, entry.attempts = PeripheralState.RUNNING, 0
+                    entry.state, entry.running_since = PeripheralState.RUNNING, monotonic()
                     entry.is_ready = entry.is_ready or peripheral.is_ready_on_start
         await self.refresh()
 
@@ -636,6 +638,9 @@ class Runtime:
             entry.task.cancel()
             await asyncio.gather(entry.task, return_exceptions=True)
             entry.task = None
+        if entry.running_since is not None and monotonic() - entry.running_since >= STABLE_RUN:
+            entry.attempts = 0
+        entry.running_since = None
         if is_started:
             try:
                 async with asyncio.timeout(STOP_TIMEOUT):
