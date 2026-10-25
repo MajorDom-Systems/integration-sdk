@@ -1,5 +1,7 @@
 """Every row of the peripheral state machine, the one lifetime rule, retries and readiness."""
 
+import asyncio
+
 import pytest
 from pydantic import BaseModel
 from support import changed, run, settle, state, until
@@ -220,7 +222,49 @@ async def test_one_that_stops_by_itself_is_failed_until_restarted(tmp_path):
     assert state(runtime, integration) == S.RUNNING
 
 
-# what a peripheral brings along: the cascade
+# calls from what a peripheral runs in the background, and from the runtime's own output
+
+
+async def test_a_call_from_a_task_a_start_spawned_returns_once_acted_on(tmp_path):
+    seen: list[S] = []
+
+    class Stick(FakePeripheral):
+        async def start(self):
+            await super().start()
+            self.task = asyncio.create_task(self.flash_later())
+
+        async def flash_later(self):
+            await asyncio.sleep(0.01)
+            self.provided = []  # busy: being flashed
+            await self.output.peripheral_did_change_provided(self)
+            seen.append(state(runtime, integration))
+
+    stick, integration = Stick("stick", provides=[ZIGBEE]), zigbee()
+    runtime = await run(tmp_path, stick, integration)
+    await stick.task
+    assert seen == [S.WAITING]  # it let go of the stick before the flash goes on
+
+
+async def test_a_call_scheduled_by_a_status_callback_returns_once_acted_on(tmp_path):
+    seen: list[S] = []
+    integration, ran = FakePeripheral("zigbee"), asyncio.Event()
+
+    class Output(RecordingRuntimeOutput):
+        def peripheral_did_change_status(self, peripheral, status):
+            super().peripheral_did_change_status(peripheral, status)
+            if status.state == S.RUNNING:
+                self.task = asyncio.ensure_future(disable())
+
+    async def disable():
+        await ran.wait()
+        await runtime.disable(integration)
+        seen.append(state(runtime, integration))
+
+    output = Output()
+    runtime = await run(tmp_path, integration, output=output)
+    ran.set()
+    await output.task
+    assert seen == [S.DISABLED]
 
 
 def matter_with_server(**server) -> tuple[FakePeripheral, FakePeripheral]:

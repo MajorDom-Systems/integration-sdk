@@ -8,7 +8,6 @@ import contextlib
 import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -32,8 +31,6 @@ log = logging.getLogger(__name__)
 RETRY_DELAYS = (5, 30, 120)  # seconds before each new start of a peripheral that failed, then it is given up on
 STOP_TIMEOUT = 15  # a stop stuck on a vanished radio (zigpy awaiting its dead I/O thread) is abandoned
 _PASSES = 10  # bound on the passes one change takes to settle: each may change what the next one binds
-
-_is_driving: ContextVar[bool] = ContextVar("is_driving", default=False)  # inside a call the runtime makes
 
 
 class PeripheralState(StrEnum):
@@ -157,6 +154,7 @@ class Runtime:
         self._bound: dict[str, dict[str, list[Binding]]] = {}
         self._unbound: dict[str, dict[str, str]] = {}  # name -> family -> why its need isn't bound
         self._lock = asyncio.Lock()
+        self._holder: asyncio.Task | None = None  # the task holding the lock
         self._tasks: set[asyncio.Task] = set()
         self._timer: asyncio.TimerHandle | None = None
         self._is_running = False
@@ -171,11 +169,10 @@ class Runtime:
         self._is_running = False
         if self._timer:
             self._timer.cancel()
-        async with self._lock:
-            with self._driving():
-                for entry in reversed(self._entries.values()):
-                    if entry.is_started:
-                        await self._stop(entry, _waiting())
+        async with self._locked():
+            for entry in reversed(self._entries.values()):
+                if entry.is_started:
+                    await self._stop(entry, _waiting())
         for task in self._tasks:
             task.cancel()
 
@@ -183,13 +180,12 @@ class Runtime:
         """Collect, bind and run everything anew now."""
         if not self._is_running:
             return
-        async with self._lock:
-            with self._driving():
-                for _ in range(_PASSES):
-                    if not await self._pass():
-                        break
-                else:
-                    log.warning(f"Peripherals still changing after {_PASSES} passes")
+        async with self._locked():
+            for _ in range(_PASSES):
+                if not await self._pass():
+                    break
+            else:
+                log.warning(f"Peripherals still changing after {_PASSES} passes")
         self._report()
         self._schedule_retry()
 
@@ -376,32 +372,38 @@ class Runtime:
         return entry
 
     async def _act(self, change: Callable[[], Awaitable[Any]]):
-        """Make a change and settle; from inside a call the runtime makes (it holds the lock), once that returns."""
-        if _is_driving.get():
+        """Make a change and settle; from inside a call the runtime waits on, once that returns."""
+        if self._is_driving():
             self._spawn(self._act_unlocked(change))
             return
         await self._act_unlocked(change)
 
     async def _act_unlocked(self, change: Callable[[], Awaitable[Any]]):
-        async with self._lock:
-            with self._driving():
-                await change()
+        async with self._locked():
+            await change()
         await self.refresh()
 
     async def _settle(self):
-        """Bind and run anew: now, or from inside a call the runtime makes, once that returns."""
-        if _is_driving.get():
+        """Bind and run anew: now, or from inside a call the runtime waits on, once that returns."""
+        if self._is_driving():
             self._spawn(self.refresh())
         else:
             await self.refresh()
 
-    @contextlib.contextmanager
-    def _driving(self):
-        token = _is_driving.set(True)
-        try:
-            yield
-        finally:
-            _is_driving.reset(token)
+    def _is_driving(self) -> bool:
+        """Whether the runtime waits on the current task: it holds the lock, or it is a start. Waiting in it for the
+        runtime to act would never end; a task it spawned is no one the runtime waits on."""
+        task = asyncio.current_task()
+        return task is self._holder or any(entry.task is task for entry in self._entries.values())
+
+    @contextlib.asynccontextmanager
+    async def _locked(self):
+        async with self._lock:
+            self._holder = asyncio.current_task()
+            try:
+                yield
+            finally:
+                self._holder = None
 
     async def _pass(self) -> bool:
         """One round: collect what there is, bind it, stop what shouldn't run, tell what runs what moved, start what
@@ -602,16 +604,15 @@ class Runtime:
     async def _run_start(self, entry: _Entry):
         peripheral = entry.peripheral
         try:
-            with self._driving():
-                await peripheral.start()
+            await peripheral.start()
         except Exception as error:
             log.error(f"{peripheral.name} failed to start: {error}", exc_info=error)
-            async with self._lock:
+            async with self._locked():
                 entry.task = None
                 if entry.state == PeripheralState.STARTING:
                     self._fail(entry, str(error) or type(error).__name__)
         else:
-            async with self._lock:
+            async with self._locked():
                 entry.task = None
                 if entry.state == PeripheralState.STARTING:
                     entry.state, entry.attempts = PeripheralState.RUNNING, 0
