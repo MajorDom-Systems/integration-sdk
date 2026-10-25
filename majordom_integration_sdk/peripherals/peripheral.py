@@ -108,7 +108,8 @@ class Peripheral(Protocol):
     are bound to in ``peripherals``. A runtime (`majordom_integration_sdk.runtime.Runtime`) runs every peripheral it is
     given by one rule: one that isn't disabled or failed runs while whatever brought it along does, while something
     that runs binds it if it ``is_on_demand``, and once every required need is bound to a provider that runs. A
-    required need that can't be bound keeps it waiting, with the reason; one lost later stops it until it is back.
+    required need that can't be bound keeps it waiting, with the reason; one lost later stops it until it is back. An
+    optional need is handed over once its provider runs, as it appears.
 
     Subclass it for the defaults. The runtime sets ``runtime``, ``peripherals``, ``data``, ``contributor``, and
     ``settings`` when the peripheral declares its options as a nested ``class Settings(BaseModel)``: annotate

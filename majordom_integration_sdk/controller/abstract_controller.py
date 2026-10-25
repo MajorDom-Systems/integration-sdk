@@ -118,7 +118,8 @@ class AbstractController[TDevice: Device, TParameter: Parameter](Peripheral, ABC
     radios (``Need("zigbee", ["ezsp"])``), the Bluetooth router (``Need("ble", ["router"])``), DNS-SD
     (``Need("mdns", ["zeroconf"])``), SSDP (``Need("upnp", ["ssdp"])``) and the services its integration provides next
     to it. Bound ones arrive in ``self.peripherals`` keyed by family; in library mode hand them over yourself. A
-    required need that can't be bound keeps the integration from starting, with the reason the Hub shows. Never need
+    required need that can't be bound keeps the integration from starting, with the reason the Hub shows; an optional
+    one arrives once its provider runs, as it appears (`needed_peripheral_did_change`). Never need
     raw Bluetooth: the router holds every radio."""
 
     async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:

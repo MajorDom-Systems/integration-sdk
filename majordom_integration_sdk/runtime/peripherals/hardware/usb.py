@@ -191,6 +191,8 @@ class UsbScanner(Peripheral):
             found = _sticks()
             for name, path in found.items():
                 radio = radios.get(name) or self._radio(name, path)
+                if radio.driver is None:  # what identified it may only now be here: a driver an integration provides
+                    self._restore(radio)
                 radio.node = os.path.realpath(path)
                 is_trusted = radio.is_claimed or _usb_id(path) in RADIO_USB_IDS
                 if not radio.is_claimed and not radio.is_busy:
@@ -202,13 +204,16 @@ class UsbScanner(Peripheral):
         self._remember()
 
     def _radio(self, name: str, path: str) -> Radio:
-        """A stick plugged in, as it was known before."""
-        radio, known = Radio(name, path, self._drivers, remember=self._remember), self._known.get(name, {})
-        radio.is_claimed = known.get("is_claimed", False)
-        drivers = {driver.name: driver for driver in self._drivers()}
+        """A stick plugged in, claimed if the user probed it before."""
+        radio = Radio(name, path, self._drivers, remember=self._remember)
+        radio.is_claimed = self._known.get(name, {}).get("is_claimed", False)
+        return radio
+
+    def _restore(self, radio: Radio):
+        """What it was identified as before, once the driver that did is here."""
+        known, drivers = self._known.get(radio.name, {}), {driver.name: driver for driver in self._drivers()}
         if (driver := drivers.get(known.get("driver", ""))) and (firmware := known.get("firmware")):
             radio.driver, radio.firmware, radio.has_bluetooth = driver, firmware, known.get("has_bluetooth", False)
-        return radio
 
     def _remember(self):
         for radio in self._radios:

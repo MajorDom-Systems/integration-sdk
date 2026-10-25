@@ -480,7 +480,7 @@ class Runtime:
             is_changed = True
             await self._stop(entry, _waiting())
         for entry in list(self._entries.values()):
-            bound = self._bound.get(entry.key, {})
+            bound = self._handed(entry)
             if entry.state == PeripheralState.RUNNING and _identity(bound) != _identity(entry.bindings):
                 is_changed = True
                 await self._deliver(entry, bound)
@@ -662,12 +662,25 @@ class Runtime:
         entry = self._entries[key]
         return entry.state == PeripheralState.RUNNING
 
+    def _handed(self, entry: _Entry) -> dict[str, list[Binding]]:
+        """What it is bound to, an optional need only to a provider that runs, or that it was handed before: the start
+        doesn't wait for it, and one restarting is a blip."""
+        optional = {need.family for need in entry.peripheral.needs if not need.is_required}
+        handed: dict[str, list[Binding]] = {}
+        for family, bindings in self._bound.get(entry.key, {}).items():
+            before = entry.bindings.get(family, [])
+            if family in optional:
+                bindings = [b for b in bindings if self._is_serving(b[0].key) or b in before]
+            if bindings:
+                handed[family] = bindings
+        return handed
+
     def _bind_view(self, entry: _Entry, bound: Mapping[str, list[Binding]]):
         entry.peripheral.peripherals = Peripherals(_view(entry.peripheral, bound))
 
     def _start(self, entry: _Entry):
         entry.state, entry.kind, entry.detail = PeripheralState.STARTING, None, ""
-        entry.bindings, entry.told_failure, entry.is_stopping_itself = self._bound[entry.key], "", False
+        entry.bindings, entry.told_failure, entry.is_stopping_itself = self._handed(entry), "", False
         self._bind_view(entry, entry.bindings)
         entry.task = self._spawn(self._run_start(entry))
 

@@ -177,7 +177,7 @@ async def test_the_runner_hands_a_moved_peripheral_over_or_restarts(tmp_path, ro
     moved = Endpoint("zwave", "zwave-js-server", "ws://192.168.1.9:3000", is_shared=True)
 
     await pinned.pin(moved)
-    assert controller.changes == [PeripheralChange("zwave", ZWAVE, moved)]
+    assert controller.changes[-1] == PeripheralChange("zwave", ZWAVE, moved)
     assert (controller.started, controller.stopped) == (1, 0)  # handled in place
 
     controller.handles_changes = False

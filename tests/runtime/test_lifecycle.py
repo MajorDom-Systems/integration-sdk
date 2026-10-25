@@ -103,7 +103,7 @@ async def test_an_optional_need_lost_or_back_is_handed_over(tmp_path):
 
     await runtime.disable(border)
     await settle(runtime)
-    assert matter.changes == [PeripheralChange("thread", THREAD, None)]
+    assert matter.changes[-1] == PeripheralChange("thread", THREAD, None)
     assert state(runtime, matter) == S.RUNNING
     assert runtime.unbound(matter) == {"thread": "need thread/*: otbr is disabled"}
 
@@ -611,13 +611,30 @@ async def test_a_running_peripheral_rides_out_its_provider_restarting(tmp_path):
     server.gate.set()
 
 
-async def test_an_optional_need_bound_to_a_provider_still_starting_doesnt_hold_it_back(tmp_path):
+async def test_an_optional_need_is_handed_over_once_its_provider_runs(tmp_path):
     border = Gated("otbr", provides=[THREAD], is_on_demand=True)
-    matter = FakePeripheral("matter", [Need("thread", is_required=False)])
+    matter = FakePeripheral("matter", [Need("thread", is_required=False)], answer=True)
     runtime = await run(tmp_path, border, matter, settled=False)
     await until(runtime, lambda: state(runtime, matter) == S.RUNNING, settled=False)
+    assert state(runtime, border) == S.STARTING  # it doesn't hold it back
+    assert matter.peripherals.bound == {}  # nor is it handed over before it serves
+
+    border.gate.set()
+    await settle(runtime)
+    assert matter.changes == [PeripheralChange("thread", None, THREAD)] and matter.calls == ["start"]
+
+
+async def test_an_optional_need_rides_out_its_provider_restarting(tmp_path):
+    border = Gated("otbr", provides=[THREAD], is_on_demand=True)
+    border.gate.set()
+    matter = FakePeripheral("matter", [Need("thread", is_required=False)], answer=True)
+    runtime = await run(tmp_path, border, matter)
+    changes = list(matter.changes)
+
+    border.gate.clear()
+    await runtime.restart(border)
     assert state(runtime, border) == S.STARTING
-    assert matter.peripherals.endpoint("thread") == THREAD  # handed over at once: it copes until it answers
+    assert matter.peripherals.endpoint("thread") == THREAD and matter.changes == changes
     border.gate.set()
 
 
