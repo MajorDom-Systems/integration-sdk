@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -169,6 +170,26 @@ async def test_the_context_renders_and_a_change_recreates_only_what_renders_it(t
     assert app.changes == user.changes == [("context", before)]  # the integrations hear it too
 
 
+async def test_a_service_renders_only_when_it_is_created(tmp_path):
+    class InPlace(Service):
+        async def context_did_change(self, before: Context) -> bool:
+            return True  # it takes the region over its API
+
+    region = Context(region="Europe")
+    radio = InPlace(
+        "radio", {"image": "radio", "environment": {"REGION": "{context.region}"}}, [Need("ip")], [Endpoint("r")]
+    )
+    plain = Service("plain", {"image": "plain"}, [Need("ip")], [Endpoint("plain")])
+    user = FakePeripheral("user", [Need("r"), Need("plain")], peripherals=[radio, plain])
+    runtime = await run(tmp_path, host(), user, context=lambda: region, is_docker_enabled=False)
+
+    before, region = region, Context(region="USA")
+    await runtime.context_did_change(before)
+    await user.peripherals.restart(plain)
+    await settle(runtime)
+    assert compose(tmp_path)["radio"]["environment"]["REGION"] == "Europe"  # not recreated behind its back
+
+
 async def test_services_get_free_host_ports_and_keep_them(tmp_path, listening):
     async def ezsp() -> tuple[str, str]:
         """The zigbee URL bound after a (re)boot, and the port the container got."""
@@ -261,12 +282,17 @@ class Docker:
 
     def __init__(self):
         self.calls: list[tuple[str, ...]] = []
+        self.applied: list[set[str]] = []  # the services of each compose file it took
         self.composes: list[Compose] = []
         self.is_answering = True
         self.failure = b""
+        self.gate: asyncio.Event | None = None  # while set, a call waits for it
 
     async def exec(self, *args: str, **kwargs: Any) -> "Docker":
         self.calls.append(args)
+        if "-f" in args:
+            file = args[args.index("-f") + 1]
+            self.applied.append(set(json.loads(Path(file).read_text())["services"]))
         return self
 
     @property
@@ -274,6 +300,8 @@ class Docker:
         return 1 if self.failure else 0
 
     async def communicate(self) -> tuple[bytes, bytes]:
+        if self.gate:
+            await self.gate.wait()
         return self.failure, b""
 
     def holds(self, port: int) -> bool:
@@ -340,3 +368,21 @@ async def test_restarting_a_service_recreates_only_its_container(tmp_path, docke
     assert compose(tmp_path) == before
     assert [call[-1] for call in docker.calls][-2:] == ["--remove-orphans"] * 2  # without it, then with it again
     assert (app.calls, integration.calls) == (["start"], ["start"])
+
+
+async def test_a_container_whose_start_was_stopped_is_taken_down(tmp_path, docker):
+    app, _ = matter()
+    plain = Service("plain", {"image": "plain"}, [Need("ip")], [Endpoint("plain")])
+    user = FakePeripheral("user", [Need("plain")], peripherals=[plain])
+    runtime = await run(tmp_path, host(), app)
+    await until(runtime, lambda: state(runtime, app) == PeripheralState.RUNNING)
+
+    docker.gate = asyncio.Event()
+    runtime.given.append(user)
+    refresh = asyncio.ensure_future(runtime.refresh())
+    await until(runtime, lambda: docker.applied[-1] == {"matterjs-server", "plain"}, settled=False)
+    asyncio.get_running_loop().call_later(0.05, docker.gate.set)  # docker takes it after all
+    await runtime.disable(user)
+    await refresh
+    await settle(runtime)
+    assert docker.applied[-1] == {"matterjs-server"}

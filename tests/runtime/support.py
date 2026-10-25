@@ -14,12 +14,13 @@ async def settle(runtime: Runtime):
         await asyncio.gather(*pending, return_exceptions=True)
 
 
-async def until(runtime: Runtime, condition: Callable[[], bool], timeout: float = 2):
-    """Wait for what a timer does, e.g. a retry."""
+async def until(runtime: Runtime, condition: Callable[[], bool], timeout: float = 2, settled: bool = True):
+    """Wait for what a timer does, e.g. a retry; then, if ``settled``, for what it set off."""
     async with asyncio.timeout(timeout):
         while not condition():
             await asyncio.sleep(0.005)
-    await settle(runtime)
+    if settled:
+        await settle(runtime)
 
 
 STARTED: list[Runtime] = []  # stopped after each test

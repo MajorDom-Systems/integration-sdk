@@ -46,7 +46,7 @@ class Compose:
         self.is_docker_enabled = is_docker_enabled
         self._running: dict[str, Service] = {}
         self._tentative: dict[str, dict[str, int]] = {}  # the ports a service that doesn't run would get
-        self._rendered: dict[str, Mapping[str, Any]] = {}  # what each one runs with
+        self._rendered: dict[str, Mapping[str, Any]] = {}  # what each one runs with, rendered when it was created
         self._applied = ""  # the compose file docker last took
         self._tasks: dict[str, asyncio.Task] = {}  # each one's setup, by name
         self._lock = asyncio.Lock()
@@ -64,6 +64,7 @@ class Compose:
     async def up(self, service: Service):
         await self._keep_ports(service)
         self._running[service.name] = service
+        self._rendered[service.name] = self._render(service)
         try:
             await self._apply()
         except Exception:
@@ -75,6 +76,7 @@ class Compose:
         if task := self._tasks.pop(service.name, None):
             task.cancel()
         if self._running.pop(service.name, None):
+            self._rendered.pop(service.name, None)
             try:
                 await self._apply()
             except Exception as error:
@@ -124,15 +126,20 @@ class Compose:
         self.save()
 
     async def _apply(self):
+        """Have docker take what runs now. Applies run in turn, each to its end even when its caller is cancelled:
+        one cut short would leave a container that the next one, finding nothing changed, keeps."""
+        await asyncio.shield(asyncio.ensure_future(self._apply_in_turn()))
+
+    async def _apply_in_turn(self):
         async with self._lock:
-            self._rendered = {name: self._render(service) for name, service in self._running.items()}
             for name in self._running:
                 (self.data / "services" / name).mkdir(parents=True, exist_ok=True)
-            compose = json.dumps({"name": "majordom", "services": self._rendered}, indent=2)
+            compose = json.dumps({"name": "majordom", "services": dict(self._rendered)}, indent=2)
             if compose == self._applied:
                 return
             self.data.mkdir(parents=True, exist_ok=True)
             (self.data / "compose.json").write_text(compose)
+            self._applied = ""  # unknown until docker took it all
             if self.is_docker_enabled:
                 args = ["up", "-d", "--remove-orphans"] if self._rendered else ["down"]
                 process = await asyncio.create_subprocess_exec(
