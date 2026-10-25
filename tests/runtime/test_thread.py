@@ -26,16 +26,21 @@ def dataset(network: str, channel: int = 15) -> str:
 
 HUB, OTHER = dataset("dead00beef00cafe"), dataset("0123456789abcdef")
 ENABLE, DISABLE = ("/node/state", json.dumps("enable")), ("/node/state", json.dumps("disable"))
+PENDING = "/node/dataset/pending"
+
+
+def rest(url: str) -> Endpoint:
+    return Endpoint("thread", "otbr-rest", url, is_shared=True)
 
 
 @pytest.fixture
 def border_router():
-    """A border router's REST API with no network until one is put."""
-    state: dict[str, Any] = {"dataset": "", "puts": []}
+    """A border router's REST API with no network until one is put, and no change of it pending."""
+    state: dict[str, Any] = {"dataset": "", "pending": "", "puts": []}
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            body = state["dataset"].encode()
+            body = state["pending" if self.path == PENDING else "dataset"].encode()
             self.send_response(200 if body else 204)
             self.end_headers()
             self.wfile.write(body)
@@ -45,6 +50,8 @@ def border_router():
             state["puts"].append((self.path, body))
             if self.path == "/node/dataset/active" and not state.get("stuck"):
                 state["dataset"] = body if body.startswith("0e") else "0e08newnetwork"
+            elif self.path == PENDING:
+                state["pending"] = body
             self.send_response(200)
             self.end_headers()
 
@@ -55,6 +62,7 @@ def border_router():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}", state
     server.shutdown()
+    server.server_close()
 
 
 async def test_returns_the_network_someone_else_formed(border_router):
@@ -109,8 +117,42 @@ async def test_a_border_router_is_provisioned_onto_the_hubs_thread_network(borde
     service, output = router(), RecordingPeripheralOutput()
     service.runtime, output.context = output, Context(thread_dataset=HUB)  # learned from the stick before
     await asyncio.wait_for(service.provision(Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999")), 1)
-    await asyncio.wait_for(service.provision(Endpoint("thread", "otbr-rest", url, is_shared=True)), 3)
+    await asyncio.wait_for(service.provision(rest(url)), 3)
     assert await active_dataset(url) == HUB
+    assert PENDING not in [path for path, _ in state["puts"]]  # on the same channel
+
+
+async def test_a_multiprotocol_router_moves_the_network_it_joins_to_zigbees_channel(border_router):
+    url, state = border_router
+    state["dataset"] = dataset("0123456789abcdef", channel=15)  # its container formed it on Zigbee's channel
+    service, output = silabs_multiprotocol(), RecordingPeripheralOutput()
+    service.runtime, output.context = output, Context(thread_dataset=dataset("dead00beef00cafe", channel=20))
+    await asyncio.wait_for(service.provision(rest(url)), 3)
+
+    assert state["dataset"] == output.context.thread_dataset  # joined
+    pending = state["pending"]  # the devices on it follow: a new active and a pending timestamp, and a delay
+    assert "000300000f" in pending and "0208dead00beef00cafe" in pending and "3308" in pending and "3404" in pending
+
+
+async def test_a_standalone_router_keeps_the_channel_of_the_network_it_joins(border_router):
+    url, state = border_router
+    state["dataset"] = dataset("0123456789abcdef", channel=15)
+    service, output = otbr(), RecordingPeripheralOutput()
+    service.runtime, output.context = output, Context(thread_dataset=dataset("dead00beef00cafe", channel=20))
+    await asyncio.wait_for(service.provision(rest(url)), 3)
+    assert state["pending"] == ""
+
+
+async def test_learns_the_network_only_once_a_channel_move_landed(border_router):
+    url, state = border_router
+    moved = dataset("dead00beef00cafe", channel=15)
+    state["dataset"], state["pending"] = dataset("dead00beef00cafe", channel=20), moved
+    learning = asyncio.create_task(active_dataset(url))
+    await asyncio.sleep(1.5)
+    assert not learning.done()  # Matter would commission devices onto the channel it leaves
+
+    state["dataset"], state["pending"] = moved, ""
+    assert await asyncio.wait_for(learning, 3) == moved
 
 
 class Answering:

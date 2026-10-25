@@ -39,8 +39,8 @@ def no_thread_network(monkeypatch):
     async def nothing(*args: Any):
         return None
 
-    monkeypatch.setattr(builtin, "join_network", nothing)
-    monkeypatch.setattr(builtin, "active_dataset", nothing)
+    for talking in ("join_network", "active_dataset", "network_channel", "move_channel"):
+        monkeypatch.setattr(builtin, talking, nothing)
 
 
 def host() -> FakePeripheral:

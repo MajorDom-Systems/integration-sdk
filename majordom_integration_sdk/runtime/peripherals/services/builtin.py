@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,8 @@ class ThreadRadio(BaseModel):
 
 _OTBR_REST = Endpoint("thread", "otbr-rest", "http://127.0.0.1:{ports.rest}", is_shared=True)
 FORM_PATIENCE = 15  # seconds a border router answers without a network before one is formed on it
-_EXTENDED_PAN_ID = 2  # the dataset TLV that tells networks apart
+MOVE_DELAY = 10_000  # ms before a network moves to another channel, so its devices move along, as the entrypoints do
+_CHANNEL, _EXTENDED_PAN_ID, _ACTIVE_TIMESTAMP, _PENDING_TIMESTAMP, _DELAY_TIMER = 0, 2, 14, 51, 52  # dataset TLVs
 
 
 class _BorderRouter[S: BaseModel = Any](Service[S]):
@@ -40,9 +42,20 @@ class _BorderRouter[S: BaseModel = Any](Service[S]):
         await self.runtime.peripheral_did_learn(self, {"thread_dataset": await active_dataset(rest.url)})
 
 
+class _MultiPanBorderRouter(_BorderRouter[ThreadRadio]):
+    """One multi-PAN radio listens on one channel: the Thread network follows Zigbee's, the one its container put
+    Thread on before it answered (it forms there, and moves a network it restored on another)."""
+
+    async def provision(self, endpoint: Endpoint):
+        if endpoint.dialect == _OTBR_REST.dialect:
+            zigbees = await network_channel(endpoint.url)
+            await super().provision(endpoint)
+            await move_channel(endpoint.url, zigbees)
+
+
 def silabs_multiprotocol() -> Service[ThreadRadio]:
     """One multi-PAN RCP serving Zigbee (zigbeed, EZSP over TCP) and Thread (OTBR) through cpcd."""
-    return _BorderRouter(
+    return _MultiPanBorderRouter(
         "silabs-multiprotocol",
         needs=[Need("multipan", ["silabs-cpc"])],
         provides=[Endpoint("zigbee", "ezsp", "socket://127.0.0.1:{ports.ezsp}"), _OTBR_REST],
@@ -128,13 +141,43 @@ def _call(url: str, method: str, path: str, body: str | None = None, kind: str =
         return response.read().decode().strip()
 
 
+def _datasets(url: str) -> tuple[str, str]:
+    """The active and the pending dataset of the border router at ``url`` as hex TLVs, empty when it has none."""
+    return _call(url, "GET", "/node/dataset/active"), _call(url, "GET", "/node/dataset/pending")
+
+
 async def active_dataset(url: str) -> str:
-    """Wait for the border router at ``url`` to have a network; its active dataset as hex TLVs."""
+    """Wait for the border router at ``url`` to have a network, and no change of it pending (a channel move landing);
+    its active dataset as hex TLVs."""
     while True:
         with contextlib.suppress(OSError):  # not up yet
-            if active := await asyncio.to_thread(_call, url, "GET", "/node/dataset/active"):
+            active, pending = await asyncio.to_thread(_datasets, url)
+            if active and not pending:
                 return active
         await asyncio.sleep(1)
+
+
+async def network_channel(url: str) -> int:
+    """Wait for the border router at ``url`` to have a network; the channel it is on, or moving to."""
+    while True:
+        with contextlib.suppress(OSError):  # not up yet
+            active, pending = await asyncio.to_thread(_datasets, url)
+            if active:
+                return _channel(pending or active)
+        await asyncio.sleep(1)
+
+
+async def move_channel(url: str, channel: int):
+    """Move the network of the border router at ``url`` to ``channel`` through a pending dataset, which its devices
+    follow in `MOVE_DELAY`, unless it is there or on its way."""
+    while True:
+        try:
+            active, pending = await asyncio.to_thread(_datasets, url)
+            if _channel(pending or active) != channel:
+                await asyncio.to_thread(_call, url, "PUT", "/node/dataset/pending", _moved(active, channel))
+            return
+        except OSError:  # not up, or not attached yet: a pending dataset needs a network to go to
+            await asyncio.sleep(1)
 
 
 async def join_network(url: str, dataset: str | None, patience: float = FORM_PATIENCE):
@@ -155,7 +198,7 @@ async def join_network(url: str, dataset: str | None, patience: float = FORM_PAT
     while True:
         try:
             if active := await asyncio.to_thread(_call, url, "GET", "/node/dataset/active"):
-                if dataset and _network(active) != _network(dataset):
+                if dataset and _tlvs(active)[_EXTENDED_PAN_ID] != _tlvs(dataset)[_EXTENDED_PAN_ID]:
                     await asyncio.to_thread(put, True)
                 return
             answered += 1
@@ -167,9 +210,21 @@ async def join_network(url: str, dataset: str | None, patience: float = FORM_PAT
         await asyncio.sleep(1)
 
 
-def _network(dataset: str) -> bytes:
-    """Which network an active dataset (hex TLVs) is of, whatever moved since (its channel): its Extended PAN ID."""
-    tlvs = bytes.fromhex(dataset)
-    while len(tlvs) > 2 and tlvs[0] != _EXTENDED_PAN_ID:
-        tlvs = tlvs[2 + tlvs[1] :]
-    return tlvs[2 : 2 + tlvs[1]] if len(tlvs) > 2 else b""
+def _tlvs(dataset: str) -> dict[int, bytes]:
+    """A dataset's TLVs by type: the Extended PAN ID tells networks apart, whatever moved since (the channel)."""
+    data, tlvs = bytes.fromhex(dataset), {}
+    while len(data) >= 2:
+        tlvs[data[0]], data = data[2 : 2 + data[1]], data[2 + data[1] :]
+    return tlvs
+
+
+def _channel(dataset: str) -> int:
+    return int.from_bytes(_tlvs(dataset)[_CHANNEL][1:])  # after the channel page
+
+
+def _moved(active: str, channel: int) -> str:
+    """A pending dataset moving the network of ``active`` to ``channel`` in `MOVE_DELAY` ms."""
+    now = (int(time.time()) << 16).to_bytes(8)  # a timestamp: seconds, then no ticks and not authoritative
+    moved = {_CHANNEL: b"\0" + channel.to_bytes(2), _ACTIVE_TIMESTAMP: now, _PENDING_TIMESTAMP: now}
+    tlvs = _tlvs(active) | moved | {_DELAY_TIMER: MOVE_DELAY.to_bytes(4)}
+    return b"".join(bytes([kind, len(value)]) + value for kind, value in tlvs.items()).hex()

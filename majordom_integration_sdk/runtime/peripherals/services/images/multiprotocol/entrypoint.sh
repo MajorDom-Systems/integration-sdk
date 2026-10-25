@@ -18,7 +18,6 @@
 #   BACKBONE_IF    eth0             OTBR backbone interface
 #   ZIGBEE_FORM    1                form a Zigbee network if the NCP has none
 #   THREAD_FORM    1                form a Thread network if OTBR has none
-#   THREAD_DATASET                  join this network (active dataset, hex) instead of forming one
 #   CHANNEL        15               Zigbee and Thread form on it: one multi-PAN radio listens on one channel,
 #                                   networks on two channels lose frames (a Thread device then can't attach).
 #                                   Our Thread network is moved to Zigbee's channel when they differ
@@ -89,9 +88,6 @@ if [ "${THREAD_FORM}" = "1" ]; then
   # start, and forming then would replace it (new network, orphaned devices).
   if ot-ctl dataset active -x 2>/dev/null | grep -qE "^[0-9a-fA-F]{20,}"; then
     log "Thread network restored"
-  elif [ -n "${THREAD_DATASET:-}" ]; then
-    log "joining the configured Thread network"
-    ot-ctl dataset set active "${THREAD_DATASET}" >/dev/null 2>&1 || true
   else
     log "forming Thread network"
     ot-ctl dataset init new     >/dev/null 2>&1 || true
@@ -136,24 +132,21 @@ if [ "${ZIGBEE_FORM}" = "1" ]; then
 fi
 
 # 5b. Our Thread network follows Zigbee's channel (one restored from before CHANNEL changed would sit on
-# another). Through a pending dataset with a delay, so attached Thread devices move along.
+# another). Through a pending dataset with a delay, so attached Thread devices move along. The hub moves a
+# network it has this border router join later the same way, over the REST API.
 ZB_CHANNEL=$(cat "${ZB_MARKER}" 2>/dev/null || true)  # empty from older images: formed on CHANNEL
 ZB_CHANNEL=${ZB_CHANNEL:-${CHANNEL}}
 TH_CHANNEL=$(ot-ctl channel 2>/dev/null | head -1 | tr -dc 0-9 || true)
 if [ "${THREAD_FORM}" = "1" ] && [ -n "${TH_CHANNEL}" ] && [ "${TH_CHANNEL}" != "${ZB_CHANNEL}" ]; then
-  if [ -n "${THREAD_DATASET:-}" ]; then
-    log "WARN: the joined Thread network is on channel ${TH_CHANNEL}, Zigbee on ${ZB_CHANNEL}: both will lose frames"
+  for _ in $(seq 1 30); do ot-ctl state 2>/dev/null | grep -qE "leader|router|child" && break; sleep 1; done
+  log "moving Thread from channel ${TH_CHANNEL} to ${ZB_CHANNEL}, Zigbee's"
+  now=$(date +%s)
+  if ot-ctl dataset init active >/dev/null && ot-ctl dataset channel "${ZB_CHANNEL}" >/dev/null \
+    && ot-ctl dataset activetimestamp "${now}" >/dev/null && ot-ctl dataset pendingtimestamp "${now}" >/dev/null \
+    && ot-ctl dataset delay 10000 >/dev/null && ot-ctl dataset commit pending >/dev/null; then
+    log "Thread changes channel in 10 s"
   else
-    for _ in $(seq 1 30); do ot-ctl state 2>/dev/null | grep -qE "leader|router|child" && break; sleep 1; done
-    log "moving Thread from channel ${TH_CHANNEL} to ${ZB_CHANNEL}, Zigbee's"
-    now=$(date +%s)
-    if ot-ctl dataset init active >/dev/null && ot-ctl dataset channel "${ZB_CHANNEL}" >/dev/null \
-      && ot-ctl dataset activetimestamp "${now}" >/dev/null && ot-ctl dataset pendingtimestamp "${now}" >/dev/null \
-      && ot-ctl dataset delay 10000 >/dev/null && ot-ctl dataset commit pending >/dev/null; then
-      log "Thread changes channel in 10 s"
-    else
-      log "WARN: the Thread channel change was refused"
-    fi
+    log "WARN: the Thread channel change was refused"
   fi
 fi
 
