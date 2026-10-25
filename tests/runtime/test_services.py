@@ -39,7 +39,7 @@ def no_thread_network(monkeypatch):
     async def nothing(*args: Any):
         return None
 
-    monkeypatch.setattr(builtin, "form_network", nothing)
+    monkeypatch.setattr(builtin, "join_network", nothing)
     monkeypatch.setattr(builtin, "active_dataset", nothing)
 
 
@@ -92,10 +92,16 @@ async def test_a_multipan_stick_serves_zigbee_and_matter_through_one_container(t
     )
 
 
-async def test_a_multiprotocol_stick_joins_the_hubs_thread_network(tmp_path):
+async def test_learning_the_thread_network_recreates_no_border_router(tmp_path):
+    network, containers = Context(thread_dataset="0e08hub"), FakeCompose()
     peripherals = (host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol(), zigbee())
-    await run(tmp_path, FakeCompose(), *peripherals, context=lambda: Context(thread_dataset="0e08hub"))
-    assert compose(tmp_path)["silabs-multiprotocol"]["environment"]["THREAD_DATASET"] == "0e08hub"
+    runtime = await run(tmp_path, containers, *peripherals, context=lambda: network)
+    applied = len(containers.calls)
+
+    before, network = network, Context(thread_dataset="0e08learned")  # provisioned onto it instead
+    await runtime.context_did_change(before)
+    await settle(runtime)
+    assert containers.calls[applied:] == []
 
 
 async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp_path):

@@ -21,23 +21,22 @@ class ThreadRadio(BaseModel):
 
 _OTBR_REST = Endpoint("thread", "otbr-rest", "http://127.0.0.1:{ports.rest}", is_shared=True)
 FORM_PATIENCE = 15  # seconds a border router answers without a network before one is formed on it
+_EXTENDED_PAN_ID = 2  # the dataset TLV that tells networks apart
 
 
 class _BorderRouter(Service):
-    """The hub's Thread network, ``context.thread_dataset``: it joins it, or forms one when there is none yet, and tells
-    the network it has once it serves."""
+    """On the hub's Thread network, ``context.thread_dataset``: set up over its REST API to join it, or to form one when
+    there is none yet; it tells the network it has once it serves. The network is never rendered into its container,
+    so learning it recreates nothing."""
+
+    async def provision(self, endpoint: Endpoint):
+        if endpoint.dialect == _OTBR_REST.dialect:
+            await join_network(endpoint.url, self.runtime.context.thread_dataset, FORM_PATIENCE)
 
     async def start(self):
         await super().start()
-        rest = next(endpoint for endpoint in self.provides if endpoint.dialect == "otbr-rest")
+        rest = next(endpoint for endpoint in self.provides if endpoint.dialect == _OTBR_REST.dialect)
         await self.runtime.peripheral_did_learn(self, {"thread_dataset": await active_dataset(rest.url)})
-
-
-class _FormingBorderRouter(_BorderRouter):
-    """A border router that comes up without a network: the runtime has it join the hub's or form one."""
-
-    async def provision(self, endpoint: Endpoint):
-        await form_network(endpoint.url, self.runtime.context.thread_dataset, FORM_PATIENCE)
 
 
 def silabs_multiprotocol() -> Service:
@@ -72,7 +71,6 @@ def silabs_multiprotocol() -> Service:
                 "BACKBONE_IF": "{host.interface}",
                 "EZSP_TCP_PORT": "{ports.ezsp}",
                 "OTBR_REST_PORT": "{ports.rest}",
-                "THREAD_DATASET": "{context.thread_dataset}",
                 "THREAD_TX_DBM": "{settings.tx_power}",
             },
             "healthcheck": {
@@ -87,7 +85,7 @@ def silabs_multiprotocol() -> Service:
 
 def otbr() -> Service:
     """OpenThread Border Router on a plain Thread RCP."""
-    return _FormingBorderRouter(
+    return _BorderRouter(
         "otbr",
         needs=[Need("thread", ["spinel"])],
         provides=[_OTBR_REST],
@@ -138,11 +136,14 @@ async def active_dataset(url: str) -> str:
         await asyncio.sleep(1)
 
 
-async def form_network(url: str, dataset: str | None, patience: float = FORM_PATIENCE):
-    """Once the border router at ``url`` has answered for ``patience`` seconds without a network, join the one of
-    ``dataset`` (its active dataset, hex TLVs) or form a new network — once."""
+async def join_network(url: str, dataset: str | None, patience: float = FORM_PATIENCE):
+    """Have the border router at ``url`` join the network of ``dataset`` (its active dataset, hex TLVs) in place of
+    another one it has, or once it has answered for ``patience`` seconds without one; with no ``dataset``, form a new
+    network then — once."""
 
-    def form():
+    def put(is_running: bool):
+        if is_running:  # the active dataset is written only while Thread is off
+            _call(url, "PUT", "/node/state", json.dumps("disable"), "application/json")
         if dataset:
             _call(url, "PUT", "/node/dataset/active", dataset)
         else:
@@ -152,12 +153,22 @@ async def form_network(url: str, dataset: str | None, patience: float = FORM_PAT
     answered = 0.0
     while True:
         try:
-            if await asyncio.to_thread(_call, url, "GET", "/node/dataset/active"):
+            if active := await asyncio.to_thread(_call, url, "GET", "/node/dataset/active"):
+                if dataset and _network(active) != _network(dataset):
+                    await asyncio.to_thread(put, True)
                 return
             answered += 1
             if answered > patience:
-                await asyncio.to_thread(form)
+                await asyncio.to_thread(put, False)
                 return
         except OSError:
             pass  # not up yet
         await asyncio.sleep(1)
+
+
+def _network(dataset: str) -> bytes:
+    """Which network an active dataset (hex TLVs) is of, whatever moved since (its channel): its Extended PAN ID."""
+    tlvs = bytes.fromhex(dataset)
+    while len(tlvs) > 2 and tlvs[0] != _EXTENDED_PAN_ID:
+        tlvs = tlvs[2 + tlvs[1] :]
+    return tlvs[2 : 2 + tlvs[1]] if len(tlvs) > 2 else b""

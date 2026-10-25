@@ -12,11 +12,20 @@ from majordom_integration_sdk import Context, Endpoint, Peripherals, Service
 from majordom_integration_sdk.runtime.peripherals.services import builtin as services
 from majordom_integration_sdk.runtime.peripherals.services.builtin import (
     active_dataset,
-    form_network,
+    join_network,
     otbr,
     silabs_multiprotocol,
 )
 from majordom_integration_sdk.testing import RecordingPeripheralOutput
+
+
+def dataset(network: str, channel: int = 15) -> str:
+    """An active dataset's hex TLVs: its timestamp, channel and Extended PAN ID (the network)."""
+    return f"0e080000000000010000000300{channel:04x}0208{network}"
+
+
+HUB, OTHER = dataset("dead00beef00cafe"), dataset("0123456789abcdef")
+ENABLE, DISABLE = ("/node/state", json.dumps("enable")), ("/node/state", json.dumps("disable"))
 
 
 @pytest.fixture
@@ -52,52 +61,56 @@ async def test_returns_the_network_someone_else_formed(border_router):
     url, state = border_router
     state["dataset"] = "0e08existing"
     assert await active_dataset(url) == "0e08existing"
-    await form_network(url, None)
+    await join_network(url, None)
     assert state["puts"] == []
 
 
 async def test_forms_a_network_when_none_appears(border_router):
     url, state = border_router
-    await form_network(url, None, patience=0)
+    await join_network(url, None, patience=0)
     assert await active_dataset(url) == "0e08newnetwork"
-    assert state["puts"] == [
-        ("/node/dataset/active", json.dumps({"NetworkName": "MajorDom"})),
-        ("/node/state", json.dumps("enable")),
-    ]
+    assert state["puts"] == [("/node/dataset/active", json.dumps({"NetworkName": "MajorDom"})), ENABLE]
 
 
 async def test_joins_the_given_network(border_router):
     url, state = border_router
-    await form_network(url, "0e08given", patience=0)
+    await join_network(url, "0e08given", patience=0)
     assert await active_dataset(url) == "0e08given"
+
+
+async def test_joins_the_given_network_in_place_of_another_it_has(border_router):
+    url, state = border_router
+    state["dataset"] = OTHER  # its container formed one before the hub's was known
+    await join_network(url, HUB)
+    assert state["puts"] == [DISABLE, ("/node/dataset/active", HUB), ENABLE]  # written only while Thread is off
+
+
+async def test_keeps_the_given_network_after_it_moved(border_router):
+    url, state = border_router
+    state["dataset"] = dataset("dead00beef00cafe", channel=20)  # the same network, on another channel since
+    await join_network(url, HUB)
+    assert state["puts"] == []
 
 
 async def test_forms_only_once(border_router):
     url, state = border_router
     state["stuck"] = True  # forming takes a while: the dataset doesn't appear yet
-    await asyncio.wait_for(form_network(url, None, patience=0), 3)
+    await asyncio.wait_for(join_network(url, None, patience=0), 3)
     assert len(state["puts"]) == 2  # one dataset, one enable
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(active_dataset(url), 2)
 
 
-async def test_only_a_border_router_that_doesnt_form_itself_is_provisioned(border_router, monkeypatch):
+@pytest.mark.parametrize(("router", "formed"), [(otbr, ""), (silabs_multiprotocol, OTHER)])
+async def test_a_border_router_is_provisioned_onto_the_hubs_thread_network(border_router, monkeypatch, router, formed):
     url, state = border_router
     monkeypatch.setattr(services, "FORM_PATIENCE", 0)
-    rest = Endpoint("thread", "otbr-rest", url, is_shared=True)
-    await asyncio.wait_for(silabs_multiprotocol().provision(rest), 2)  # its container forms the network
-    assert state["puts"] == []
-    await asyncio.wait_for(otbr().provision(rest), 3)
-    assert len(state["puts"]) == 2
-
-
-async def test_a_border_router_joins_the_hubs_thread_network(border_router, monkeypatch):
-    url, state = border_router
-    monkeypatch.setattr(services, "FORM_PATIENCE", 0)
-    router, output = otbr(), RecordingPeripheralOutput()
-    router.runtime, output.context = output, Context(thread_dataset="0e08hub")  # learned from the stick before
-    await asyncio.wait_for(router.provision(Endpoint("thread", "otbr-rest", url, is_shared=True)), 3)
-    assert await active_dataset(url) == "0e08hub"
+    state["dataset"] = formed  # the multiprotocol container forms one of its own, as it warms the radio up
+    service, output = router(), RecordingPeripheralOutput()
+    service.runtime, output.context = output, Context(thread_dataset=HUB)  # learned from the stick before
+    await asyncio.wait_for(service.provision(Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999")), 1)
+    await asyncio.wait_for(service.provision(Endpoint("thread", "otbr-rest", url, is_shared=True)), 3)
+    assert await active_dataset(url) == HUB
 
 
 class Answering:
