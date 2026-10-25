@@ -54,7 +54,7 @@ class SSDPDiscoveryService:
 
     @property
     def endpoint(self) -> Endpoint:
-        return Endpoint("upnp", "ssdp", "ssdp", shared=True, instance=self)
+        return Endpoint("upnp", "ssdp", "ssdp", is_shared=True, instance=self)
 
     async def peripheral_did_change(self, change: PeripheralChange) -> None:
         pass

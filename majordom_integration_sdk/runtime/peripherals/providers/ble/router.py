@@ -70,7 +70,7 @@ class BLEService:
     """Bluetooth LE across all sources: discovery for listeners, GATT connections on demand. A `BLERouter`."""
 
     name = "ble-router"
-    needs = [Need("ble", RAW_BLE, many=True, required=False)]
+    needs = [Need("ble", RAW_BLE, is_many=True, is_required=False)]
 
     def __init__(self, sources: Iterable[BLESource] = ()):
         """``sources``: radios to hear through besides the ones the runtime binds."""
@@ -94,7 +94,7 @@ class BLEService:
     @property
     def endpoint(self) -> Endpoint:
         """What the runtime offers: this router, shared by every consumer."""
-        return Endpoint("ble", "router", "router", shared=True, instance=self)
+        return Endpoint("ble", "router", "router", is_shared=True, instance=self)
 
     async def peripheral_did_change(self, change: PeripheralChange) -> None:
         """The runtime bound other radios to it: hear through the new ones, let go of the lost ones."""

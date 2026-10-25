@@ -67,13 +67,13 @@ class PlatformSettings(BaseModel):
 class Radio:
     id: str
     path: str
-    present: bool
+    is_present: bool
     driver: str | None  # None: recognised by an integration's probe, or not recognised at all
     firmware: str | None
     offers: list[str]  # what it serves right now, through services: zigbee, thread, …
     options: dict[str, list[str]]  # firmware it can be switched to -> families that firmware would serve
     used_by: list[str] = field(default_factory=list)
-    busy: bool = False  # being flashed
+    is_busy: bool = False  # being flashed
     held_by: str | None = None  # another program has it open: left alone until claimed (probe, or a pin)
 
 
@@ -285,7 +285,7 @@ class Runtime:
 
     def providers(self, owner: str) -> dict[str, str]:
         """Who serves each bound need of a consumer, service or provider: a radio id, a service or provider name, a
-        consumer that offered it, "host" or "pinned"; several, comma-separated, for a ``many`` need."""
+        consumer that offered it, "host" or "pinned"; several, comma-separated, for an ``is_many`` need."""
         return {family: ", ".join(p for p, _ in bound) for family, bound in self._bound.get(owner, {}).items()}
 
     def unbound(self, owner: str) -> dict[str, str]:
@@ -315,13 +315,13 @@ class Runtime:
                 Radio(
                     id=radio_id,
                     path=path,
-                    present=radio_id in self._present,
+                    is_present=radio_id in self._present,
                     driver=entry.get("driver"),
                     firmware=entry.get("firmware"),
                     offers=self._reach(self._radio_endpoints(radio_id, entry)),
                     options={fw: self._reach(fw_endpoints(driver, fw, path)) for fw in firmwares},
                     used_by=[c for c in self.consumers if radio_id in self._roots(c)],
-                    busy=radio_id in self._busy,
+                    is_busy=radio_id in self._busy,
                     held_by=self._held.get(radio_id),
                 )
             )
@@ -415,8 +415,8 @@ class Runtime:
 
     async def reserve(self, owner: str, family: str, url: str | None):
         """Keep the ``family`` endpoint at ``url`` for ``owner`` alone (a consumer or a service), bound to it before
-        anyone else can bind it, the providers' ``many`` needs included: one Bluetooth adapter, ``ble/bluez hci1``, for
-        matterjs-server to use directly. None gives it back."""
+        anyone else can bind it, the providers' ``is_many`` needs included: one Bluetooth adapter, ``ble/bluez hci1``,
+        for matterjs-server to use directly. None gives it back."""
         if url is None:
             self.state["reserved"].get(owner, {}).pop(family, None)
         else:
@@ -513,7 +513,7 @@ class Runtime:
     def _peripherals(self, owner: str) -> Peripherals | None:
         if (bound := self._bound.get(owner)) is None:
             return None
-        many = {need.family for need in self._owner_needs(owner) if need.many}
+        many = {need.family for need in self._owner_needs(owner) if need.is_many}
         return Peripherals({family: [e for _, e in b] if family in many else b[0][1] for family, b in bound.items()})
 
     def _running_services(self) -> set[str]:
@@ -560,17 +560,17 @@ class Runtime:
                     if provider in self.services and bind(provider, self.services[provider].needs) is None:
                         rejected.append(f"{provider} can't run ({'; '.join(unbound.get(provider, {}).values())})")
                         continue
-                    if not endpoint.shared:
+                    if not endpoint.is_shared:
                         taken[key] = owner
                         mine.append(key)
                     chosen.append((provider, endpoint))
-                    if not need.many:
+                    if not need.is_many:
                         break
                 if chosen:
                     bound[need.family] = chosen
                     continue
                 unbound.setdefault(owner, {})[need.family] = why(need, rejected)
-                failed = failed or need.required  # the rest are still looked at: each says why it's unbound
+                failed = failed or need.is_required  # the rest are still looked at: each says why it's unbound
             if failed:
                 for key in mine:  # what it took goes back to the others
                     del taken[key]
@@ -717,7 +717,7 @@ def _hint(offered_by: Mapping[tuple[str, str], Endpoint], taker: str, family: st
 
 
 def _satisfied(needs: Sequence[Need], families: set[str]) -> bool:
-    return all(need.family in families for need in needs if need.required)
+    return all(need.family in families for need in needs if need.is_required)
 
 
 def fw_endpoints(driver, firmware: str | None, path: str, params: Mapping[str, Any] = {}) -> list[Endpoint]:
@@ -786,12 +786,12 @@ def _host_endpoints() -> list[Endpoint]:
     if sys.platform != "linux":
         adapters = [""]
     ble = [Endpoint("ble", "bluez", name, params={"index": name.removeprefix("hci")}) for name in adapters]
-    return [Endpoint("ip", shared=True), *ble]
+    return [Endpoint("ip", is_shared=True), *ble]
 
 
 class _Peripherals(dict):
-    """Template access ``{peripherals.thread.url}``; an unbound optional need, or a param it lacks, renders empty. A
-    ``many`` need renders its first endpoint."""
+    """Template access ``{peripherals.thread.url}``; an unbound optional need, or a param it lacks, renders empty. An
+    ``is_many`` need renders its first endpoint."""
 
     def __getattr__(self, family: str) -> Endpoint:
         bound: Bound = self.get(family, Endpoint(""))

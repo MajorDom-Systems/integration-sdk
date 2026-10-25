@@ -24,16 +24,16 @@ class Endpoint:
     family: str
     dialect: str = ""
     url: str = ""
-    shared: bool = False  # several consumers may bind it (one Thread network); otherwise exactly one
+    is_shared: bool = False  # several consumers may bind it (one Thread network); otherwise exactly one
     params: Mapping[str, Any] = field(default_factory=dict, hash=False)
     instance: Any = field(default=None, hash=False, compare=False, repr=False)
 
 
-type Bound = Endpoint | list[Endpoint]  # what a need is bound to: a list for a ``many`` need
+type Bound = Endpoint | list[Endpoint]  # what a need is bound to: a list for an ``is_many`` need
 
 
 class Peripherals(dict[str, Bound]):
-    """A consumer's bound needs by family: an `Endpoint`, or a list of them for a ``many`` need."""
+    """A consumer's bound needs by family: an `Endpoint`, or a list of them for an ``is_many`` need."""
 
     def endpoint(self, family: str) -> Endpoint:
         """The endpoint bound to the need of ``family``; KeyError while it is unbound."""

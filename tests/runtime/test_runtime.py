@@ -12,7 +12,7 @@ from majordom_integration_sdk.runtime import Runtime
 MATTERJS_SERVER = Service(
     "matterjs-server",
     compose={"image": "matter", "environment": {"OTBR": "{peripherals.thread.url}", "REGION": "{context.region}"}},
-    needs=[Need("ip"), Need("thread", ["otbr-rest"], required=False)],
+    needs=[Need("ip"), Need("thread", ["otbr-rest"], is_required=False)],
     provides=[Endpoint("matter", "matter-server-ws", "ws://127.0.0.1:5580/ws")],
 )
 
@@ -148,7 +148,9 @@ async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
 
 async def test_pinned_endpoint_replaces_the_border_router(tmp_path, stick):
     rcp = stick("rcp", driver="silabs", firmware="thread-rcp")
-    rt = runtime(tmp_path, [rcp], pinned={"thread": Endpoint("thread", "otbr-rest", "http://mine:8081", shared=True)})
+    rt = runtime(
+        tmp_path, [rcp], pinned={"thread": Endpoint("thread", "otbr-rest", "http://mine:8081", is_shared=True)}
+    )
     await rt.refresh()
 
     assert set(compose(tmp_path)) == {"matterjs-server"}

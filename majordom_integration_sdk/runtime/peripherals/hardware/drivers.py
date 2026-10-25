@@ -38,7 +38,7 @@ class RadioDriver(ABC):
 class Firmware:
     url: str
     sha256: str
-    stable: bool = False  # verified for shipping; the rest is offered on the dev channel only
+    is_stable: bool = False  # verified for shipping; the rest is offered on the dev channel only
 
 
 _NABUCASA = "https://github.com/NabuCasa/silabs-firmware-builder/releases/download"
@@ -80,7 +80,7 @@ class Silabs(RadioDriver):
 
     def flashable(self, path: str, channel: str) -> list[str]:
         builds = next((b for name, b in self.boards.items() if name in path), {})
-        return [fw for fw, build in builds.items() if build.stable or channel == "dev"]
+        return [fw for fw, build in builds.items() if build.is_stable or channel == "dev"]
 
     async def flash(self, path: str, firmware: str, channel: str, cache: Path) -> None:
         if firmware not in self.flashable(path, channel):

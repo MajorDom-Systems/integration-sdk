@@ -54,7 +54,7 @@ def test_peripherals_hand_out_one_endpoint_many_or_an_instance():
     with pytest.raises(KeyError):
         peripherals.endpoint("thread")
 
-    peripherals["ble"] = Endpoint("ble", "router", "router", shared=True, instance=router)
+    peripherals["ble"] = Endpoint("ble", "router", "router", is_shared=True, instance=router)
     assert peripherals.instance("ble") is router
 
 
@@ -62,4 +62,4 @@ def test_an_endpoint_is_the_same_whatever_instance_it_carries():
     assert Endpoint("ble", "esphome-proxy", "esphome:aa", instance=object()) == Endpoint(
         "ble", "esphome-proxy", "esphome:aa", instance=object()
     )
-    assert not Need("ble").many
+    assert not Need("ble").is_many

@@ -39,7 +39,7 @@ def runtime(tmp_path, consumers: dict[str, Any], *builtins, **kwargs) -> Runtime
 
 
 async def test_a_many_need_binds_every_free_matching_endpoint(tmp_path):
-    rt = runtime(tmp_path, {"sniffer": consumer(Need("ble", ["bluez"], many=True))})
+    rt = runtime(tmp_path, {"sniffer": consumer(Need("ble", ["bluez"], is_many=True))})
     await rt.refresh()
 
     peripherals = rt.peripherals("sniffer")
@@ -52,7 +52,7 @@ async def test_a_many_need_binds_every_free_matching_endpoint(tmp_path):
 
 
 async def test_a_many_need_that_finds_nothing_is_unbound(tmp_path):
-    rt = runtime(tmp_path, {"sniffer": consumer(Need("lora", many=True))})
+    rt = runtime(tmp_path, {"sniffer": consumer(Need("lora", is_many=True))})
     await rt.refresh()
     assert rt.peripherals("sniffer") is None
     assert rt.unbound("sniffer") == {"lora": "need lora/*: nothing offers it"}
@@ -68,7 +68,7 @@ async def test_in_process_providers_are_shared_endpoints_carrying_themselves(tmp
     assert matter and hue
     assert matter.instance("ble") is router
     assert hue.instance("upnp") is ssdp
-    assert matter.endpoint("ble") == Endpoint("ble", "router", "router", shared=True)
+    assert matter.endpoint("ble") == Endpoint("ble", "router", "router", is_shared=True)
 
 
 async def test_the_router_binds_first_and_takes_every_adapter(tmp_path):
@@ -114,7 +114,7 @@ async def test_a_reserved_adapter_goes_to_its_owner_before_the_router(tmp_path):
 
 
 async def test_a_reserved_endpoint_is_no_one_elses(tmp_path):
-    rt = runtime(tmp_path, {"raw": consumer(Need("ble", ["bluez"], many=True))})
+    rt = runtime(tmp_path, {"raw": consumer(Need("ble", ["bluez"], is_many=True))})
     await rt.reserve("someone", "ble", "hci0")
     assert (rt.peripherals("raw") or {}).get("ble") == [ADAPTERS[1]]
 
@@ -126,7 +126,7 @@ async def test_offers_bind_as_they_come_and_go_without_rebinding_the_offerer(tmp
     async def on_change():
         changes.append(rt.peripherals("esphome"))
 
-    esphome = consumer(Need("ble", ["router"], required=False))
+    esphome = consumer(Need("ble", ["router"], is_required=False))
     rt = runtime(tmp_path, {"esphome": esphome}, router, on_change=on_change)
     await rt.refresh()
     before = rt.peripherals("esphome")
@@ -221,7 +221,7 @@ async def test_a_service_hears_whether_it_got_an_adapter(tmp_path):
             },
             "volumes": ["/data:/data", "{peripherals.ble.url:?/run/dbus:/run/dbus:ro}"],
         },
-        [Need("ble", ["bluez"], required=False)],
+        [Need("ble", ["bluez"], is_required=False)],
         [Endpoint("matter", "matter-server", "ws")],
     )
     rt = runtime(tmp_path, {"matter": consumer(Need("matter"), services=[server])}, FakeBLERouter())
@@ -243,7 +243,7 @@ async def test_a_consumer_hears_what_its_service_got_through_the_params_it_provi
     server = Service(
         "matterjs-server",
         {"image": "m"},
-        [Need("ble", ["bluez"], required=False)],
+        [Need("ble", ["bluez"], is_required=False)],
         [Endpoint("matter", "matter-server", "ws", params={"adapter": "{peripherals.ble.url}", "baud": 9600})],
     )
     rt = runtime(tmp_path, {"matter": consumer(Need("matter"), services=[server])}, FakeBLERouter())
@@ -271,7 +271,7 @@ def test_the_host_offers_every_adapter_with_its_index(monkeypatch):
     )
     monkeypatch.setattr(module.sys, "platform", "linux")
     assert module._host_endpoints() == [
-        Endpoint("ip", shared=True),
+        Endpoint("ip", is_shared=True),
         Endpoint("ble", "bluez", "hci0", params={"index": "0"}),
         Endpoint("ble", "bluez", "hci1", params={"index": "1"}),
     ]

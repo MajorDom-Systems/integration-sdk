@@ -3,7 +3,7 @@
 A capability is ``family/dialect``: ``zigbee/ezsp``, ``thread/spinel``, ``matter/matter-server``, ``ble/router``.
 Controllers, services and the runtime's own providers declare `Need`s; radios, services, the host and the providers
 offer `Endpoint`s. A runtime (`majordom_integration_sdk.runtime`, or you by hand in library mode) binds them and hands
-every consumer its `Peripherals`: an `Endpoint` per family, a list for a ``many`` need.
+every consumer its `Peripherals`: an `Endpoint` per family, a list for an ``is_many`` need.
 """
 
 from majordom_integration_sdk.peripherals.endpoint import Bound, Endpoint, PeripheralChange, Peripherals

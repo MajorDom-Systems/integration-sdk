@@ -63,5 +63,5 @@ def no_host_bluetooth(monkeypatch):
     from majordom_integration_sdk import Endpoint
 
     monkeypatch.setattr(
-        "majordom_integration_sdk.runtime.runtime._host_endpoints", lambda: [Endpoint("ip", shared=True)]
+        "majordom_integration_sdk.runtime.runtime._host_endpoints", lambda: [Endpoint("ip", is_shared=True)]
     )

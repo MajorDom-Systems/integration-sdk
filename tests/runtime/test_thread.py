@@ -83,7 +83,7 @@ async def test_forms_only_once(border_router):
 async def test_only_a_border_router_that_doesnt_form_itself_is_provisioned(border_router, monkeypatch):
     url, state = border_router
     monkeypatch.setattr(services, "FORM_PATIENCE", 0)
-    rest = Endpoint("thread", "otbr-rest", url, shared=True)
+    rest = Endpoint("thread", "otbr-rest", url, is_shared=True)
     await asyncio.wait_for(silabs_multiprotocol.provision(rest, ThreadNetwork()), 2)  # its container forms the network
     assert state["puts"] == []
     await asyncio.wait_for(otbr.provision(rest, ThreadNetwork()), 3)

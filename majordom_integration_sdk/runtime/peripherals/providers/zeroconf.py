@@ -30,7 +30,7 @@ class ZeroconfDiscoveryService:
 
     @property
     def endpoint(self) -> Endpoint:
-        return Endpoint("mdns", "zeroconf", "zeroconf", shared=True, instance=self)
+        return Endpoint("mdns", "zeroconf", "zeroconf", is_shared=True, instance=self)
 
     async def peripheral_did_change(self, change: PeripheralChange) -> None:
         pass

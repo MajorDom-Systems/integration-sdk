@@ -185,8 +185,8 @@ class _CliSession:
         providers = self._runtime.providers(slug) if self._runtime else {}
         unbound = self._runtime.unbound(slug) if self._runtime else {}
         for need in type(self._controller).needs:
-            wanted = f"{need.family}/{'|'.join(need.dialects) or '*'}{' (many)' if need.many else ''}"
-            wanted += "" if need.required else " (optional)"
+            wanted = f"{need.family}/{'|'.join(need.dialects) or '*'}{' (many)' if need.is_many else ''}"
+            wanted += "" if need.is_required else " (optional)"
             if need.family in bound:
                 urls = ", ".join(e.url or e.dialect for e in bound.endpoints(need.family))
                 rows.append(f"{wanted}  -> {urls}  by {providers.get(need.family, 'you')}")
@@ -199,7 +199,7 @@ class _CliSession:
         dialect = dialect or next(
             (n.dialects[0] for n in type(self._controller).needs if n.family == family and n.dialects), ""
         )
-        await self._require_runtime().pin_endpoint(Endpoint(family, dialect, url, shared=True))
+        await self._require_runtime().pin_endpoint(Endpoint(family, dialect, url, is_shared=True))
 
     async def unpin(self, family: str) -> None:
         await self._require_runtime().pin_endpoint(None, family)

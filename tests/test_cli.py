@@ -260,7 +260,7 @@ def test_capturing_handler_buffers_then_dumps(capsys):
 
 class _ZigbeeController(FakeController):
     name = "Fake Zigbee"
-    needs = [Need("zigbee", ["ezsp", "znp"]), Need("ble", ["bluez"], required=False)]
+    needs = [Need("zigbee", ["ezsp", "znp"]), Need("ble", ["bluez"], is_required=False)]
 
 
 @pytest.fixture
@@ -297,7 +297,7 @@ async def test_a_pinned_endpoint_binds_the_need_and_starts_the_integration(needs
 
     assert session.needs()[0] == "zigbee/ezsp|znp  -> socket://192.168.1.5:6638  by pinned"
     assert runner.controller.peripherals.endpoint("zigbee") == Endpoint(
-        "zigbee", "ezsp", "socket://192.168.1.5:6638", shared=True
+        "zigbee", "ezsp", "socket://192.168.1.5:6638", is_shared=True
     )
     assert runner.running
 

@@ -26,7 +26,7 @@ class ThreadNetwork(BaseModel):
     tx_power: int | None = Field(None, title="Thread transmit power, dBm", description="Empty uses the radio default.")
 
 
-_OTBR_REST = Endpoint("thread", "otbr-rest", "http://127.0.0.1:{ports.rest}", shared=True)
+_OTBR_REST = Endpoint("thread", "otbr-rest", "http://127.0.0.1:{ports.rest}", is_shared=True)
 FORM_PATIENCE = 15  # seconds a border router answers without a network before one is formed on it
 
 

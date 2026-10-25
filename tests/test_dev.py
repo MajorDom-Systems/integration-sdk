@@ -22,14 +22,14 @@ from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.testing import FakeBLERouter, FakeSSDP
 
-ZWAVE = Endpoint("zwave", "zwave-js-server", "ws://127.0.0.1:3000", shared=True)
+ZWAVE = Endpoint("zwave", "zwave-js-server", "ws://127.0.0.1:3000", is_shared=True)
 
 
 class _RecordingController(AbstractController[Device, Parameter]):
     """Minimal controller that records that it was started and stopped, and the peripheral changes it saw."""
 
     name = "Dev Example"
-    needs = [Need("zwave", ["zwave-js-server"]), Need("ble", ["router"], required=False)]
+    needs = [Need("zwave", ["zwave-js-server"]), Need("ble", ["router"], is_required=False)]
     instances: list["_RecordingController"] = []
     handles_changes = True
 
@@ -156,7 +156,7 @@ async def test_the_runner_hands_a_moved_peripheral_over_or_restarts(tmp_path):
     runner = Runner(_RecordingController, build_platform(storage_root=tmp_path), runtime)
     await runner.start()
     controller = cast(_RecordingController, runner.controller)
-    moved = Endpoint("zwave", "zwave-js-server", "ws://192.168.1.9:3000", shared=True)
+    moved = Endpoint("zwave", "zwave-js-server", "ws://192.168.1.9:3000", is_shared=True)
 
     await runtime.pin_endpoint(moved)
     assert controller.changes == [PeripheralChange("zwave", ZWAVE, moved)]
