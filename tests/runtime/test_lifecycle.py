@@ -465,6 +465,18 @@ async def test_what_it_brought_along_while_running_goes_when_it_stops(tmp_path):
     assert router.peripherals.endpoints("ble") == []
 
 
+async def test_what_it_brought_along_waits_on_it_once_it_stops(tmp_path, monkeypatch):
+    output, proxy = RecordingRuntimeOutput(), FakePeripheral("aa", [Need("ble")])  # nothing offers Bluetooth
+    esphome, stick = FakePeripheral("esphome", [Need("zigbee")], provides=[proxy]), radio(ZIGBEE)
+    runtime = await run(tmp_path, stick, esphome, output=output)
+    monkeypatch.setattr(module, "_PASSES", 1)  # what a pass leaves shows, before the next one lets it go
+
+    stick.provided = [MOVED]
+    await changed(runtime, stick)  # it restarts
+    stopped = PeripheralStatus(S.WAITING, K.CONTRIBUTOR_STOPPED, "comes with esphome, which stopped")
+    assert ("esphome/aa", stopped) in output.statuses
+
+
 async def test_what_it_brings_along_is_known_under_its_key(tmp_path):
     proxy = FakePeripheral("aa")
     esphome = FakePeripheral("esphome", provides=[proxy])
