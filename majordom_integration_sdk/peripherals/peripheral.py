@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+from pydantic import BaseModel, ConfigDict
 
 from majordom_integration_sdk.peripherals.endpoint import Bound, Endpoint, PeripheralChange
 from majordom_integration_sdk.peripherals.need import Need
@@ -14,6 +16,12 @@ if TYPE_CHECKING:
     from majordom_integration_sdk.controller.platform import Context
 
 START_TIMEOUT = 600  # seconds a start may take to serve by default, else it failed
+
+
+class NoSettings(BaseModel):
+    """The settings of a peripheral without options: it takes none."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class PeripheralOutput(Protocol):
@@ -29,21 +37,21 @@ class PeripheralOutput(Protocol):
         """The Hub-wide facts as they are now: region, Wi-Fi, the Thread network."""
         ...
 
-    async def peripheral_did_change_provided(self, peripheral: Peripheral):
+    async def peripheral_did_change_provided(self, peripheral: Peripheral[Any]):
         """Its ``provides`` or the peripherals it brings along changed."""
         ...
 
-    async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+    async def peripheral_did_learn(self, peripheral: Peripheral[Any], facts: Mapping[str, Any]):
         """`Context` fields it read from what it runs or talks to, e.g. a border router's Thread network: the context
         takes them, and every peripheral that runs hears it changed."""
         ...
 
-    async def peripheral_did_stop(self, peripheral: Peripheral):
+    async def peripheral_did_stop(self, peripheral: Peripheral[Any]):
         """It stopped by itself, gracefully: it is stopped (``stop`` releases what it holds) and waits until one of its
         needs changes (goes and comes back, or moves) or the user restarts it."""
         ...
 
-    async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
+    async def peripheral_did_fail(self, peripheral: Peripheral[Any], reason: str):
         """It can't go on, ``reason`` saying why to the user: it is stopped and started again after each of the
         runtime's retry delays, then failed until the user restarts it. Told from inside ``start``, that start
         fails."""
@@ -59,16 +67,16 @@ class _NoRuntime:
 
         return Context()
 
-    async def peripheral_did_change_provided(self, peripheral: Peripheral):
+    async def peripheral_did_change_provided(self, peripheral: Peripheral[Any]):
         pass
 
-    async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+    async def peripheral_did_learn(self, peripheral: Peripheral[Any], facts: Mapping[str, Any]):
         pass
 
-    async def peripheral_did_stop(self, peripheral: Peripheral):
+    async def peripheral_did_stop(self, peripheral: Peripheral[Any]):
         pass
 
-    async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
+    async def peripheral_did_fail(self, peripheral: Peripheral[Any], reason: str):
         pass
 
 
@@ -99,7 +107,7 @@ class Peripherals:
         return self.endpoint(family).instance if family in self.bound else None
 
 
-class Peripheral(Protocol):
+class Peripheral[S: BaseModel = NoSettings](Protocol):
     """Anything around an integration that needs and/or provides capabilities: a USB radio, soldered hardware, the
     host's Bluetooth adapters and network, a container, an in-process provider (the Bluetooth router, Zeroconf, SSDP),
     an integration itself, an ESPHome node's Bluetooth proxy. Only the construction differs.
@@ -111,21 +119,26 @@ class Peripheral(Protocol):
     required need that can't be bound keeps it waiting, with the reason; one lost later stops it until it is back. An
     optional need is handed over once its provider runs, as it appears.
 
-    Subclass it for the defaults. The runtime sets ``runtime``, ``peripherals``, ``data``, ``contributor``, and
-    ``settings`` when the peripheral declares its options as a nested ``class Settings(BaseModel)``: annotate
-    ``settings: Settings`` to type it.
+    Subclass it for the defaults. The runtime sets ``runtime``, ``peripherals``, ``data``, ``contributor`` and
+    ``settings``, its options validated by its ``Settings``. Declare them as a nested ``class Settings(BaseModel)``
+    named as the type parameter, which types ``settings``: ``class Radio(Peripheral["Radio.Settings"])``. A
+    peripheral of any settings is a ``Peripheral[Any]``.
     """
 
     name: str  # what it is shown by
-    contributor: Peripheral | None = None  # what brought it along
+    contributor: Peripheral[Any] | None = None  # what brought it along
     needs: Sequence[Need] = ()
     is_on_demand: bool = False  # runs only while something that runs binds it: containers, in-process providers
     start_timeout: float = START_TIMEOUT
-    Settings: Any = None  # Any: ty forbids a subclass to narrow a typed one (to its nested Settings)
-    settings: Any = None
+    settings: S
     runtime: PeripheralOutput = _NoRuntime()  # what runs it
     peripherals: Peripherals = Peripherals()  # what its needs are bound to
     data: Path  # a folder of its own, created once it writes there: what it keeps across restarts
+
+    @property
+    def Settings(self) -> type[S]:
+        """The model of its options; `NoSettings` when it has none. Read-only, so a nested class may override it."""
+        return cast(type[S], NoSettings)
 
     @property
     def key(self) -> str:
@@ -134,7 +147,7 @@ class Peripheral(Protocol):
         return f"{self.contributor.key}/{self.name}" if self.contributor else self.name
 
     @property
-    def provides(self) -> Sequence[Endpoint | Peripheral]:
+    def provides(self) -> Sequence[Endpoint | Peripheral[Any]]:
         """What it serves to the others' needs, and the peripherals it brings along while it runs: the USB scanner a
         radio per stick, ESPHome a Bluetooth proxy per node. When it changes on its own, tell ``runtime``."""
         return ()
@@ -156,7 +169,7 @@ class Peripheral(Protocol):
         """
         return False
 
-    async def settings_did_change(self, before: Any) -> bool:
+    async def settings_did_change(self, before: S) -> bool:
         """Its ``settings`` changed while it runs. True when applied in place; False, the default, restarts it."""
         return False
 

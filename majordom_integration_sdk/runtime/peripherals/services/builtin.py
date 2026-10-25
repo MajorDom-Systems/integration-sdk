@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from majordom_integration_sdk.peripherals import Endpoint, Need, Service
+from majordom_integration_sdk.peripherals import Endpoint, Need, NoSettings, Service
 
 _IMAGES = Path(__file__).parent / "images"
 
@@ -24,7 +24,7 @@ FORM_PATIENCE = 15  # seconds a border router answers without a network before o
 _EXTENDED_PAN_ID = 2  # the dataset TLV that tells networks apart
 
 
-class _BorderRouter(Service):
+class _BorderRouter[S: BaseModel = NoSettings](Service[S]):
     """On the hub's Thread network, ``context.thread_dataset``: set up over its REST API to join it, or to form one when
     there is none yet; it tells the network it has once it serves. The network is never rendered into its container,
     so learning it recreates nothing."""
@@ -39,7 +39,7 @@ class _BorderRouter(Service):
         await self.runtime.peripheral_did_learn(self, {"thread_dataset": await active_dataset(rest.url)})
 
 
-def silabs_multiprotocol() -> Service:
+def silabs_multiprotocol() -> Service[ThreadRadio]:
     """One multi-PAN RCP serving Zigbee (zigbeed, EZSP over TCP) and Thread (OTBR) through cpcd."""
     return _BorderRouter(
         "silabs-multiprotocol",

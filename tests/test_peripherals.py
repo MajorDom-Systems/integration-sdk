@@ -2,13 +2,14 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from majordom_integration_sdk import (
     AbstractController,
     Context,
     Endpoint,
     Need,
+    NoSettings,
     Peripheral,
     PeripheralChange,
     Peripherals,
@@ -38,12 +39,12 @@ async def test_a_peripheral_needs_provides_and_is_bound_nothing_by_default():
     with pytest.raises(TypeError):
         cast(Any, host.peripherals.bound)["ip"] = Endpoint("ip")  # shared by every peripheral until bound: read-only
     assert not host.is_on_demand and host.start_timeout == START_TIMEOUT
-    assert host.Settings is None and host.settings is None
+    assert host.Settings is NoSettings  # it takes none
     await host.start()
     await host.stop()
     await host.runtime.peripheral_did_change_provided(host)  # nothing runs it: told no one
     assert await host.needed_peripheral_did_change(PeripheralChange("ip", None, None)) is False  # restart it
-    assert await host.settings_did_change(None) is False
+    assert await host.settings_did_change(NoSettings()) is False
     assert await host.context_did_change(Context()) is True  # the context concerns few
 
 
@@ -84,7 +85,7 @@ SERVER = Service("server", compose={}, provides=[Endpoint("matter", "matter-serv
 
 async def test_a_service_runs_on_demand_and_hooks_in_doing_nothing():
     assert SERVER.is_on_demand and SERVER.start_timeout == 30 * 60  # long enough to pull its image first
-    assert SERVER.ports == {} and SERVER.Settings is None
+    assert SERVER.ports == {} and SERVER.Settings is NoSettings
     assert await SERVER.provision(Endpoint("matter", "matter-server", "ws://127.0.0.1:5580")) is None
     assert await SERVER.is_healthy()
 
@@ -110,13 +111,11 @@ def test_a_usb_driver_says_what_a_firmware_serves_and_offers_itself():
     assert driver.flashable("/dev/ttyUSB0", "dev") == []
 
 
-class ExampleController(AbstractController[Device, Parameter]):
+class ExampleController(AbstractController[Device, Parameter, "ExampleController.Settings"]):
     needs = [Need("example")]
 
     class Settings(BaseModel):
         channel: int = 11
-
-    settings: Settings
 
     @property
     def discoveries(self) -> dict[UUID, Discovery]:
@@ -154,6 +153,11 @@ async def test_a_controller_is_a_peripheral_with_its_settings_and_its_peripheral
     assert await controller.context_did_change(Context()) is True  # the context concerns few: it reads it when it does
 
 
-def test_a_controller_without_settings_has_none():
-    assert AbstractController.Settings is None
+def test_a_controller_without_settings_takes_none():
+    class Plain(ExampleController):
+        Settings = NoSettings
+
+    assert Plain(build_test_platform()).settings == NoSettings()
+    with pytest.raises(ValidationError):
+        NoSettings.model_validate({"channel": 11})
     assert AbstractController.needs == ()

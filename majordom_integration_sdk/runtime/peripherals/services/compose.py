@@ -38,7 +38,7 @@ class Compose(Peripheral):
     is_on_demand = True
 
     def __init__(self):
-        self._running: dict[str, Service] = {}
+        self._running: dict[str, Service[Any]] = {}
         self._tentative: dict[str, dict[str, int]] = {}  # the ports a service that doesn't run would get
         self._rendered: dict[str, Mapping[str, Any]] = {}  # what each one runs with, rendered when it was created
         self._applied: Mapping[str, Any] | None = None  # the compose file docker last took
@@ -61,7 +61,7 @@ class Compose(Peripheral):
 
     # ServiceHost
 
-    def provided(self, service: Service) -> list[Endpoint]:
+    def provided(self, service: Service[Any]) -> list[Endpoint]:
         values = self._values(service)
         ports = values["ports"]
         return [
@@ -69,7 +69,7 @@ class Compose(Peripheral):
             for e in service.templates
         ]
 
-    async def up(self, service: Service):
+    async def up(self, service: Service[Any]):
         await self._keep_ports(service)
         self._running[service.name] = service
         self._rendered[service.name] = self._render(service)
@@ -83,7 +83,7 @@ class Compose(Peripheral):
             await _until(partial(_provision, service, endpoint), f"{service.name} failed to set up {endpoint.url}")
         await _until(service.is_healthy, f"{service.name} isn't healthy")
 
-    async def down(self, service: Service):
+    async def down(self, service: Service[Any]):
         if self._running.pop(service.name, None):
             self._rendered.pop(service.name, None)
             try:
@@ -91,12 +91,12 @@ class Compose(Peripheral):
             except Exception as error:
                 log.error(f"Removing {service.name}'s container failed: {error}")
 
-    def is_current(self, service: Service) -> bool:
+    def is_current(self, service: Service[Any]) -> bool:
         return service.name not in self._running or self._rendered.get(service.name) == self._render(service)
 
     # Internals
 
-    def _values(self, service: Service) -> dict[str, Any]:
+    def _values(self, service: Service[Any]) -> dict[str, Any]:
         """What its compose and the params it provides render with."""
         return {
             "data": service.data,
@@ -107,12 +107,12 @@ class Compose(Peripheral):
             "ports": SimpleNamespace(**self._ports(service)),
         }
 
-    def _render(self, service: Service) -> Mapping[str, Any]:
+    def _render(self, service: Service[Any]) -> Mapping[str, Any]:
         # no depends_on: everything retries until its links answer, and a dependency would recreate
         # a service whenever an optional provider (matter-server's border router) comes or goes
         return {"restart": "unless-stopped", **_render(service.compose, self._values(service))}
 
-    def _ports(self, service: Service) -> dict[str, int]:
+    def _ports(self, service: Service[Any]) -> dict[str, int]:
         """Its host ports: the ones it kept unless another service took one since, else the preferred one when free.
         One that doesn't run is told what it would get."""
         mine = {**self._tentative.get(service.name, {}), **self.ports.get(service.name, {})}
@@ -123,7 +123,7 @@ class Compose(Peripheral):
         self._tentative[service.name] = mine
         return mine
 
-    async def _keep_ports(self, service: Service):
+    async def _keep_ports(self, service: Service[Any]):
         """Keep its ports from now on; move off one something else took meanwhile, e.g. after a reboot before our
         container came up. Not knowing which containers run, it moves nothing: it raises."""
         ports = self._ports(service)
@@ -152,7 +152,7 @@ class Compose(Peripheral):
             await self._docker("compose", "-f", str(self.data / "compose.json"), *args)
             self._applied = compose  # only what actually runs: a failure is tried again
 
-    async def _is_up(self, service: Service) -> bool:
+    async def _is_up(self, service: Service[Any]) -> bool:
         ports = self.ports.get(service.name, {}).values()
         return all(_is_listening(port) for port in ports) and service.name in await self._containers()
 
@@ -185,7 +185,7 @@ async def _until(check: Callable[[], Awaitable[bool]], failure: str):
         await asyncio.sleep(READY_POLL)
 
 
-async def _provision(service: Service, endpoint: Endpoint) -> bool:
+async def _provision(service: Service[Any], endpoint: Endpoint) -> bool:
     await service.provision(endpoint)
     return True
 

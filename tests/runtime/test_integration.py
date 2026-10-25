@@ -1,6 +1,7 @@
 """An integration controller run by the runtime like any peripheral: its platform, settings and peripherals."""
 
 import json
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -17,7 +18,7 @@ class Greeting(BaseModel):
     greeting: str = "hello"
 
 
-def echo_server() -> Service:
+def echo_server() -> Service[Greeting]:
     return Service(
         "echo-server",
         compose={"image": "echo", "command": ["--greeting", "{settings.greeting}"]},
@@ -28,13 +29,11 @@ def echo_server() -> Service:
     )
 
 
-class EchoController(AbstractController[Device, Parameter]):
+class EchoController(AbstractController[Device, Parameter, "EchoController.Settings"]):
     needs = [Need("example", ["echo"])]
 
     class Settings(BaseModel):
         is_loud: bool = False
-
-    settings: Settings
 
     def __init__(self, platform: Platform, *, settings: Settings | None = None):
         super().__init__(platform, settings=settings)
@@ -69,12 +68,12 @@ class EchoController(AbstractController[Device, Parameter]):
         pass
 
 
-def peripherals(platform: Platform) -> list[Peripheral]:
+def peripherals(platform: Platform) -> list[Peripheral[Any]]:
     """What the integration package exports: its server, and the controller that needs it."""
     return [echo_server(), EchoController(platform)]
 
 
-def integration() -> tuple[Service, EchoController]:
+def integration() -> tuple[Service[Greeting], EchoController]:
     """What the integration exports, given its platform as by the Hub."""
     server, echo = peripherals(build_test_platform())
     assert isinstance(server, Service) and isinstance(echo, EchoController)

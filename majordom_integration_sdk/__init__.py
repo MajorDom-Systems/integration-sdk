@@ -29,6 +29,7 @@ from majordom_integration_sdk.errors import MissingCredentialsError
 from majordom_integration_sdk.peripherals import (
     Endpoint,
     Need,
+    NoSettings,
     Peripheral,
     PeripheralChange,
     PeripheralOutput,
@@ -67,6 +68,7 @@ __all__ = [
     "Need",
     "Endpoint",
     "Peripheral",
+    "NoSettings",
     "PeripheralOutput",
     "Peripherals",
     "Service",

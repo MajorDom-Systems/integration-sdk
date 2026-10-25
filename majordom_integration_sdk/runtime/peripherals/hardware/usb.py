@@ -36,7 +36,7 @@ FIRMWARE_CACHE = Path(tempfile.gettempdir()) / "majordom-firmware"  # downloads 
 UNSEEN = "another program"  # one that locked a port: whether it let go shows only by opening it
 
 
-class Radio(Peripheral):
+class Radio(Peripheral["Radio.Settings"]):
     """A radio, a USB stick or soldered on the board: it serves what its firmware does once a driver identified it, and
     nothing while another program holds it or it is being flashed. Flashing, probing and forgetting it are the user's
     to ask for."""
@@ -45,8 +45,6 @@ class Radio(Peripheral):
         firmware_channel: Literal["stable", "dev"] = Field(
             "stable", title="Radio firmware", description="Stable offers verified builds only, dev every known build."
         )
-
-    settings: Settings
 
     def __init__(
         self,

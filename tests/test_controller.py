@@ -4,7 +4,7 @@ from uuid import UUID
 
 from factories import make_device_state
 
-from majordom_integration_sdk import Context
+from majordom_integration_sdk import Context, NoSettings
 from majordom_integration_sdk.controller import AbstractController
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
@@ -105,5 +105,5 @@ async def test_the_pairing_window_opens_without_credentials():
 
 async def test_changed_settings_restart_it_unless_handled_and_the_context_doesnt():
     controller = _MinimalController(build_test_platform(integration="minimal"))
-    assert await controller.settings_did_change(None) is False
+    assert await controller.settings_did_change(NoSettings()) is False
     assert await controller.context_did_change(Context()) is True

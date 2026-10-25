@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from majordom_integration_sdk.peripherals.endpoint import Endpoint
 from majordom_integration_sdk.peripherals.need import Need
-from majordom_integration_sdk.peripherals.peripheral import Peripheral
+from majordom_integration_sdk.peripherals.peripheral import NoSettings, Peripheral
 
 if TYPE_CHECKING:
     from majordom_integration_sdk.controller.platform import Context
@@ -18,17 +18,17 @@ if TYPE_CHECKING:
 class ServiceHost(Protocol):
     """What runs a `Service`'s container, bound to its ``container`` need: the runtime's `Compose`."""
 
-    def provided(self, service: Service) -> Sequence[Endpoint]:
+    def provided(self, service: Service[Any]) -> Sequence[Endpoint]:
         """Its ``provides`` rendered: the host ports it got, the params it renders."""
         ...
 
-    async def up(self, service: Service):
+    async def up(self, service: Service[Any]):
         """Run its container; return once it serves."""
         ...
 
-    async def down(self, service: Service): ...
+    async def down(self, service: Service[Any]): ...
 
-    def is_current(self, service: Service) -> bool:
+    def is_current(self, service: Service[Any]) -> bool:
         """Whether its container still runs what it would render now."""
         ...
 
@@ -36,7 +36,7 @@ class ServiceHost(Protocol):
 CONTAINER_HOST = Need("container", ["compose"])  # what every service needs
 
 
-class Service(Peripheral):
+class Service[S: BaseModel = NoSettings](Peripheral[S]):
     """A companion server an integration provides, such as Matter's matterjs-server: a container that runs only while
     something that runs is bound to one of its endpoints. The integration lists it next to its controller, which
     `Need`s what it provides.
@@ -47,7 +47,7 @@ class Service(Peripheral):
     ``text`` when ``x`` is empty, ``{x:?text}`` when it isn't; a list item that renders empty is left out, so
     ``"volumes": ["{peripherals.ble.url:?/run/dbus:/run/dbus:ro}"]`` mounts D-Bus only while an adapter is bound.
     The ``params`` of the ``provides`` endpoints render the same way, which is how a consumer learns what its service
-    got: ``params={"adapter": "{peripherals.ble.url}"}``. ``settings`` is the pydantic model of its options.
+    got: ``params={"adapter": "{peripherals.ble.url}"}``. ``settings`` is the model of its options, its ``Settings``.
 
     ``ports`` names the host ports it listens on, each with the port it *prefers*, not a fixed one: the runtime uses it
     when free, else assigns another (45800-45999), keeps the choice across restarts, and fills ``{ports.<name>}`` in
@@ -68,11 +68,15 @@ class Service(Peripheral):
         compose: Mapping[str, Any],
         needs: Sequence[Need] = (),
         provides: Sequence[Endpoint] = (),
-        settings: type[BaseModel] | None = None,
+        settings: type[S] = NoSettings,  # ty: ignore[invalid-parameter-default]  (NoSettings is the default of S)
         ports: Mapping[str, int] | None = None,  # name -> PREFERRED host port; see the docstring
     ):
         self.name, self.compose, self.needs, self.templates = name, compose, [*needs, CONTAINER_HOST], provides
-        self.Settings, self.ports = settings, ports or {}
+        self.settings_model, self.ports = settings, ports or {}
+
+    @property
+    def Settings(self) -> type[S]:
+        return self.settings_model
 
     @property
     def host(self) -> ServiceHost | None:

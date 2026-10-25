@@ -13,7 +13,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Protocol
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from majordom_integration_sdk.controller.platform import Context
 from majordom_integration_sdk.peripherals import (
@@ -71,14 +71,14 @@ class RuntimeOutput(Protocol):
     """What the runtime reports to its owner (the Hub), delegate style like `PeripheralOutput`. Called synchronously
     from the runtime's loop, in order: don't block, schedule what takes time."""
 
-    def peripheral_did_change_status(self, peripheral: Peripheral, status: PeripheralStatus): ...
+    def peripheral_did_change_status(self, peripheral: Peripheral[Any], status: PeripheralStatus): ...
 
-    def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+    def peripheral_did_learn(self, peripheral: Peripheral[Any], facts: Mapping[str, Any]):
         """`Context` fields it read from what it runs (a border router's Thread network): merge them into the context
         the runtime is given, then tell it (`Runtime.context_did_change`)."""
         ...
 
-    def peripheral_did_disappear(self, peripheral: Peripheral):
+    def peripheral_did_disappear(self, peripheral: Peripheral[Any]):
         """It is no longer run here: what brought it along let go of it (a stick unplugged), or it was removed."""
         ...
 
@@ -111,7 +111,7 @@ type _Identity = dict[str, list[tuple[_Entry, Endpoint, int]]]  # what tells bin
 
 @dataclass(eq=False)
 class _Entry:
-    peripheral: Peripheral
+    peripheral: Peripheral[Any]
     key: str  # what it is known by here
     state: PeripheralState
     kind: StatusKind | None = None
@@ -162,7 +162,7 @@ class Runtime:
     def __init__(
         self,
         data: Path,
-        peripherals: Sequence[Peripheral] = (),
+        peripherals: Sequence[Peripheral[Any]] = (),
         *,
         context: Callable[[], Context] = Context,
         output: RuntimeOutput | None = None,
@@ -218,32 +218,32 @@ class Runtime:
     # What the Hub (or you) reads
 
     @property
-    def peripherals(self) -> list[Peripheral]:
+    def peripherals(self) -> list[Peripheral[Any]]:
         """Every peripheral it runs, in binding order: what it was given and what those brought along; then the ones
         that failed as another took their key."""
         return [entry.peripheral for entry in [*self._entries.values(), *self._clashes]]
 
-    def peripheral(self, key: str) -> Peripheral:
+    def peripheral(self, key: str) -> Peripheral[Any]:
         return self._entries[key].peripheral
 
-    def status(self, peripheral: Peripheral) -> PeripheralStatus:
+    def status(self, peripheral: Peripheral[Any]) -> PeripheralStatus:
         return self._entry(peripheral).status
 
-    def bound(self, peripheral: Peripheral) -> dict[str, Bound]:
+    def bound(self, peripheral: Peripheral[Any]) -> dict[str, Bound]:
         """What each need is bound to, by family: an `Endpoint`, a list of them for an ``is_many`` need."""
         return _view(peripheral, self._bound.get(self._entry(peripheral).key, {}))
 
-    def providers(self, peripheral: Peripheral) -> dict[str, str]:
+    def providers(self, peripheral: Peripheral[Any]) -> dict[str, str]:
         """Who serves each bound need, by family; several, comma-separated, for an ``is_many`` need."""
         bound = self._bound.get(self._entry(peripheral).key, {})
         return {family: ", ".join(p.key for p, _ in bindings) for family, bindings in bound.items()}
 
-    def unbound(self, peripheral: Peripheral) -> dict[str, str]:
+    def unbound(self, peripheral: Peripheral[Any]) -> dict[str, str]:
         """Why each need isn't bound, by family: for the user, with what to do when there is something, e.g.
         'need ble/bluez: every provider taken by ble-router — use Need("ble", ["router"])'."""
         return dict(self._unbound.get(self._entry(peripheral).key, {}))
 
-    def users(self, peripheral: Peripheral) -> list[str]:
+    def users(self, peripheral: Peripheral[Any]) -> list[str]:
         """Every peripheral that runs on it, directly or through others: a radio's integrations and their containers."""
         users: list[str] = []
         providers = {self._entry(peripheral).key}
@@ -258,7 +258,7 @@ class Runtime:
             users += more
             providers.update(more)
 
-    def uses(self, peripheral: Peripheral) -> list[str]:
+    def uses(self, peripheral: Peripheral[Any]) -> list[str]:
         """Every peripheral it runs on, directly or through others: an integration's containers and radios."""
         used: list[str] = []
         owners = [self._entry(peripheral).key]
@@ -296,17 +296,17 @@ class Runtime:
 
     # What the Hub (or you) changes
 
-    async def add(self, peripheral: Peripheral):
+    async def add(self, peripheral: Peripheral[Any]):
         """Run ``peripheral`` too, as if given last: an integration installed while the hub runs."""
         self.given.append(peripheral)
         await self._settle()
 
-    async def remove(self, peripheral: Peripheral):
+    async def remove(self, peripheral: Peripheral[Any]):
         """Stop running ``peripheral``, given or added; its owner hears it is gone (``peripheral_did_disappear``)."""
         self.given = [given for given in self.given if given is not peripheral]
         await self._settle()
 
-    async def enable(self, peripheral: Peripheral):
+    async def enable(self, peripheral: Peripheral[Any]):
         entry = self._entry(peripheral)
         self.disabled.set_disabled(entry.key, False)
 
@@ -317,13 +317,13 @@ class Runtime:
 
         await self._act(apply)
 
-    async def disable(self, peripheral: Peripheral):
+    async def disable(self, peripheral: Peripheral[Any]):
         """Stop it, and what it brought along, until enabled again; kept across restarts."""
         entry = self._entry(peripheral)
         self.disabled.set_disabled(entry.key, True)
         await self._act(lambda: self._stop(entry, PeripheralStatus(PeripheralState.DISABLED)))
 
-    async def restart(self, peripheral: Peripheral):
+    async def restart(self, peripheral: Peripheral[Any]):
         """Stop it if it runs and start it again, a failed one or one that stopped by itself too: its retries start
         over. Called from inside a peripheral's own start, stop or hook, it happens once that call returns."""
         entry = self._entry(peripheral)
@@ -336,14 +336,13 @@ class Runtime:
 
         await self._act(apply)
 
-    async def update_settings(self, peripheral: Peripheral, values: Mapping[str, Any]) -> Any:
+    async def update_settings[S: BaseModel](self, peripheral: Peripheral[S], values: Mapping[str, Any]) -> S:
         """Validate and keep new values of its ``Settings``; one that runs hears it (`settings_did_change`), a failed
         one or one that stopped by itself tries again."""
         entry = self._entry(peripheral)
-        if (model := peripheral.Settings) is None:
-            raise KeyError(f"{entry.key} has no settings")
-        before = peripheral.settings
-        peripheral.settings = model.model_validate(self.state["settings"].get(entry.key, {}) | dict(values))
+        settings = peripheral.Settings.model_validate(self.state["settings"].get(entry.key, {}) | dict(values))
+        before = getattr(peripheral, "settings", settings)  # none yet when the ones kept didn't validate
+        peripheral.settings = settings
         self.state["settings"][entry.key] = peripheral.settings.model_dump(mode="json")
         self._save()
 
@@ -389,15 +388,15 @@ class Runtime:
     def context(self) -> Context:
         return self._context()
 
-    async def peripheral_did_change_provided(self, peripheral: Peripheral):
+    async def peripheral_did_change_provided(self, peripheral: Peripheral[Any]):
         await self._settle()
 
-    async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+    async def peripheral_did_learn(self, peripheral: Peripheral[Any], facts: Mapping[str, Any]):
         if self.output and self._find(peripheral) is not None:
             with _logged(f"Reporting what {peripheral.name} learned"):
                 self.output.peripheral_did_learn(peripheral, facts)
 
-    async def peripheral_did_stop(self, peripheral: Peripheral):
+    async def peripheral_did_stop(self, peripheral: Peripheral[Any]):
         if (entry := self._find(peripheral)) is None:
             return
         if entry.state == PeripheralState.STARTING:
@@ -410,7 +409,7 @@ class Runtime:
 
         await self._act(apply)
 
-    async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
+    async def peripheral_did_fail(self, peripheral: Peripheral[Any], reason: str):
         if (entry := self._find(peripheral)) is None:
             return
         if entry.state == PeripheralState.STARTING:
@@ -426,12 +425,12 @@ class Runtime:
 
     # Internals
 
-    def _entry(self, peripheral: Peripheral) -> _Entry:
+    def _entry(self, peripheral: Peripheral[Any]) -> _Entry:
         if (entry := self._find(peripheral)) is None:
             raise LookupError(f"{peripheral.name} isn't run here")
         return entry
 
-    def _find(self, peripheral: Peripheral) -> _Entry | None:
+    def _find(self, peripheral: Peripheral[Any]) -> _Entry | None:
         return next((e for e in [*self._entries.values(), *self._clashes] if e.peripheral is peripheral), None)
 
     async def _act(self, change: Callable[[], Awaitable[Any]]):
@@ -498,7 +497,7 @@ class Runtime:
                     entry.kind, entry.detail = status.kind, status.detail
         return is_changed or self._snapshot() != before
 
-    def _snapshot(self) -> list[tuple[str, tuple[Endpoint | Peripheral, ...]]]:
+    def _snapshot(self) -> list[tuple[str, tuple[Endpoint | Peripheral[Any], ...]]]:
         return [(entry.key, tuple(_read(entry.peripheral))) for entry in self._entries.values()]
 
     def _collect(self) -> list[_Entry]:
@@ -509,7 +508,7 @@ class Runtime:
         gone: list[_Entry] = []
         known = {id(entry.peripheral): entry for entry in [*self._entries.values(), *self._clashes]}
 
-        def walk(peripheral: Peripheral, contributor: Peripheral | None):
+        def walk(peripheral: Peripheral[Any], contributor: Peripheral[Any] | None):
             peripheral.contributor = contributor
             key = peripheral.key
             if (seen := entries.get(key)) is not None:
@@ -533,7 +532,7 @@ class Runtime:
         self._entries, self._clashes = entries, clashes
         return gone
 
-    def _adopt(self, peripheral: Peripheral) -> _Entry:
+    def _adopt(self, peripheral: Peripheral[Any]) -> _Entry:
         key = peripheral.key
         peripheral.runtime, peripheral.data = self, self.data / "peripherals" / key
         status = _waiting()
@@ -550,21 +549,19 @@ class Runtime:
             status = PeripheralStatus(PeripheralState.DISABLED)
         return _Entry(peripheral, key, status.state, status.kind, status.detail)
 
-    def _clash(self, peripheral: Peripheral) -> _Entry:
+    def _clash(self, peripheral: Peripheral[Any]) -> _Entry:
         log.error(f"Two peripherals have the key {peripheral.key}: the second fails")
         detail = f"another peripheral has the key {peripheral.key}"
         return _Entry(peripheral, peripheral.key, PeripheralState.FAILED, StatusKind.KEY_TAKEN, detail)
 
-    def _load_settings(self, peripheral: Peripheral, key: str):
+    def _load_settings(self, peripheral: Peripheral[Any], key: str):
         """The ones kept, else the ones it was given or the defaults, kept from now on."""
-        if (model := peripheral.Settings) is None:
-            return
-        stored = self.state["settings"].get(key)
+        model, stored = peripheral.Settings, self.state["settings"].get(key)
         if stored is not None:
             peripheral.settings = model.model_validate(stored)
-        elif not isinstance(peripheral.settings, model):
+        elif not isinstance(getattr(peripheral, "settings", None), model):
             peripheral.settings = model()
-        if (dumped := peripheral.settings.model_dump(mode="json")) != stored:  # freeze generated defaults (e.g. keys)
+        if (dumped := peripheral.settings.model_dump(mode="json")) != (stored or {}):  # freeze generated defaults
             self.state["settings"][key] = dumped
             self._save()
 
@@ -893,7 +890,7 @@ def _failure(error: BaseException) -> str:
     return str(error) or type(error).__name__
 
 
-def _read(peripheral: Peripheral) -> list[Endpoint | Peripheral]:
+def _read(peripheral: Peripheral[Any]) -> list[Endpoint | Peripheral[Any]]:
     """What ``peripheral`` provides; one that can't say provides nothing, and the others run on."""
     try:
         return list(peripheral.provides)
@@ -902,11 +899,11 @@ def _read(peripheral: Peripheral) -> list[Endpoint | Peripheral]:
         return []
 
 
-def _offered(peripheral: Peripheral) -> list[Endpoint]:
+def _offered(peripheral: Peripheral[Any]) -> list[Endpoint]:
     return [item for item in _read(peripheral) if isinstance(item, Endpoint)]
 
 
-def _brought(peripheral: Peripheral) -> list[Peripheral]:
+def _brought(peripheral: Peripheral[Any]) -> list[Peripheral[Any]]:
     return [item for item in _read(peripheral) if not isinstance(item, Endpoint)]
 
 
@@ -938,7 +935,7 @@ def _waiting(kind: StatusKind | None = None, detail: str = "") -> PeripheralStat
     return PeripheralStatus(PeripheralState.WAITING, kind, detail)
 
 
-def _view(peripheral: Peripheral, bound: Mapping[str, list[Binding]]) -> dict[str, Bound]:
+def _view(peripheral: Peripheral[Any], bound: Mapping[str, list[Binding]]) -> dict[str, Bound]:
     many = {need.family for need in peripheral.needs if need.is_many}
     return {family: [e for _, e in b] if family in many else b[0][1] for family, b in bound.items()}
 

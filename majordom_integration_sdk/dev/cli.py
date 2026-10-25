@@ -105,7 +105,7 @@ class _CliSession:
     resolution (``repo.get`` + ``get_parameter_state`` + ``model_validate`` into the controller's
     ``device_type`` / ``parameter_type``)."""
 
-    def __init__(self, controller: AbstractController, runtime: Runtime | None = None):
+    def __init__(self, controller: AbstractController[Any, Any, Any], runtime: Runtime | None = None):
         self._controller = controller
         self._runtime = runtime
 
@@ -281,12 +281,12 @@ class _CliControllerOutput(ControllerOutput):
 
 async def run_cli(
     integration: Integration,
-    controller: type[AbstractController],
+    controller: type[AbstractController[Any, Any, Any]],
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
     peripherals: Mapping[str, Bound] | None = None,
-    runtime_peripherals: Sequence[Peripheral] | None = None,
+    runtime_peripherals: Sequence[Peripheral[Any]] | None = None,
     pinned: Sequence[Endpoint] = (),
     **platform: Any,
 ):

@@ -4,10 +4,10 @@ import asyncio
 import json
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from support import changed, run, settle, state, until
 
-from majordom_integration_sdk import Context, Endpoint, Need, PeripheralChange
+from majordom_integration_sdk import Context, Endpoint, Need, NoSettings, PeripheralChange
 from majordom_integration_sdk.runtime import MemoryDisabledStore, PeripheralStatus, Runtime
 from majordom_integration_sdk.runtime import PeripheralState as S
 from majordom_integration_sdk.runtime import StatusKind as K
@@ -732,12 +732,13 @@ async def test_settings_are_kept_and_handed_over_or_restart_it(tmp_path):
     assert again.settings == Channel(channel=20)
 
 
-async def test_one_without_settings_has_none_to_change(tmp_path):
+async def test_one_without_settings_takes_none(tmp_path):
     host = FakePeripheral("host")
     runtime = await run(tmp_path, host)
-    assert host.settings is None
-    with pytest.raises(KeyError):
+    assert host.settings == NoSettings()
+    with pytest.raises(ValidationError):
         await runtime.update_settings(host, {"x": 1})
+    assert runtime.state["settings"] == {}  # nothing kept for it
 
 
 async def test_a_changed_context_is_handed_over_or_restarts_it(tmp_path):

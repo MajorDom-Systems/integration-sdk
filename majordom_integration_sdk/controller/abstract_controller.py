@@ -9,14 +9,14 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, cast, final
+from typing import cast, final
 from uuid import UUID, uuid5
 
 from pydantic import BaseModel
 from slugify import slugify
 
 from majordom_integration_sdk.controller.platform import Context, Platform
-from majordom_integration_sdk.peripherals import Need, Peripheral, PeripheralChange
+from majordom_integration_sdk.peripherals import Need, NoSettings, Peripheral, PeripheralChange
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 
@@ -39,7 +39,9 @@ def _titleize(class_name: str) -> str:
     return " ".join(words) or base
 
 
-class AbstractController[TDevice: Device, TParameter: Parameter](Peripheral, ABC):
+class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: BaseModel = NoSettings](
+    Peripheral[TSettings], ABC
+):
     """
     Base class for all integration controllers.
     Defines the interface the Hub uses to interact with an integration — the Hub instantiates the subclass and drives it by calling these methods.
@@ -49,15 +51,15 @@ class AbstractController[TDevice: Device, TParameter: Parameter](Peripheral, ABC
     package exports it next to the servers it needs, which run while it does, given the platform the Hub builds for
     the integration::
 
-        def peripherals(platform: Platform) -> list[Peripheral]:
+        def peripherals(platform: Platform) -> list[Peripheral[Any]]:
             return [matterjs_server(), MatterController(platform)]
 
     It holds:
 
     - ``self.platform``: the app's services (output, device repository, documents folder, context), given to its
       constructor;
-    - ``self.settings``: its validated ``Settings``, when it declares its options as a nested ``class Settings(BaseModel)``
-      (annotate ``settings: Settings`` to type it); None without;
+    - ``self.settings``: its validated ``Settings``, declared as a nested ``class Settings(BaseModel)`` named as the
+      last type parameter, ``AbstractController[Device, Parameter, "HueController.Settings"]``; `NoSettings` without;
     - ``self.peripherals``: the endpoints its needs are bound to (``endpoint()``, ``endpoints()``, ``instance()``).
 
     In library mode, with no runtime, give it any settings and hand the bound needs over yourself::
@@ -74,11 +76,11 @@ class AbstractController[TDevice: Device, TParameter: Parameter](Peripheral, ABC
 
     platform: Platform
 
-    def __init__(self, platform: Platform, *, settings: BaseModel | None = None):
+    def __init__(self, platform: Platform, *, settings: TSettings | None = None):
         """``settings`` hold until the user changes them (the runtime keeps them): the defaults of ``Settings`` without.
         Keep these parameters when you override it."""
         self.platform = platform
-        self.settings = settings if settings is not None or self.Settings is None else self.Settings()
+        self.settings = settings if settings is not None else self.Settings()
 
     # Abstract
 
@@ -130,7 +132,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter](Peripheral, ABC
         """
         return False
 
-    async def settings_did_change(self, before: Any) -> bool:
+    async def settings_did_change(self, before: TSettings) -> bool:
         """The integration's settings changed; ``self.settings`` already holds the new ones.
 
         Return True when applied in place; False (the default) restarts the integration.
