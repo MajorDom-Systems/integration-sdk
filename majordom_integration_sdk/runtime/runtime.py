@@ -235,6 +235,17 @@ class Runtime:
             users += more
             providers.update(more)
 
+    def uses(self, peripheral: Peripheral) -> list[str]:
+        """Every peripheral it runs on, directly or through others: an integration's containers and radios."""
+        used: list[str] = []
+        owners = [peripheral.name]
+        while owners:
+            bound = self._bound.get(owners.pop(0), {})
+            more = [p.name for b in bound.values() for p, _ in b if p.name not in used]
+            used += dict.fromkeys(more)
+            owners += more
+        return used
+
     def reach(self, endpoints: Iterable[Endpoint]) -> list[str]:
         """The families ``endpoints`` would serve, themselves or through the on-demand peripherals here they would run,
         that something running anyway needs, or what it brings along (an integration, its containers): what a radio's

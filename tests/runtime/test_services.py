@@ -81,6 +81,7 @@ async def test_a_multipan_stick_serves_zigbee_and_matter_through_one_container(t
     assert services["matterjs-server"]["environment"]["OTBR"] == "http://127.0.0.1:8081"
     assert "depends_on" not in services["matterjs-server"]  # its border router coming and going doesn't restart it
     assert runtime.users(radio) == ["silabs-multiprotocol", "zigbee", "matterjs-server", "matter"]
+    assert runtime.uses(app) == ["matterjs-server", "host", "silabs-multiprotocol", "sky"]
     assert runtime.reach([MULTIPAN]) == ["thread", "zigbee"]  # through the containers it would run
     assert runtime.status(builtin.otbr) == PeripheralStatus(
         PeripheralState.WAITING, "need thread/spinel: nothing offers it"
