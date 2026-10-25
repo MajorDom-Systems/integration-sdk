@@ -24,6 +24,7 @@ from majordom_integration_sdk.peripherals import (
     PeripheralChange,
     UsbDriver,
 )
+from majordom_integration_sdk.runtime.files import read_json, write_json
 from majordom_integration_sdk.runtime.peripherals.hardware.drivers import RADIO_USB_IDS, default_usb_drivers
 from majordom_integration_sdk.runtime.peripherals.providers.ble import cpc_hci
 
@@ -54,8 +55,9 @@ class Radio(Peripheral):
         driver: UsbDriver | None = None,
         firmware: str | None = None,
         params: Mapping[str, Any] = {},  # the firmware's serial settings, where soldered hardware wires them otherwise
+        remember: Callable[[], Any] = lambda: None,  # keeps what it is once probed or flashed
     ):
-        self.name, self.path, self.drivers = name, path, drivers
+        self.name, self.path, self.drivers, self.remember = name, path, drivers, remember
         self.driver, self.firmware, self.params = driver, firmware, params
         self.node = os.path.realpath(path)  # a container keeps the node it was created with: follow a re-enumeration
         self.held_by: str | None = None  # another program that has it open: left alone until probed
@@ -96,6 +98,7 @@ class Radio(Peripheral):
         async with self._busy():
             self.held_by, self.is_claimed = None, True
             await self.identify(is_asking_again=True)
+            self.remember()
 
     async def flash(self, firmware: str):
         """Switch it to ``firmware`` on its channel; whatever uses it lets go of it first and gets it back after."""
@@ -107,6 +110,7 @@ class Radio(Peripheral):
             finally:  # whether it took or not, what ran before may be gone
                 self.firmware, self.has_bluetooth = await _firmware(driver, self.path), False
                 await self.check_bluetooth()
+                self.remember()
 
     @contextlib.asynccontextmanager
     async def _busy(self):
@@ -132,7 +136,8 @@ class UsbScanner(Peripheral):
     """USB devices plugged in (``/dev/serial/by-id``), each brought along as a `Radio` and identified by its drivers,
     then by the ones integrations provide (``usb-driver``): radios today. Only a device whose USB id is a known
     radio's is opened unasked; another is identified when the user asks (`Radio.probe`). One another program holds is
-    left alone until then.
+    left alone until then. What it identified and what the user probed is remembered, in ``sticks.json`` of its data
+    folder: a stick known from before isn't opened again.
 
         UsbScanner()  # every SDK driver: default_usb_drivers()
         UsbScanner(drivers=[Silabs()])
@@ -144,6 +149,7 @@ class UsbScanner(Peripheral):
     def __init__(self, drivers: Sequence[UsbDriver] | None = None):
         self.drivers = default_usb_drivers() if drivers is None else list(drivers)
         self._radios: list[Radio] = []
+        self._known: dict[str, Any] = {}  # by-id name -> what it was identified as, whether the user claimed it
         self._tasks: set[asyncio.Task] = set()  # watching the sticks, and asking new drivers about them
         self._scanning = asyncio.Lock()  # one scan at a time: two would open a stick at once
 
@@ -156,6 +162,7 @@ class UsbScanner(Peripheral):
         return list(self._radios)
 
     async def start(self):
+        self._known = read_json(self.data / "sticks.json")
         await self._scan()
         self._spawn(self._watch())
 
@@ -184,7 +191,7 @@ class UsbScanner(Peripheral):
             radios = {radio.name: radio for radio in self.radios}
             found = _sticks()
             for name, path in found.items():
-                radio = radios.get(name) or Radio(name, path, self._drivers)
+                radio = radios.get(name) or self._radio(name, path)
                 radio.node = os.path.realpath(path)
                 is_trusted = radio.is_claimed or _usb_id(path) in RADIO_USB_IDS
                 if not radio.is_claimed and not radio.is_busy:
@@ -193,6 +200,24 @@ class UsbScanner(Peripheral):
                     await radio.identify()
                 radios[name] = radio
             self._radios = [radios[name] for name in sorted(found)]
+        self._remember()
+
+    def _radio(self, name: str, path: str) -> Radio:
+        """A stick plugged in, as it was known before."""
+        radio, known = Radio(name, path, self._drivers, remember=self._remember), self._known.get(name, {})
+        radio.is_claimed = known.get("is_claimed", False)
+        drivers = {driver.name: driver for driver in self._drivers()}
+        if (driver := drivers.get(known.get("driver", ""))) and (firmware := known.get("firmware")):
+            radio.driver, radio.firmware, radio.has_bluetooth = driver, firmware, known.get("has_bluetooth", False)
+        return radio
+
+    def _remember(self):
+        for radio in self._radios:
+            if radio.driver or radio.is_claimed:
+                driver = radio.driver.name if radio.driver else None
+                known = {"driver": driver, "firmware": radio.firmware, "has_bluetooth": radio.has_bluetooth}
+                self._known[radio.name] = known | {"is_claimed": radio.is_claimed}
+        write_json(self.data / "sticks.json", self._known)
 
     async def _watch(self):
         seen = _nodes(_sticks())

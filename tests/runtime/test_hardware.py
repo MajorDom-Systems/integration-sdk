@@ -97,6 +97,27 @@ async def test_only_known_radios_are_opened_until_asked(tmp_path, sticks):
     assert arduino.firmware == "zigbee-ncp"
 
 
+async def test_the_sticks_identified_and_probed_are_remembered_across_restarts(tmp_path, sticks):
+    plug(sticks, "sky", "arduino")
+    driver = Driver(sky="zigbee-ncp", arduino="zigbee-ncp")
+    scanner = UsbScanner([driver])
+    runtime = await run(tmp_path, scanner)
+    await next(radio for radio in scanner.radios if radio.name == "arduino").probe()  # the user claims it
+    await settle(runtime)
+    await runtime.stop()
+    assert driver.opened == ["sky", "arduino"]
+
+    again, integration = Driver(sky="zigbee-ncp", arduino="zigbee-ncp"), zigbee()
+    scanner = UsbScanner([again])
+    await run(tmp_path, scanner, integration)  # after a reboot
+    assert again.opened == []  # neither opened again
+    assert {radio.name: (radio.firmware, radio.is_claimed) for radio in scanner.radios} == {
+        "arduino": ("zigbee-ncp", True),
+        "sky": ("zigbee-ncp", False),
+    }
+    assert integration.peripherals.endpoint("zigbee").url == "/dev/serial/by-id/arduino"
+
+
 async def test_a_stick_another_program_holds_is_left_alone_until_probed(tmp_path, sticks, held):
     plug(sticks, "sky")
     held["sky"] = "zigbee2mqtt"
