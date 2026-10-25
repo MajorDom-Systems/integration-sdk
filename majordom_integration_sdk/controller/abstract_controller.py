@@ -106,8 +106,12 @@ class AbstractController[TDevice: Device, TParameter: Parameter](Peripheral, ABC
 
     It identifies the integration, so it's a constant of the class rather than per-instance
     state: the Hub scopes the integration's devices and documents folder by it and `slug()`,
-    and the runtime knows the controller by its slug.
+    and the runtime knows the controller by its slug, its ``key``.
     """
+
+    @property
+    def key(self) -> str:
+        return self.slug()
 
     needs: Sequence[Need] = ()
     """What the integration requires from its environment: everything external, which something else must provide —

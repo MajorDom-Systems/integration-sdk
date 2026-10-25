@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from support import run, settle
 
 from majordom_integration_sdk import AbstractController, Endpoint, Need, Peripheral, Platform, Service
-from majordom_integration_sdk.runtime import HostNetwork, PeripheralState, PeripheralStatus
+from majordom_integration_sdk.runtime import HostNetwork, MemoryDisabledStore, PeripheralState, PeripheralStatus
 from majordom_integration_sdk.runtime import StatusKind as K
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter
 from majordom_integration_sdk.testing import FakeCompose, build_test_platform
@@ -87,7 +87,22 @@ async def test_an_integration_runs_once_the_server_it_provides_serves(tmp_path):
 
     assert runtime.status(echo) == PeripheralStatus(PeripheralState.RUNNING)
     assert echo.started_with == [("ws://127.0.0.1:5600", False)]  # its needs bound, its settings given, before start
-    assert runtime.users(server) == ["echo"] and runtime.name(echo) == "echo"  # known by its slug
+    assert runtime.users(server) == ["echo"] and echo.key == "echo"  # known by its slug
+
+
+async def test_an_integration_is_kept_by_its_slug_and_shown_by_its_name(tmp_path):
+    class ZWaveJS(EchoController):
+        name = "Z-Wave JS"
+
+    store, server, echo = MemoryDisabledStore(), echo_server(), ZWaveJS(build_test_platform())
+    runtime = await run(tmp_path, HostNetwork(), FakeCompose(), server, echo, disabled=store)
+    await runtime.update_settings(echo, {"is_loud": True})
+    await runtime.disable(echo)
+
+    assert (echo.key, echo.name) == ("z-wave-js", "Z-Wave JS")
+    assert store.is_disabled("z-wave-js") and echo.data == tmp_path / "data" / "peripherals" / "z-wave-js"
+    assert json.loads((tmp_path / "data" / "state.json").read_text())["settings"]["z-wave-js"] == {"is_loud": True}
+    assert runtime.peripheral("z-wave-js") is echo
 
 
 async def test_an_integration_and_its_server_keep_their_settings(tmp_path):

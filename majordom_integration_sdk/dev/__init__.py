@@ -112,13 +112,13 @@ class LoggingRuntimeOutput:
     """A ``RuntimeOutput`` that logs every change of status: why a peripheral waits or failed."""
 
     def peripheral_did_change_status(self, peripheral: Peripheral, status: PeripheralStatus):
-        logger.info(f"{peripheral.name} {status}")
+        logger.info(f"{peripheral.key} {status}")
 
     def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
-        logger.info(f"{peripheral.name} learned {', '.join(facts)}")
+        logger.info(f"{peripheral.key} learned {', '.join(facts)}")
 
     def peripheral_did_disappear(self, peripheral: Peripheral):
-        logger.info(f"{peripheral.name} is gone")
+        logger.info(f"{peripheral.key} is gone")
 
 
 def build_runtime(

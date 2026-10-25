@@ -465,11 +465,11 @@ async def test_what_it_brought_along_while_running_goes_when_it_stops(tmp_path):
     assert router.peripherals.endpoints("ble") == []
 
 
-async def test_what_it_brings_along_is_known_under_its_name(tmp_path):
+async def test_what_it_brings_along_is_known_under_its_key(tmp_path):
     proxy = FakePeripheral("aa")
     esphome = FakePeripheral("esphome", provides=[proxy])
     runtime = await run(tmp_path, esphome)
-    assert runtime.name(proxy) == "esphome/aa" and runtime.peripheral("esphome/aa") is proxy
+    assert (proxy.key, proxy.name) == ("esphome/aa", "aa") and runtime.peripheral("esphome/aa") is proxy
 
 
 async def test_each_one_keeps_its_data_in_a_folder_of_its_own(tmp_path):
@@ -487,7 +487,7 @@ async def test_the_owner_hears_when_one_goes(tmp_path):
 
     scanner.provided.clear()  # unplugged
     await changed(runtime, scanner)
-    assert output.disappeared == [radio]
+    assert output.disappeared == [radio] and radio.key == "usb/radio"  # it says which one went
     assert radio not in runtime.peripherals
 
 
@@ -506,13 +506,13 @@ async def test_one_that_failed_stays_failed_when_brought_along_anew(tmp_path):
     assert state(runtime, again) == S.RUNNING
 
 
-async def test_a_second_one_of_a_name_fails_saying_why(tmp_path):
+async def test_a_second_one_of_a_key_fails_saying_why(tmp_path):
     first = FakePeripheral("mqtt", provides=[Endpoint("mqtt", "a", "x", is_shared=True)], is_on_demand=True)
     second = FakePeripheral("mqtt", provides=[Endpoint("mqtt", "b", "y", is_shared=True)], is_on_demand=True)
     one, two = FakePeripheral("one", [Need("mqtt", ["a"])]), FakePeripheral("two", [Need("mqtt", ["b"])])
     runtime = await run(tmp_path, first, one, second, two)
 
-    assert runtime.status(second) == PeripheralStatus(S.FAILED, K.NAME_TAKEN, "another peripheral is named mqtt")
+    assert runtime.status(second) == PeripheralStatus(S.FAILED, K.KEY_TAKEN, "another peripheral has the key mqtt")
     assert second in runtime.peripherals
     assert (state(runtime, one), runtime.status(two)) == (
         S.RUNNING,

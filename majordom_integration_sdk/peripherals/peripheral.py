@@ -108,12 +108,13 @@ class Peripheral(Protocol):
     that runs binds it if it ``is_on_demand``, and once every required need is bound to a provider that runs. A
     required need that can't be bound keeps it waiting, with the reason; one lost later stops it until it is back.
 
-    Subclass it for the defaults. The runtime sets ``runtime``, ``peripherals``, ``data``, and ``settings`` when the
-    peripheral declares its options as a nested ``class Settings(BaseModel)``: annotate ``settings: Settings`` to type
-    it.
+    Subclass it for the defaults. The runtime sets ``runtime``, ``peripherals``, ``data``, ``contributor``, and
+    ``settings`` when the peripheral declares its options as a nested ``class Settings(BaseModel)``: annotate
+    ``settings: Settings`` to type it.
     """
 
-    name: str  # what a runtime knows it by, unique there; one it brings along is known as "<its name>/<name>"
+    name: str  # what it is shown by
+    contributor: Peripheral | None = None  # what brought it along
     needs: Sequence[Need] = ()
     is_on_demand: bool = False  # runs only while something that runs binds it: containers, in-process providers
     Settings: Any = None  # Any: ty forbids a subclass to narrow a typed one (to its nested Settings)
@@ -121,6 +122,12 @@ class Peripheral(Protocol):
     runtime: PeripheralOutput = _NoRuntime()  # what runs it
     peripherals: Peripherals = Peripherals()  # what its needs are bound to
     data: Path  # a folder of its own, created once it writes there: what it keeps across restarts
+
+    @property
+    def key(self) -> str:
+        """What it is known, kept and disabled by where it runs, unique there and stable across restarts: its name,
+        after its contributor's key for one brought along (``usb/<stick>``, ``esphome/<node>``)."""
+        return f"{self.contributor.key}/{self.name}" if self.contributor else self.name
 
     @property
     def provides(self) -> Sequence[Endpoint | Peripheral]:
