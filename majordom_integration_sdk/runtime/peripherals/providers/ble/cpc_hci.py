@@ -3,7 +3,7 @@
 A multi-PAN RCP whose firmware carries the Bluetooth controller serves HCI over CPC next to 802.15.4: cpcd's
 ``cpc-hci-bridge`` exposes it as a pty, and ``btattach`` makes that a BlueZ adapter (``hciN``), heard through bleak like
 any other. The radio provides the endpoint only when its firmware has Bluetooth: from the driver's firmware
-metadata (`RadioDriver.bluetooth`) where it knows, else from `has_bluetooth`, asked once per radio.
+metadata (`UsbDriver.bluetooth`) where it knows, else from `has_bluetooth`, asked once per radio.
 
 To verify on hardware (nothing here is yet): which CPC endpoint answers for Bluetooth on a given firmware (and how to
 ask cpcd without taking the port from the multiprotocol container), and the ``hciN`` the bridge comes up as — it

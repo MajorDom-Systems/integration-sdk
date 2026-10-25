@@ -289,8 +289,8 @@ async def test_the_firmware_offered_follows_the_radios_channel(tmp_path):
 
     await runtime.update_settings(radio, {"firmware_channel": "dev"})
     assert radio.options == ["zigbee-ncp", "thread-rcp", "multipan-rcp"]
-    assert runtime.reach(Silabs().endpoints("multipan-rcp", "x")) == []  # nothing here needs what it would serve
-    assert runtime.reach(Silabs().endpoints("zigbee-ncp", "x")) == ["zigbee"]
+    assert runtime.reach(Silabs().serves("multipan-rcp", "x")) == []  # nothing here needs what it would serve
+    assert runtime.reach(Silabs().serves("zigbee-ncp", "x")) == ["zigbee"]
 
 
 async def test_a_multiprotocol_firmware_that_serves_bluetooth_offers_it_too(tmp_path, sticks, monkeypatch):

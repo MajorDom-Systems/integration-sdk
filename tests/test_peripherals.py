@@ -101,10 +101,10 @@ class Silabs(UsbDriver):
 
 def test_a_usb_driver_says_what_a_firmware_serves_and_offers_itself():
     driver = Silabs()
-    assert driver.endpoints("zigbee-ncp", "/dev/ttyUSB0", {"flow_control": False}) == [
+    assert driver.serves("zigbee-ncp", "/dev/ttyUSB0", {"flow_control": False}) == [
         Endpoint("zigbee", "ezsp", "/dev/ttyUSB0", params={"baud": 115200, "flow_control": False})
     ]
-    assert driver.endpoints(None, "/dev/ttyUSB0") == []
+    assert driver.serves(None, "/dev/ttyUSB0") == []
     assert driver.provides[0].instance is driver and driver.is_on_demand
     assert driver.flashable("/dev/ttyUSB0", "dev") == []
 

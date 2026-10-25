@@ -56,7 +56,7 @@ logger = logging.getLogger("majordom_integration_sdk.dev")
 # isn't a TTY (pipes, tests, logs to a file) where the escape codes would just be noise.
 
 
-def _println(msg: object) -> None:
+def _println(msg: object):
     if not sys.stdout.isatty():
         rich.print(msg)
         return
@@ -65,7 +65,7 @@ def _println(msg: object) -> None:
     builtins.print("\x1b[u", end="", flush=True)  # restore cursor to the prompt
 
 
-def _print(*values: object, sep: str = "  ") -> None:
+def _print(*values: object, sep: str = "  "):
     """Prompt-safe print: wrap to the terminal width and emit each line via :func:`_println`."""
     columns, _ = shutil.get_terminal_size((80, 20))
     for line in sep.join(str(v) for v in values).split("\n"):
@@ -85,10 +85,10 @@ class _CapturingHandler(logging.Handler):
         super().__init__()
         self.records: list[logging.LogRecord] = []
 
-    def emit(self, record: logging.LogRecord) -> None:
+    def emit(self, record: logging.LogRecord):
         self.records.append(record)
 
-    def dump(self) -> None:
+    def dump(self):
         if not self.records:
             return
         builtins.print("\n--- captured logs (CLI session) ---", file=sys.stderr, flush=True)
@@ -124,7 +124,7 @@ class _CliSession:
         credentials = ProvidedCredentials(type=CredentialsType(credentials_type), value=credentials_value or None)
         return await self._controller.pair_device(discovery, credentials)
 
-    async def pair_window(self, seconds: int) -> None:
+    async def pair_window(self, seconds: int):
         await self._controller.start_pairing_window(seconds)
 
     async def list_devices(self):

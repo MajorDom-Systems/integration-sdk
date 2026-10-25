@@ -1,4 +1,4 @@
-"""Companion servers an integration brings along, run as containers while something uses them."""
+"""Companion servers an integration provides, run as containers while something uses them."""
 
 from __future__ import annotations
 
@@ -68,10 +68,10 @@ class Service(Peripheral):
         needs: Sequence[Need] = (),
         provides: Sequence[Endpoint] = (),
         settings: type[BaseModel] | None = None,
-        ports: Mapping[str, int] = {},  # name -> PREFERRED host port; see the docstring
+        ports: Mapping[str, int] | None = None,  # name -> PREFERRED host port; see the docstring
     ):
         self.name, self.compose, self.needs, self.templates = name, compose, [*needs, CONTAINER_HOST], provides
-        self.Settings, self.ports = settings, ports
+        self.Settings, self.ports = settings, ports or {}
 
     @property
     def host(self) -> ServiceHost | None:

@@ -50,7 +50,7 @@ class FixedPeripherals(Peripheral):
             driver = drivers[fixed.driver]
             known = driver if fixed.firmware else None
             radio = Radio(fixed.name, fixed.path, lambda driver=driver: [driver], known, fixed.firmware, fixed.params)
-            await (radio.check_bluetooth() if known else radio.identify())
+            await (radio.check_bluetooth() if known else radio.recognise())
             present.append(radio)
         self._present = present
 

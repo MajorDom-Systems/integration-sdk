@@ -82,7 +82,7 @@ class SqliteDeviceRepository:
             )
         return json.loads(row["data"]) if row else None
 
-    def _write(self, record: Record) -> None:
+    def _write(self, record: Record):
         self._cursor().execute(
             "INSERT INTO devices (uuid, integration, data) VALUES (?, ?, ?) "
             "ON CONFLICT(uuid) DO UPDATE SET integration = excluded.integration, data = excluded.data",
@@ -115,7 +115,7 @@ class SqliteDeviceRepository:
             None,
         )
 
-    async def save(self, device: Device | DeviceState, previous_id: UUID | None = None) -> None:
+    async def save(self, device: Device | DeviceState, previous_id: UUID | None = None):
         if self.integration is not None and device.integration != self.integration:
             raise PermissionError(f"Device {device.id} is outside integration scope {self.integration!r}")
         base: Record | None = None
@@ -124,7 +124,7 @@ class SqliteDeviceRepository:
             self._cursor().execute("DELETE FROM devices WHERE uuid = ?", (str(previous_id),))
         self._write(merge(base if base is not None else self._record(device.id), device))
 
-    async def save_parameter_state(self, device_id: UUID, parameter_state: ParameterState) -> None:
+    async def save_parameter_state(self, device_id: UUID, parameter_state: ParameterState):
         record = self._record(device_id)
         if not record:
             raise KeyError(f"Unknown or out-of-scope device {device_id}")
@@ -136,7 +136,7 @@ class SqliteDeviceRepository:
 
     # Hub-internal (not on DeviceRepositoryProtocol); still scope-checked.
 
-    async def update_parameter_visibility(self, parameter_id: UUID, visibility: ParameterVisibility) -> None:
+    async def update_parameter_visibility(self, parameter_id: UUID, visibility: ParameterVisibility):
         for device in await self.get_all():
             record = self._record(device.id)
             if not record:
@@ -148,7 +148,7 @@ class SqliteDeviceRepository:
                 self._write(record)
                 return
 
-    async def delete(self, device_id: UUID) -> None:
+    async def delete(self, device_id: UUID):
         if self._record(device_id) is None:
             return
         self._cursor().execute("DELETE FROM devices WHERE uuid = ?", (str(device_id),))

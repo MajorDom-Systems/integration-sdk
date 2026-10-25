@@ -113,7 +113,7 @@ class Peripheral(Protocol):
     it.
     """
 
-    name: str  # unique among the peripherals of a runtime: what it is known, persisted and disabled by
+    name: str  # what a runtime knows it by, unique there; one it brings along is known as "<its name>/<name>"
     needs: Sequence[Need] = ()
     is_on_demand: bool = False  # runs only while something that runs binds it: containers, in-process providers
     Settings: Any = None  # Any: ty forbids a subclass to narrow a typed one (to its nested Settings)

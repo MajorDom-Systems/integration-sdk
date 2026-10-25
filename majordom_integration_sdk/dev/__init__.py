@@ -48,34 +48,32 @@ class LoggingControllerOutput(ControllerOutput):
     """A ``ControllerOutput`` that logs every callback — the Hub's stand-in for dev runs."""
 
     async def controller_did_receive_discovery(self, controller: AbstractController, discovery: Discovery):
-        logger.info("discovered %s (%s) id=%s", discovery.device_name, discovery.transport, discovery.id)
+        logger.info(f"discovered {discovery.device_name} ({discovery.transport}) id={discovery.id}")
 
     async def controller_did_update_discovery(self, controller: AbstractController, discovery: Discovery):
-        logger.info("updated discovery %s", discovery.id)
+        logger.info(f"updated discovery {discovery.id}")
 
     async def controller_did_lose_discovery(self, controller: AbstractController, discovery_id: UUID):
-        logger.info("lost discovery %s", discovery_id)
+        logger.info(f"lost discovery {discovery_id}")
 
     async def controller_did_connect_device(self, controller: AbstractController, device_id: UUID):
-        logger.info("connected device %s", device_id)
+        logger.info(f"connected device {device_id}")
 
     async def controller_did_lose_device(self, controller: AbstractController, device_id: UUID):
-        logger.info("lost device %s", device_id)
+        logger.info(f"lost device {device_id}")
 
     async def controller_did_receive_events(self, controller: AbstractController, events: Iterable[Event]):
         for event in events:
-            logger.info("event %s: %r", type(event).__name__, event)
+            logger.info(f"event {type(event).__name__}: {event!r}")
 
     async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError):
-        logger.error("integration error %s: %s", error.id, error.message)
+        logger.error(f"integration error {error.id}: {error.message}")
 
     async def controller_did_resolve_error(self, controller: AbstractController, error_id: str):
-        logger.info("integration error %s resolved", error_id)
+        logger.info(f"integration error {error_id} resolved")
 
     async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):
-        logger.info(
-            "notification [%s/%s]: %s", notification.type.value, notification.priority.value, notification.message
-        )
+        logger.info(f"notification [{notification.type.value}/{notification.priority.value}]: {notification.message}")
 
 
 def build_platform(
@@ -114,13 +112,13 @@ class LoggingRuntimeOutput:
     """A ``RuntimeOutput`` that logs every change of status: why a peripheral waits or failed."""
 
     def peripheral_did_change_status(self, peripheral: Peripheral, status: PeripheralStatus):
-        logger.info("%s %s", peripheral.name, status)
+        logger.info(f"{peripheral.name} {status}")
 
     def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
-        logger.info("%s learned %s", peripheral.name, ", ".join(facts))
+        logger.info(f"{peripheral.name} learned {', '.join(facts)}")
 
     def peripheral_did_disappear(self, peripheral: Peripheral):
-        logger.info("%s is gone", peripheral.name)
+        logger.info(f"{peripheral.name} is gone")
 
 
 def build_runtime(
@@ -167,7 +165,7 @@ class Runner:
             return
         await self.controller.start()
         self._is_started = True
-        logger.info("%s started — watching for devices.", self.controller.name)
+        logger.info(f"{self.controller.name} started — watching for devices.")
 
     async def stop(self):
         if self.runtime:
@@ -200,7 +198,7 @@ async def run_controller(
         pass
     finally:
         await runner.stop()
-        logger.info("%s stopped.", runner.controller.name)
+        logger.info(f"{runner.controller.name} stopped.")
 
 
 def _runner(

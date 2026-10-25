@@ -52,7 +52,7 @@ class DeviceRepositoryProtocol(Protocol):
         """One parameter's current state, or ``None`` if the device/parameter is unknown/out of scope."""
         ...
 
-    async def save(self, device: Device | DeviceState, previous_id: UUID | None = None) -> None:
+    async def save(self, device: Device | DeviceState, previous_id: UUID | None = None):
         """Insert or update a device, merging into whatever is already stored.
 
         Saving a ``Device`` updates its info/``integration_data``; saving a ``DeviceState``
@@ -63,7 +63,7 @@ class DeviceRepositoryProtocol(Protocol):
         """
         ...
 
-    async def save_parameter_state(self, device_id: UUID, parameter_state: ParameterState) -> None:
+    async def save_parameter_state(self, device_id: UUID, parameter_state: ParameterState):
         """Update a single parameter's value/state on an existing in-scope device."""
         ...
 

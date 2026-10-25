@@ -66,7 +66,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter](Peripheral, ABC
         controller.peripherals = Peripherals({"mdns": Endpoint("mdns", "zeroconf", instance=zeroconf)})
     """
 
-    def __init_subclass__(cls, **kwargs) -> None:
+    def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         # Auto-derive `name` from the class name unless the subclass set one explicitly.
         if "name" not in cls.__dict__:
@@ -107,8 +107,8 @@ class AbstractController[TDevice: Device, TParameter: Parameter](Peripheral, ABC
             name = "ZigBee"
 
     It identifies the integration, so it's a constant of the class rather than per-instance
-    state — the Hub reads it (and `slug()`) off the class to wire an integration's
-    peripherals and platform *before* the controller exists.
+    state: the Hub scopes the integration's devices and documents folder by it and `slug()`,
+    and the runtime knows the controller by its slug.
     """
 
     needs: Sequence[Need] = ()

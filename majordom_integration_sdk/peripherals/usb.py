@@ -33,10 +33,10 @@ class UsbDriver(Peripheral):
         """The firmware the device at ``path`` runs, or None when it isn't one of its kind."""
         return None
 
-    def endpoints(self, firmware: str | None, path: str, params: Mapping[str, Any] = {}) -> list[Endpoint]:
+    def serves(self, firmware: str | None, path: str, params: Mapping[str, Any] | None = None) -> list[Endpoint]:
         """What ``firmware`` serves on the device at ``path``, ``params`` overriding its serial settings."""
         endpoints = self.firmwares.get(firmware or "", [])
-        return [replace(e, url=e.url.format(device=path), params={**e.params, **params}) for e in endpoints]
+        return [replace(e, url=e.url.format(device=path), params={**e.params, **(params or {})}) for e in endpoints]
 
     def flashable(self, path: str, channel: str) -> list[str]:
         """Firmwares the device at ``path`` can be switched to on the ``stable`` or ``dev`` channel."""

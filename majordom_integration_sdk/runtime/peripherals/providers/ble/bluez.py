@@ -54,7 +54,7 @@ def device_path(adapter: str, address: str) -> str:
     return f"/org/bluez/{adapter}/dev_{address.upper().replace(':', '_')}"
 
 
-async def pair_through_agent(adapter: str, address: str) -> None:
+async def pair_through_agent(adapter: str, address: str):
     """Pairs the connected device ``address`` on ``adapter`` (hci0, …); raises `ConnectionError` with BlueZ's error."""
     # bleak's BlueZ backend brings dbus-fast, on Linux only
     from dbus_fast import BusType, Message, MessageType  # ty: ignore[unresolved-import]
@@ -70,7 +70,7 @@ async def pair_through_agent(adapter: str, address: str) -> None:
             return Message.new_error(message, answer, "Not the device being paired")
         return Message.new_method_return(message, *answer)
 
-    async def call(message: Message) -> None:
+    async def call(message: Message):
         reply = await bus.call(message)
         if reply is not None and reply.message_type == MessageType.ERROR:
             raise ConnectionError(f"{reply.error_name}: {' '.join(map(str, reply.body))}".strip(": "))

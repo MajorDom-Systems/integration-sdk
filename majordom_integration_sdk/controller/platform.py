@@ -23,7 +23,7 @@ class Context:
 
 @dataclass(frozen=True)
 class Platform:
-    """The app's services injected by the Hub into every controller on construction, as ``self.platform``."""
+    """The app's services the Hub gives every controller as ``self.platform``, before the runtime starts it."""
 
     output: ControllerOutput
     make_device_repository: Callable[[], AbstractAsyncContextManager[DeviceRepositoryProtocol]]

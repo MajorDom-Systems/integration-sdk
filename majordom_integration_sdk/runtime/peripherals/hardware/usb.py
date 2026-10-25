@@ -54,11 +54,11 @@ class Radio(Peripheral):
         drivers: Callable[[], Sequence[UsbDriver]],
         driver: UsbDriver | None = None,
         firmware: str | None = None,
-        params: Mapping[str, Any] = {},  # the firmware's serial settings, where soldered hardware wires them otherwise
+        params: Mapping[str, Any] | None = None,  # the firmware's serial settings, where soldered hardware wires them
         remember: Callable[[], Any] = lambda: None,  # keeps what it is once probed or flashed
     ):
         self.name, self.path, self.drivers, self.remember = name, path, drivers, remember
-        self.driver, self.firmware, self.params = driver, firmware, params
+        self.driver, self.firmware, self.params = driver, firmware, params or {}
         self.node = os.path.realpath(path)  # a container keeps the node it was created with: follow a re-enumeration
         self.held_by: str | None = None  # another program that has it open: left alone until probed
         self.is_claimed = False  # the user probed it: opened whoever holds it or whatever its USB id
@@ -71,7 +71,7 @@ class Radio(Peripheral):
     def provides(self) -> list[Endpoint]:
         if self.is_busy or self.held_by or self.driver is None:
             return []
-        endpoints = self.driver.endpoints(self.firmware, self.node, self.params)
+        endpoints = self.driver.serves(self.firmware, self.node, self.params)
         if self.has_bluetooth:  # the multiprotocol container attaches it and tells its hciN
             endpoints.append(Endpoint("ble", "silabs-cpc-hci", self.node, params={"hci": None}))
         return endpoints
@@ -81,23 +81,22 @@ class Radio(Peripheral):
         """Firmwares it can be switched to on its channel."""
         return self.driver.flashable(self.path, self.settings.firmware_channel) if self.driver else []
 
-    async def identify(self, is_asking_again: bool = False) -> bool:
-        """Ask the drivers which firmware it runs, each once unless ``is_asking_again``; True once one recognised it."""
+    async def recognise(self, is_asking_again: bool = False):
+        """Ask the drivers which firmware it runs, each once unless ``is_asking_again``, until one tells."""
         for driver in [d for d in self.drivers() if is_asking_again or all(d is not a for a in self._asked)]:
             if firmware := await _firmware(driver, self.path):
                 self.driver, self.firmware = driver, firmware
                 await self.check_bluetooth()
-                return True
+                return
             self._asked.append(driver)
         log.info(f"No driver recognised {self.path}")
-        return False
 
     async def probe(self):
         """Identify it now, also a stick no driver knows the USB id of, or one another program holds: its port is
         opened, which may reset what's behind it. Whatever uses it lets go of it first."""
         async with self._busy():
             self.held_by, self.is_claimed = None, True
-            await self.identify(is_asking_again=True)
+            await self.recognise(is_asking_again=True)
             self.remember()
 
     async def flash(self, firmware: str):
@@ -124,7 +123,7 @@ class Radio(Peripheral):
 
     async def check_bluetooth(self):
         """Whether a multi-PAN firmware serves Bluetooth too: the driver says where it knows, else it is asked."""
-        endpoints = self.driver.endpoints(self.firmware, self.node) if self.driver else []
+        endpoints = self.driver.serves(self.firmware, self.node) if self.driver else []
         if any(e.family == "multipan" for e in endpoints) and self.driver:
             self.has_bluetooth = self.firmware in self.driver.bluetooth or await cpc_hci.has_bluetooth(self.path)
 
@@ -172,8 +171,8 @@ class UsbScanner(Peripheral):
         self._radios = []
 
     async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:
-        """An integration brought a driver along: it may know the sticks no other driver did. Asked in the background,
-        as a probe may take long."""
+        """A driver was bound, e.g. one an integration provides: it may know the sticks no other driver did. Asked in
+        the background, as a probe may take long."""
         self._spawn(self._rescan())
         return True
 
@@ -197,7 +196,7 @@ class UsbScanner(Peripheral):
                 if not radio.is_claimed and not radio.is_busy:
                     radio.held_by = _holder(path, is_opening_allowed=is_trusted and radio.driver is None)
                 if is_trusted and radio.driver is None and not radio.held_by and not radio.is_busy:
-                    await radio.identify()
+                    await radio.recognise()
                 radios[name] = radio
             self._radios = [radios[name] for name in sorted(found)]
         self._remember()

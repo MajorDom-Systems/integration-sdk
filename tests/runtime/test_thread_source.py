@@ -70,7 +70,7 @@ def sync(host: Path) -> dict:
     return json.loads((host / "state.json").read_text())
 
 
-def edit(host: Path, change) -> None:
+def edit(host: Path, change):
     state = json.loads((host / "state.json").read_text())
     change(state)
     (host / "state.json").write_text(json.dumps(state))
