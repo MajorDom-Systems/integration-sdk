@@ -1,7 +1,7 @@
 """Secure channels: how credentials (a Wi-Fi password, a Thread network key) are protected on a BLE connection before
 they are written to a device. An integration picks one per device and opens it on the leased connection::
 
-    async with ble.exclusive(address, owner=OWNER, pairing=channel.needs_pairing) as lease:
+    async with ble.exclusive(address, owner=OWNER, is_pairing_needed=channel.is_pairing_needed) as lease:
         async with channel.secure(await lease.connect()) as connection:
             await connection.write(rpc, credentials)
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class SecureChannel(Protocol):
-    needs_pairing: bool  # lease a source that can pair: `BLERouter.exclusive(..., pairing=...)`
+    is_pairing_needed: bool  # lease a source that can pair: `BLERouter.exclusive(..., pairing=...)`
 
     def secure(self, connection: BLEConnection) -> contextlib.AbstractAsyncContextManager[BLEConnection]:
         """The connection to write credentials through, secured; raises `BLEPairingError` (fail closed)."""
@@ -31,13 +31,13 @@ class SecureChannel(Protocol):
 
 class LESecureConnections:
     """Pairs before anything is written: the link is encrypted, or nothing is yielded. The device decides LE Secure
-    Connections over legacy pairing (firmware built for it accepts nothing else). ``forget``: unpair once done, as the
-    pairing served only the setup."""
+    Connections over legacy pairing (firmware built for it accepts nothing else). It unpairs once done, as the
+    pairing served only the setup, unless ``is_pairing_kept``."""
 
-    needs_pairing = True
+    is_pairing_needed = True
 
-    def __init__(self, forget: bool = True):
-        self._forget = forget
+    def __init__(self, is_pairing_kept: bool = False):
+        self._is_pairing_kept = is_pairing_kept
 
     @contextlib.asynccontextmanager
     async def secure(self, connection: BLEConnection) -> AsyncGenerator[BLEConnection]:
@@ -47,7 +47,7 @@ class LESecureConnections:
         try:
             yield connection
         finally:
-            if self._forget:
+            if not self._is_pairing_kept:
                 with contextlib.suppress(Exception):
                     await connection.unpair()
 
@@ -55,7 +55,7 @@ class LESecureConnections:
 class Unsecured:
     """Writes over the link as it is: only for firmware that can't pair, chosen explicitly."""
 
-    needs_pairing = False
+    is_pairing_needed = False
 
     @contextlib.asynccontextmanager
     async def secure(self, connection: BLEConnection) -> AsyncGenerator[BLEConnection]:

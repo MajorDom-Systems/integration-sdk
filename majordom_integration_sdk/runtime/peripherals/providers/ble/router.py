@@ -157,13 +157,13 @@ class BLEService:
 
     @contextlib.asynccontextmanager
     async def exclusive(
-        self, address: str, *, owner: str, timeout: float = 30, wait: float = 1, pairing: bool = False
+        self, address: str, *, owner: str, timeout: float = 30, wait: float = 1, is_pairing_needed: bool = False
     ) -> AsyncIterator[BLELease]:
         """Leases the source hearing ``address`` best to ``owner`` (e.g. while pairing it): that source stops
         scanning and others' connects avoid it; the rest keep going. A leased source is waited for ``wait``
         seconds before the next best is tried, round after round, until ``timeout`` raises `BLEBusyError`.
-        With ``pairing``, only sources that can pair are leased (`BLEPairingError` when none hears it)."""
-        name = await self._acquire(address, owner, timeout, wait, pairing)
+        With ``is_pairing_needed``, only sources that can pair are leased (`BLEPairingError` when none hears it)."""
+        name = await self._acquire(address, owner, timeout, wait, is_pairing_needed)
         try:
             source = self._sources[name]
             with contextlib.suppress(Exception):
@@ -210,13 +210,17 @@ class BLEService:
     def _is_leased(self, name: str) -> bool:
         return name in self._leases and self._leases[name].locked()
 
-    async def _acquire(self, address: str, owner: str, timeout: float, wait: float, pairing: bool = False) -> str:
+    async def _acquire(
+        self, address: str, owner: str, timeout: float, wait: float, is_pairing_needed: bool = False
+    ) -> str:
         """Locks the first candidate source that frees up within ``wait``, cycling until ``timeout``."""
         deadline = monotonic() + timeout
         while True:
             if not (candidates := self._candidates(address)):
                 raise ConnectionError(f"Can't reach {address}: no Bluetooth sources")
-            if pairing and not (candidates := [n for n in candidates if getattr(self._sources[n], "can_pair", False)]):
+            if is_pairing_needed and not (
+                candidates := [n for n in candidates if getattr(self._sources[n], "is_pairable", False)]
+            ):
                 raise BLEPairingError(f"No Bluetooth source that hears {address} can pair")
             for name in candidates:
                 lock = self._leases.setdefault(name, asyncio.Lock())

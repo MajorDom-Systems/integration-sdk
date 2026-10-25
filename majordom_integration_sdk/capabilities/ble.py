@@ -107,7 +107,7 @@ class PairableBLEConnection(BLEConnection, Protocol):
 
 class BLESource(Protocol):
     """A radio that hears advertisements and can connect to devices: a local adapter or a proxy. Optional
-    attributes the router reads: a true ``can_pair`` when its connections are `PairableBLEConnection`s, and
+    attributes the router reads: a true ``is_pairable`` when its connections are `PairableBLEConnection`s, and
     ``free_slots``, the connections it can still open (a proxy has a few), None when it can't tell."""
 
     name: str
@@ -172,12 +172,12 @@ class BLERouter(Protocol):
         ...
 
     def exclusive(
-        self, address: str, *, owner: str, timeout: float = 30, wait: float = 1, pairing: bool = False
+        self, address: str, *, owner: str, timeout: float = 30, wait: float = 1, is_pairing_needed: bool = False
     ) -> contextlib.AbstractAsyncContextManager[BLELease]:
         """Leases the source hearing ``address`` best to ``owner`` (e.g. while pairing it): that source pauses
         scanning and others' connects avoid it; the rest keep going. A leased source is waited for ``wait`` seconds
         before the next best is tried, round after round, until ``timeout`` raises `BLEBusyError`. With
-        ``pairing``, only sources that can pair are leased (`BLEPairingError` when none hears it)."""
+        ``is_pairing_needed``, only sources that can pair are leased (`BLEPairingError` when none hears it)."""
         ...
 
     async def scan_actively(self, duration: float) -> None:

@@ -98,7 +98,7 @@ _EVERY_ADVERTISER = [OrPattern(0, AdvertisementDataType.FLAGS, flags) for flags 
 class LocalAdapter:
     """A Bluetooth adapter of this machine, through bleak (BlueZ on Linux)."""
 
-    can_pair = True  # LE Secure Connections where the device offers it; through a scoped BlueZ agent on Linux
+    is_pairable = True  # LE Secure Connections where the device offers it; through a scoped BlueZ agent on Linux
 
     def __init__(self, adapter: str | None = None):
         self.name = adapter or "local"

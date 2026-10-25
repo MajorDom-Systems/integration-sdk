@@ -57,7 +57,7 @@ async def test_a_failed_pairing_yields_nothing():
 async def test_the_bond_is_kept_when_asked():
     connection = pairable()
 
-    async with LESecureConnections(forget=False).secure(connection):
+    async with LESecureConnections(is_pairing_kept=True).secure(connection):
         pass
 
     connection.unpair.assert_not_called()
@@ -70,13 +70,13 @@ async def test_unsecured_writes_as_is_and_says_so(caplog):
         async with Unsecured().secure(connection) as secured:
             assert secured is connection
     assert "unencrypted" in caplog.text
-    assert not Unsecured.needs_pairing and LESecureConnections.needs_pairing
+    assert not Unsecured.is_pairing_needed and LESecureConnections.is_pairing_needed
 
 
 @pytest.fixture
 async def radios():
     proxy = FakeBLESource("proxy", connection=Mock(spec=BLEConnection))  # stronger, can't pair
-    adapter = FakeBLESource("adapter", connection=pairable(), can_pair=True)
+    adapter = FakeBLESource("adapter", connection=pairable(), is_pairable=True)
     ble = BLEService(sources=[proxy, adapter])
     await ble.start()
     proxy.advertise("AA", rssi=-40)
@@ -88,7 +88,7 @@ async def radios():
 async def test_a_pairing_lease_takes_a_radio_that_can_pair_over_a_stronger_one(radios):
     ble, proxy, adapter = radios
 
-    async with ble.exclusive("AA", owner="test", pairing=True) as lease:
+    async with ble.exclusive("AA", owner="test", is_pairing_needed=True) as lease:
         assert lease.source == "adapter"
     async with ble.exclusive("AA", owner="test") as lease:
         assert lease.source == "proxy"
@@ -96,10 +96,10 @@ async def test_a_pairing_lease_takes_a_radio_that_can_pair_over_a_stronger_one(r
 
 async def test_a_pairing_lease_fails_when_no_radio_hearing_the_device_can_pair(radios):
     ble, proxy, adapter = radios
-    adapter.can_pair = False
+    adapter.is_pairable = False
 
     with pytest.raises(BLEPairingError, match="can pair"):
-        async with ble.exclusive("AA", owner="test", pairing=True, timeout=0.1):
+        async with ble.exclusive("AA", owner="test", is_pairing_needed=True, timeout=0.1):
             pytest.fail("leased a radio that can't pair")
 
 
@@ -120,7 +120,7 @@ async def test_on_linux_a_local_adapter_pairs_through_its_own_bluez_agent(adapte
     paired = AsyncMock()
     monkeypatch.setattr(module, "pair_through_agent", paired)
     adapter = LocalAdapter("hci1")
-    assert adapter.can_pair
+    assert adapter.is_pairable
 
     connection = await adapter.connect("AA:BB:CC:DD:EE:FF", lambda: None)
     assert isinstance(connection, PairableBLEConnection)

@@ -153,12 +153,12 @@ class FakeBLESource:
         self,
         name: str = "fake",
         connection: BLEConnection | None = None,
-        can_pair: bool = False,
+        is_pairable: bool = False,
         free_slots: int | None = None,
     ):
         self.name = name
         self.connection = connection
-        self.can_pair = can_pair
+        self.is_pairable = is_pairable
         self.free_slots = free_slots
         self.on_advertisement: OnAdvertisement | None = None
         self.connected: list[str] = []
