@@ -1,4 +1,5 @@
-"""Radio drivers: recognise which firmware a stick runs, say what each firmware offers, flash between them."""
+"""The SDK's USB drivers, for radios: recognise which firmware a stick runs, say what each firmware serves, flash
+between them."""
 
 from __future__ import annotations
 
@@ -6,32 +7,11 @@ import asyncio
 import hashlib
 import re
 import urllib.request
-from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
-from majordom_integration_sdk.peripherals import Endpoint
-
-
-class RadioDriver(ABC):
-    """One family of sticks. ``firmwares`` maps a firmware id to what it offers; ``{device}`` is the stick's path,
-    ``params`` the firmware's serial settings (a board profile may override them)."""
-
-    firmwares: ClassVar[Mapping[str, Sequence[Endpoint]]]
-    bluetooth: ClassVar[frozenset[str]] = frozenset()  # firmwares that serve Bluetooth too (multiprotocol over CPC)
-
-    @abstractmethod
-    async def identify(self, path: str) -> str | None:
-        """The firmware the stick at ``path`` runs, or None when the stick isn't one of ours."""
-
-    def flashable(self, path: str, channel: str) -> list[str]:
-        """Firmwares the stick at ``path`` can be switched to on the ``stable`` or ``dev`` channel."""
-        return []
-
-    async def flash(self, path: str, firmware: str, channel: str, cache: Path) -> None:
-        raise NotImplementedError(f"{type(self).__name__} can't flash")
+from majordom_integration_sdk.peripherals import Endpoint, UsbDriver
 
 
 @dataclass(frozen=True)
@@ -44,9 +24,10 @@ class Firmware:
 _NABUCASA = "https://github.com/NabuCasa/silabs-firmware-builder/releases/download"
 
 
-class Silabs(RadioDriver):
+class Silabs(UsbDriver):
     """Silicon Labs EFR32 sticks: Zigbee NCP (EZSP), Thread RCP (Spinel) or multi-PAN RCP (CPC)."""
 
+    name = "silabs"
     firmwares = {
         "zigbee-ncp": [Endpoint("zigbee", "ezsp", "{device}", params={"baud": 115200, "flow_control": True})],
         "thread-rcp": [Endpoint("thread", "spinel", "{device}", params={"baud": 460800, "flow_control": True})],
@@ -82,7 +63,7 @@ class Silabs(RadioDriver):
         builds = next((b for name, b in self.boards.items() if name in path), {})
         return [fw for fw, build in builds.items() if build.is_stable or channel == "dev"]
 
-    async def flash(self, path: str, firmware: str, channel: str, cache: Path) -> None:
+    async def flash(self, path: str, firmware: str, channel: str, cache: Path):
         if firmware not in self.flashable(path, channel):
             raise ValueError(f"No {firmware} firmware for {path} on the {channel} channel")
         build = next(b[firmware] for name, b in self.boards.items() if name in path)
@@ -96,9 +77,10 @@ class Silabs(RadioDriver):
         await _flasher(path, "flash", "--firmware", str(file))
 
 
-class ZWave(RadioDriver):
+class ZWave(UsbDriver):
     """Z-Wave controllers speaking the Serial API (any vendor)."""
 
+    name = "zwave"
     firmwares = {
         "serial-api": [Endpoint("zwave", "serial-api", "{device}", params={"baud": 115200, "flow_control": False})]
     }
@@ -139,7 +121,7 @@ async def _flasher(path: str, *args: str) -> str:
 
 #: USB ids of radios opened unasked to identify them. Generic bridges common on other boards stay out
 #: (CH340 1a86:7523 on Arduinos, Espressif 303a on ESP32s): opening their port resets the board.
-#: A device that isn't listed is identified only when asked (`Runtime.probe`).
+#: A device that isn't listed is identified only when asked (`Radio.probe`).
 RADIO_USB_IDS = {
     ("10c4", "ea60"),  # CP210x: Home Assistant SkyConnect / ZBT-1, Sonoff ZBDongle-P and Z-Wave PZG23, Zooz ZST10
     ("10c4", "8a2a"),  # Nortek HUSBZB-1
@@ -150,5 +132,5 @@ RADIO_USB_IDS = {
     ("0451", "16a8"),  # TI CC2531
 }
 
-#: Tried in this order on every unidentified stick; the cheap single-frame Z-Wave check goes first.
-DRIVERS: dict[str, RadioDriver] = {"zwave": ZWave(), "silabs": Silabs()}
+#: Every driver of the SDK, tried in this order on every unidentified stick: the cheap single-frame Z-Wave check first.
+DEFAULT_USB_DRIVERS: tuple[UsbDriver, ...] = (ZWave(), Silabs())
