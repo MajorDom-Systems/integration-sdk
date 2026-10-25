@@ -14,6 +14,7 @@ from time import monotonic
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError
+from pydantic_core import InitErrorDetails
 
 from majordom_integration_sdk.controller.platform import Context
 from majordom_integration_sdk.peripherals import (
@@ -337,10 +338,16 @@ class Runtime:
         await self._act(apply)
 
     async def update_settings[S: BaseModel](self, peripheral: Peripheral[S], values: Mapping[str, Any]) -> S:
-        """Validate and keep new values of its ``Settings``; one that runs hears it (`settings_did_change`), one still
-        starting once it runs, a failed one or one that stopped by itself tries again."""
-        entry = self._entry(peripheral)
-        settings = peripheral.Settings.model_validate(self.state["settings"].get(entry.key, {}) | dict(values))
+        """Validate and keep new values of its ``Settings``, none it doesn't have; one that runs hears it
+        (`settings_did_change`), one still starting once it runs, a failed one or one that stopped by itself tries
+        again."""
+        entry, model = self._entry(peripheral), peripheral.Settings
+        if unknown := sorted(values.keys() - model.model_fields.keys()):
+            extra: list[InitErrorDetails] = [
+                {"type": "extra_forbidden", "loc": (k,), "input": values[k]} for k in unknown
+            ]
+            raise ValidationError.from_exception_data(model.__name__, extra)
+        settings = model.model_validate(self.state["settings"].get(entry.key, {}) | dict(values))
         before = getattr(peripheral, "settings", settings)  # none yet when the ones kept didn't validate
         peripheral.settings = settings
         self.state["settings"][entry.key] = peripheral.settings.model_dump(mode="json")
@@ -555,14 +562,18 @@ class Runtime:
         return _Entry(peripheral, peripheral.key, PeripheralState.FAILED, StatusKind.KEY_TAKEN, detail)
 
     def _load_settings(self, peripheral: Peripheral, key: str):
-        """The ones kept, else the ones it was given or the defaults, kept from now on."""
+        """The ones kept, else the ones it was given or the defaults, kept from now on; kept ones it no longer has (its
+        update dropped them) go."""
         model, stored = peripheral.Settings, self.state["settings"].get(key)
         if stored is not None:
-            peripheral.settings = model.model_validate(stored)
+            peripheral.settings = model.model_validate({k: v for k, v in stored.items() if k in model.model_fields})
         elif not isinstance(getattr(peripheral, "settings", None), model):
             peripheral.settings = model()
         if (dumped := peripheral.settings.model_dump(mode="json")) != (stored or {}):  # freeze generated defaults
-            self.state["settings"][key] = dumped
+            if dumped:
+                self.state["settings"][key] = dumped
+            else:
+                del self.state["settings"][key]
             self._save()
 
     def _resolve(self):

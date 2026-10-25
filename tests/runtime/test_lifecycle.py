@@ -824,6 +824,26 @@ async def test_invalid_stored_settings_fail_only_their_peripheral(tmp_path):
     assert state(runtime, integration) == S.RUNNING and integration.settings == Channel(channel=15)
 
 
+async def test_stored_settings_it_no_longer_has_are_dropped(tmp_path):
+    (tmp_path / "data").mkdir()
+    stored = {"zigbee": {"channel": 15, "pan_id": 1}, "host": {"old": 1}}  # the host's update dropped its settings
+    (tmp_path / "data" / "state.json").write_text(json.dumps({"settings": stored}))
+    host, integration = FakePeripheral("host"), FakePeripheral("zigbee", settings=Channel)
+    runtime = await run(tmp_path, host, integration)
+
+    assert state(runtime, host) == state(runtime, integration) == S.RUNNING
+    assert integration.settings == Channel(channel=15)
+    assert json.loads((tmp_path / "data" / "state.json").read_text())["settings"] == {"zigbee": {"channel": 15}}
+
+
+async def test_new_settings_it_doesnt_have_are_refused(tmp_path):
+    integration = FakePeripheral("zigbee", settings=Channel)
+    runtime = await run(tmp_path, integration)
+    with pytest.raises(ValidationError, match="pan_id"):
+        await runtime.update_settings(integration, {"channel": 15, "pan_id": 1})
+    assert integration.settings == Channel() and runtime.state["settings"] == {"zigbee": {"channel": 11}}
+
+
 async def test_one_that_cant_say_what_it_provides_provides_nothing(tmp_path):
     class Broken(FakePeripheral):
         @property
