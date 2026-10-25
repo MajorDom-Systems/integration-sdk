@@ -656,3 +656,27 @@ async def test_an_output_that_raises_stops_nothing(tmp_path):
     host = FakePeripheral("host")
     runtime = await run(tmp_path, host, output=Output())
     assert state(runtime, host) == S.RUNNING
+
+
+async def test_a_corrupt_state_starts_afresh(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "state.json").write_text('{"settings": {"zigbee": {"chan')  # cut by a crash
+    integration = FakePeripheral("zigbee", settings=Channel)
+    runtime = await run(tmp_path, integration)
+    assert state(runtime, integration) == S.RUNNING and integration.settings == Channel()
+
+
+async def test_the_state_is_written_whole_or_not_at_all(tmp_path, monkeypatch):
+    integration = FakePeripheral("zigbee", settings=Channel)
+    runtime = await run(tmp_path, integration)
+    await runtime.update_settings(integration, {"channel": 15})
+    kept = (tmp_path / "data" / "state.json").read_text()
+
+    def crash(self, text: str):
+        open(self, "w").close()  # the file is cut, then the power goes
+        raise OSError("power lost")
+
+    monkeypatch.setattr(type(tmp_path), "write_text", crash)
+    with pytest.raises(OSError):
+        await runtime.update_settings(integration, {"channel": 20})
+    assert (tmp_path / "data" / "state.json").read_text() == kept

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -26,6 +25,7 @@ from majordom_integration_sdk.peripherals import (
     Peripherals,
     Service,
 )
+from majordom_integration_sdk.runtime.files import read_json, write_json
 from majordom_integration_sdk.runtime.peripherals.services.compose import Compose
 
 log = logging.getLogger(__name__)
@@ -155,9 +155,8 @@ class Runtime:
         self.data, self.given, self.context, self.output = data, list(peripherals), context, output
         self.disabled = disabled or MemoryDisabledStore()
         self.state: dict[str, Any] = {"settings": {}, "pins": {}, "reserved": {}, "ports": {}}
-        with contextlib.suppress(FileNotFoundError):
-            saved = json.loads((data / "state.json").read_text())
-            self.state |= {key: saved[key] for key in saved.keys() & self.state.keys()}  # older keys start fresh
+        saved = read_json(data / "state.json")
+        self.state |= {key: saved[key] for key in saved.keys() & self.state.keys()}  # older keys start fresh
         self.compose = Compose(data, self.state["ports"], self._save, context, self._learned, is_docker_enabled)
         self._entries: dict[str, _Entry] = {}  # in binding order
         self._wanted: set[str] = set()  # the ones that should run
@@ -758,8 +757,7 @@ class Runtime:
                 self.output.peripheral_did_learn(peripheral, facts)
 
     def _save(self):
-        self.data.mkdir(parents=True, exist_ok=True)
-        (self.data / "state.json").write_text(json.dumps(self.state, indent=2))
+        write_json(self.data / "state.json", self.state)
 
     def _spawn(self, awaitable: Awaitable[Any]) -> asyncio.Task:
         task = asyncio.ensure_future(awaitable)
