@@ -497,28 +497,31 @@ class Runtime:
             entry = self._entries[entry.contributor]
 
     def _resolve(self):
-        """The ones that should run, as the greatest set where each one alive is bound by another of the set if it
-        is on demand and has every required need bound to the set; binding in order, single-use endpoints taken."""
+        """The ones that should run: from the ones alive that run anyway, down through what they bind, binding in order
+        with single-use endpoints taken; one whose required need finds nothing is left out, and it all binds anew."""
         alive = {name for name, entry in self._entries.items() if self._is_alive(entry)}
         provides = {name: list(entry.peripheral.provides) for name, entry in self._entries.items()}
-        wanted = set(alive)
+        left_out: set[str] = set()
         while True:
-            bound, taken = self._bind(wanted, provides)
-            if unbound := wanted - bound.keys():  # first: what bound to one of these binds anew
-                wanted -= unbound
-                continue
-            used = {p.name for b in bound.values() for bindings in b.values() for p, _ in bindings}
-            if unused := {name for name in wanted if self._entries[name].peripheral.is_on_demand and name not in used}:
-                wanted -= unused
-                continue
-            break
+            among = alive - left_out
+            wanted = {name for name in among if self._is_run_anyway(self._entries[name])}
+            while True:
+                bound, taken = self._bind(wanted, among, provides)
+                used = {p.name for b in bound.values() for bindings in b.values() for p, _ in bindings}
+                if used <= wanted:
+                    break
+                wanted |= used
+            if not (unbound := wanted - bound.keys()):
+                break
+            left_out |= unbound
         self._wanted, self._bound = wanted, bound
         self._unbound = _Reasons(self, alive, wanted, provides, taken).all()
 
     def _bind(
-        self, wanted: set[str], provides: Mapping[str, list[Endpoint]]
+        self, wanted: set[str], among: set[str], provides: Mapping[str, list[Endpoint]]
     ) -> tuple[dict[str, dict[str, list[Binding]]], dict[tuple[str, str, str], str]]:
-        """Bind the needs of every wanted one in order; one whose required need finds nothing is left out."""
+        """Bind the needs of every wanted one in order to providers ``among``; one whose required need finds nothing
+        is left out."""
         bound: dict[str, dict[str, list[Binding]]] = {}
         taken: dict[tuple[str, str, str], str] = {}  # (provider, family, url) of a single-use endpoint -> who took it
         for name in [name for name in self._entries if name in wanted]:
@@ -526,7 +529,7 @@ class Runtime:
             for need in owner.needs:
                 chosen = [
                     (provider, endpoint)
-                    for provider, endpoint in self._candidates(name, need, wanted, provides)
+                    for provider, endpoint in self._candidates(name, need, among, provides)
                     if self._is_free(provider, endpoint, name, taken)
                 ]
                 chosen = chosen if need.is_many else chosen[:1]

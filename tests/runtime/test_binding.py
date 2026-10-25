@@ -4,7 +4,7 @@ import pytest
 from support import run
 
 from majordom_integration_sdk import Endpoint, Need
-from majordom_integration_sdk.runtime import PeripheralState
+from majordom_integration_sdk.runtime import PeripheralState, PeripheralStatus
 from majordom_integration_sdk.testing import FakePeripheral
 
 ADAPTERS = [Endpoint("ble", "bluez", "hci0"), Endpoint("ble", "bluez", "hci1")]
@@ -61,6 +61,25 @@ async def test_the_first_given_takes_every_adapter_and_the_others_hear_what_to_n
     assert runtime.unbound(raw) == {
         "ble": 'need ble/bluez: every provider taken by ble-router — use Need("ble", ["router"])'
     }
+
+
+async def test_a_router_nothing_uses_leaves_the_adapters_to_who_needs_them_raw(tmp_path):
+    ble, raw = router(), FakePeripheral("raw", [Need("ble", ["bluez"])])
+    runtime = await run(tmp_path, adapters(), ble, raw)
+
+    assert runtime.status(ble) == PeripheralStatus(PeripheralState.WAITING, "nothing that runs uses it")
+    assert runtime.status(raw).state == PeripheralState.RUNNING
+    assert raw.peripherals.endpoint("ble") == ADAPTERS[0]
+
+
+async def test_on_demand_peripherals_binding_only_each_other_dont_run(tmp_path):
+    a = FakePeripheral("a", [Need("b", is_required=False)], [Endpoint("a", is_shared=True)], is_on_demand=True)
+    b = FakePeripheral("b", [Need("a", is_required=False)], [Endpoint("b", is_shared=True)], is_on_demand=True)
+    runtime = await run(tmp_path, a, b)
+    assert (
+        runtime.status(a) == runtime.status(b) == PeripheralStatus(PeripheralState.WAITING, "nothing that runs uses it")
+    )
+    assert a.calls == b.calls == []
 
 
 async def test_a_reserved_adapter_goes_to_its_owner_before_the_router(tmp_path):
