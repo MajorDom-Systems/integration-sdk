@@ -1,7 +1,6 @@
 """An integration controller run by the runtime like any peripheral: its platform, settings and peripherals."""
 
 import json
-from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -68,7 +67,7 @@ class EchoController(AbstractController[Device, Parameter, "EchoController.Setti
         pass
 
 
-def peripherals(platform: Platform) -> list[Peripheral[Any]]:
+def peripherals(platform: Platform) -> list[Peripheral]:
     """What the integration package exports: its server, and the controller that needs it."""
     return [echo_server(), EchoController(platform)]
 

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import functools
 import logging
-from typing import Any
 
 from majordom_integration_sdk.peripherals import Peripheral
 from majordom_integration_sdk.runtime.peripherals.hardware.host import BluetoothAdapters, HostNetwork
@@ -28,7 +27,7 @@ from majordom_integration_sdk.runtime.peripherals.services.compose import Compos
 log = logging.getLogger(__name__)
 
 
-def default_peripherals() -> list[Peripheral[Any]]:
+def default_peripherals() -> list[Peripheral]:
     """Everything the SDK runs around integrations, in the order it binds: the sticks plugged in (by
     `default_usb_drivers`) before the containers that serve over them, Docker Compose that runs those, the
     multiprotocol border router before the standalone one, the Bluetooth router before the integrations, so it takes
@@ -48,7 +47,7 @@ def default_peripherals() -> list[Peripheral[Any]]:
 
 
 @functools.cache  # said once
-def _zeroconf() -> type[Peripheral[Any]] | None:
+def _zeroconf() -> type[Peripheral] | None:
     try:
         from majordom_integration_sdk.runtime.peripherals.providers.zeroconf import ZeroconfDiscoveryService
     except ImportError:

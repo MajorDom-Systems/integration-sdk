@@ -7,10 +7,11 @@ import contextlib
 import json
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-from majordom_integration_sdk.peripherals import Endpoint, Need, NoSettings, Service
+from majordom_integration_sdk.peripherals import Endpoint, Need, Service
 
 _IMAGES = Path(__file__).parent / "images"
 
@@ -24,7 +25,7 @@ FORM_PATIENCE = 15  # seconds a border router answers without a network before o
 _EXTENDED_PAN_ID = 2  # the dataset TLV that tells networks apart
 
 
-class _BorderRouter[S: BaseModel = NoSettings](Service[S]):
+class _BorderRouter[S: BaseModel = Any](Service[S]):
     """On the hub's Thread network, ``context.thread_dataset``: set up over its REST API to join it, or to form one when
     there is none yet; it tells the network it has once it serves. The network is never rendered into its container,
     so learning it recreates nothing."""

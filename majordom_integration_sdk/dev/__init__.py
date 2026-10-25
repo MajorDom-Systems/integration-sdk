@@ -47,42 +47,32 @@ logger = logging.getLogger("majordom_integration_sdk.dev")
 class LoggingControllerOutput(ControllerOutput):
     """A ``ControllerOutput`` that logs every callback — the Hub's stand-in for dev runs."""
 
-    async def controller_did_receive_discovery(
-        self, controller: AbstractController[Any, Any, Any], discovery: Discovery
-    ):
+    async def controller_did_receive_discovery(self, controller: AbstractController, discovery: Discovery):
         logger.info(f"discovered {discovery.device_name} ({discovery.transport}) id={discovery.id}")
 
-    async def controller_did_update_discovery(
-        self, controller: AbstractController[Any, Any, Any], discovery: Discovery
-    ):
+    async def controller_did_update_discovery(self, controller: AbstractController, discovery: Discovery):
         logger.info(f"updated discovery {discovery.id}")
 
-    async def controller_did_lose_discovery(self, controller: AbstractController[Any, Any, Any], discovery_id: UUID):
+    async def controller_did_lose_discovery(self, controller: AbstractController, discovery_id: UUID):
         logger.info(f"lost discovery {discovery_id}")
 
-    async def controller_did_connect_device(self, controller: AbstractController[Any, Any, Any], device_id: UUID):
+    async def controller_did_connect_device(self, controller: AbstractController, device_id: UUID):
         logger.info(f"connected device {device_id}")
 
-    async def controller_did_lose_device(self, controller: AbstractController[Any, Any, Any], device_id: UUID):
+    async def controller_did_lose_device(self, controller: AbstractController, device_id: UUID):
         logger.info(f"lost device {device_id}")
 
-    async def controller_did_receive_events(
-        self, controller: AbstractController[Any, Any, Any], events: Iterable[Event]
-    ):
+    async def controller_did_receive_events(self, controller: AbstractController, events: Iterable[Event]):
         for event in events:
             logger.info(f"event {type(event).__name__}: {event!r}")
 
-    async def controller_did_encounter_error(
-        self, controller: AbstractController[Any, Any, Any], error: IntegrationError
-    ):
+    async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError):
         logger.error(f"integration error {error.id}: {error.message}")
 
-    async def controller_did_resolve_error(self, controller: AbstractController[Any, Any, Any], error_id: str):
+    async def controller_did_resolve_error(self, controller: AbstractController, error_id: str):
         logger.info(f"integration error {error_id} resolved")
 
-    async def controller_did_emit_notification(
-        self, controller: AbstractController[Any, Any, Any], notification: Notification
-    ):
+    async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):
         logger.info(f"notification [{notification.type.value}/{notification.priority.value}]: {notification.message}")
 
 
@@ -121,21 +111,21 @@ def build_platform(
 class LoggingRuntimeOutput:
     """A ``RuntimeOutput`` that logs every change of status: why a peripheral waits or failed."""
 
-    def peripheral_did_change_status(self, peripheral: Peripheral[Any], status: PeripheralStatus):
+    def peripheral_did_change_status(self, peripheral: Peripheral, status: PeripheralStatus):
         logger.info(f"{peripheral.key} {status}")
 
-    def peripheral_did_learn(self, peripheral: Peripheral[Any], facts: Mapping[str, Any]):
+    def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
         logger.info(f"{peripheral.key} learned {', '.join(facts)}")
 
-    def peripheral_did_disappear(self, peripheral: Peripheral[Any]):
+    def peripheral_did_disappear(self, peripheral: Peripheral):
         logger.info(f"{peripheral.key} is gone")
 
 
 def build_runtime(
-    integration: Sequence[Peripheral[Any]],
+    integration: Sequence[Peripheral],
     data: Path,
     *,
-    runtime_peripherals: Sequence[Peripheral[Any]] | None = None,
+    runtime_peripherals: Sequence[Peripheral] | None = None,
     pinned: Sequence[Endpoint] = (),
     context: Callable[[], Context] = Context,
 ) -> Runtime:
@@ -157,7 +147,7 @@ class Runner:
     """Runs one controller standalone: under ``runtime``, which starts it once its needs are bound and hands moved
     peripherals, settings and context over as under the Hub; or, without, with the needs bound by hand."""
 
-    def __init__(self, controller: AbstractController[Any, Any, Any], runtime: Runtime | None = None):
+    def __init__(self, controller: AbstractController, runtime: Runtime | None = None):
         self.controller, self.runtime = controller, runtime
         self._is_started = False
 
@@ -185,17 +175,17 @@ class Runner:
             self._is_started = False
 
 
-type Integration = Callable[[Platform], Sequence[Peripheral[Any]]]  # what an integration package exports: peripherals
+type Integration = Callable[[Platform], Sequence[Peripheral]]  # what an integration package exports: peripherals
 
 
 async def run_controller(
     integration: Integration,
-    controller: type[AbstractController[Any, Any, Any]],
+    controller: type[AbstractController],
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
     peripherals: Mapping[str, Bound] | None = None,
-    runtime_peripherals: Sequence[Peripheral[Any]] | None = None,
+    runtime_peripherals: Sequence[Peripheral] | None = None,
     pinned: Sequence[Endpoint] = (),
     **platform: Any,
 ):
@@ -216,21 +206,19 @@ async def run_controller(
         logger.info(f"{runner.controller.name} stopped.")
 
 
-def _platform(
-    controller: type[AbstractController[Any, Any, Any]], storage_root: Path | None, db_path: str | Path | None
-) -> Platform:
+def _platform(controller: type[AbstractController], storage_root: Path | None, db_path: str | Path | None) -> Platform:
     """The platform the Hub gives the integration of ``controller``: a repository and documents folder of its own."""
     return build_platform(
         storage_root=storage_root, db_path=db_path, integration=controller.name, slug=controller.slug()
     )
 
 
-def _runner[C: AbstractController[Any, Any, Any]](
-    exported: Sequence[Peripheral[Any]],
+def _runner[C: AbstractController](
+    exported: Sequence[Peripheral],
     kind: type[C],
     storage_root: Path | None,
     peripherals: Mapping[str, Bound] | None,
-    runtime_peripherals: Sequence[Peripheral[Any]] | None,
+    runtime_peripherals: Sequence[Peripheral] | None,
     pinned: Sequence[Endpoint],
 ) -> Runner:
     """What an integration exported, run around its one controller of ``kind``."""

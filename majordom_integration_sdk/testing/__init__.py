@@ -60,39 +60,37 @@ class RecordingControllerOutput(ControllerOutput):
         self.error_log: list[IntegrationError | str] = []  # every report, and the id of every resolve
         self.notifications: list[Notification] = []
 
-    async def controller_did_receive_discovery(self, controller: _Controller[Any, Any, Any], discovery: Discovery):
+    async def controller_did_receive_discovery(self, controller: _Controller, discovery: Discovery):
         self.received_discoveries.append(discovery)
 
-    async def controller_did_update_discovery(self, controller: _Controller[Any, Any, Any], discovery: Discovery):
+    async def controller_did_update_discovery(self, controller: _Controller, discovery: Discovery):
         self.updated_discoveries.append(discovery)
 
-    async def controller_did_lose_discovery(self, controller: _Controller[Any, Any, Any], discovery_id: UUID):
+    async def controller_did_lose_discovery(self, controller: _Controller, discovery_id: UUID):
         self.lost_discoveries.append(discovery_id)
 
-    async def controller_did_connect_device(self, controller: _Controller[Any, Any, Any], device_id: UUID):
+    async def controller_did_connect_device(self, controller: _Controller, device_id: UUID):
         self.connected_devices.append(device_id)
 
-    async def controller_did_lose_device(self, controller: _Controller[Any, Any, Any], device_id: UUID):
+    async def controller_did_lose_device(self, controller: _Controller, device_id: UUID):
         self.lost_devices.append(device_id)
 
-    async def controller_did_receive_events(self, controller: _Controller[Any, Any, Any], events: Iterable[Event]):
+    async def controller_did_receive_events(self, controller: _Controller, events: Iterable[Event]):
         self.events.extend(events)
 
-    async def controller_did_encounter_error(self, controller: _Controller[Any, Any, Any], error: IntegrationError):
+    async def controller_did_encounter_error(self, controller: _Controller, error: IntegrationError):
         self.errors[error.id] = error
         self.error_log.append(error)
 
-    async def controller_did_resolve_error(self, controller: _Controller[Any, Any, Any], error_id: str):
+    async def controller_did_resolve_error(self, controller: _Controller, error_id: str):
         self.errors.pop(error_id, None)
         self.error_log.append(error_id)
 
-    async def controller_did_emit_notification(
-        self, controller: _Controller[Any, Any, Any], notification: Notification
-    ):
+    async def controller_did_emit_notification(self, controller: _Controller, notification: Notification):
         self.notifications.append(notification)
 
 
-class FakePeripheral(Peripheral[Any]):
+class FakePeripheral(Peripheral):
     """A peripheral that records how it is run (``calls``: "start", "stop") and the changes it hears. Its first
     ``failures`` starts raise; ``answer`` is what its hooks return, or an exception they raise. Change ``provided``,
     then tell ``runtime``, as a real one does when a stick is plugged in."""
@@ -101,7 +99,7 @@ class FakePeripheral(Peripheral[Any]):
         self,
         name: str,
         needs: Sequence[Need] = (),
-        provides: Sequence[Endpoint | Peripheral[Any]] = (),
+        provides: Sequence[Endpoint | Peripheral] = (),
         *,
         is_on_demand: bool = False,
         failures: int = 0,
@@ -120,7 +118,7 @@ class FakePeripheral(Peripheral[Any]):
         return self.settings_model
 
     @property
-    def provides(self) -> Sequence[Endpoint | Peripheral[Any]]:
+    def provides(self) -> Sequence[Endpoint | Peripheral]:
         return self.provided
 
     async def start(self):
@@ -159,21 +157,21 @@ class RecordingPeripheralOutput:
 
     def __init__(self):
         self.context = Context()
-        self.changed: list[Peripheral[Any]] = []
-        self.learned: list[tuple[Peripheral[Any], Mapping[str, Any]]] = []
-        self.stopped: list[Peripheral[Any]] = []
-        self.failed: list[tuple[Peripheral[Any], str]] = []
+        self.changed: list[Peripheral] = []
+        self.learned: list[tuple[Peripheral, Mapping[str, Any]]] = []
+        self.stopped: list[Peripheral] = []
+        self.failed: list[tuple[Peripheral, str]] = []
 
-    async def peripheral_did_change_provided(self, peripheral: Peripheral[Any]):
+    async def peripheral_did_change_provided(self, peripheral: Peripheral):
         self.changed.append(peripheral)
 
-    async def peripheral_did_learn(self, peripheral: Peripheral[Any], facts: Mapping[str, Any]):
+    async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
         self.learned.append((peripheral, facts))
 
-    async def peripheral_did_stop(self, peripheral: Peripheral[Any]):
+    async def peripheral_did_stop(self, peripheral: Peripheral):
         self.stopped.append(peripheral)
 
-    async def peripheral_did_fail(self, peripheral: Peripheral[Any], reason: str):
+    async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
         self.failed.append((peripheral, reason))
 
 
@@ -184,15 +182,15 @@ class RecordingRuntimeOutput:
     def __init__(self):
         self.statuses: list[tuple[str, PeripheralStatus]] = []
         self.learned: list[tuple[str, Mapping[str, Any]]] = []
-        self.disappeared: list[Peripheral[Any]] = []
+        self.disappeared: list[Peripheral] = []
 
-    def peripheral_did_change_status(self, peripheral: Peripheral[Any], status: PeripheralStatus):
+    def peripheral_did_change_status(self, peripheral: Peripheral, status: PeripheralStatus):
         self.statuses.append((peripheral.key, status))
 
-    def peripheral_did_learn(self, peripheral: Peripheral[Any], facts: Mapping[str, Any]):
+    def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
         self.learned.append((peripheral.key, facts))
 
-    def peripheral_did_disappear(self, peripheral: Peripheral[Any]):
+    def peripheral_did_disappear(self, peripheral: Peripheral):
         self.disappeared.append(peripheral)
 
     def last(self, key: str) -> PeripheralStatus | None:
@@ -211,7 +209,7 @@ class FakeCompose(Compose):
         self.calls.append(args)
         return "\n".join(self._running) if "ps" in args else ""
 
-    async def _is_up(self, service: Service[Any]) -> bool:
+    async def _is_up(self, service: Service) -> bool:
         return service.name in self._running
 
 

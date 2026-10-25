@@ -9,14 +9,14 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
-from typing import cast, final
+from typing import Any, cast, final
 from uuid import UUID, uuid5
 
 from pydantic import BaseModel
 from slugify import slugify
 
 from majordom_integration_sdk.controller.platform import Context, Platform
-from majordom_integration_sdk.peripherals import Need, NoSettings, Peripheral, PeripheralChange
+from majordom_integration_sdk.peripherals import Need, Peripheral, PeripheralChange
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 
@@ -39,7 +39,7 @@ def _titleize(class_name: str) -> str:
     return " ".join(words) or base
 
 
-class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: BaseModel = NoSettings](
+class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: BaseModel = Any](
     Peripheral[TSettings], ABC
 ):
     """
@@ -51,7 +51,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
     package exports it next to the servers it needs, which run while it does, given the platform the Hub builds for
     the integration::
 
-        def peripherals(platform: Platform) -> list[Peripheral[Any]]:
+        def peripherals(platform: Platform) -> list[Peripheral]:
             return [matterjs_server(), MatterController(platform)]
 
     It holds:

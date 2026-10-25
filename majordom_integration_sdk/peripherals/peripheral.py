@@ -37,21 +37,21 @@ class PeripheralOutput(Protocol):
         """The Hub-wide facts as they are now: region, Wi-Fi, the Thread network."""
         ...
 
-    async def peripheral_did_change_provided(self, peripheral: Peripheral[Any]):
+    async def peripheral_did_change_provided(self, peripheral: Peripheral):
         """Its ``provides`` or the peripherals it brings along changed."""
         ...
 
-    async def peripheral_did_learn(self, peripheral: Peripheral[Any], facts: Mapping[str, Any]):
+    async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
         """`Context` fields it read from what it runs or talks to, e.g. a border router's Thread network: the context
         takes them, and every peripheral that runs hears it changed."""
         ...
 
-    async def peripheral_did_stop(self, peripheral: Peripheral[Any]):
+    async def peripheral_did_stop(self, peripheral: Peripheral):
         """It stopped by itself, gracefully: it is stopped (``stop`` releases what it holds) and waits until one of its
         needs changes (goes and comes back, or moves) or the user restarts it."""
         ...
 
-    async def peripheral_did_fail(self, peripheral: Peripheral[Any], reason: str):
+    async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
         """It can't go on, ``reason`` saying why to the user: it is stopped and started again after each of the
         runtime's retry delays, then failed until the user restarts it. Told from inside ``start``, that start
         fails."""
@@ -67,16 +67,16 @@ class _NoRuntime:
 
         return Context()
 
-    async def peripheral_did_change_provided(self, peripheral: Peripheral[Any]):
+    async def peripheral_did_change_provided(self, peripheral: Peripheral):
         pass
 
-    async def peripheral_did_learn(self, peripheral: Peripheral[Any], facts: Mapping[str, Any]):
+    async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
         pass
 
-    async def peripheral_did_stop(self, peripheral: Peripheral[Any]):
+    async def peripheral_did_stop(self, peripheral: Peripheral):
         pass
 
-    async def peripheral_did_fail(self, peripheral: Peripheral[Any], reason: str):
+    async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
         pass
 
 
@@ -107,7 +107,7 @@ class Peripherals:
         return self.endpoint(family).instance if family in self.bound else None
 
 
-class Peripheral[S: BaseModel = NoSettings](Protocol):
+class Peripheral[S: BaseModel = Any](Protocol):
     """Anything around an integration that needs and/or provides capabilities: a USB radio, soldered hardware, the
     host's Bluetooth adapters and network, a container, an in-process provider (the Bluetooth router, Zeroconf, SSDP),
     an integration itself, an ESPHome node's Bluetooth proxy. Only the construction differs.
@@ -121,12 +121,12 @@ class Peripheral[S: BaseModel = NoSettings](Protocol):
 
     Subclass it for the defaults. The runtime sets ``runtime``, ``peripherals``, ``data``, ``contributor`` and
     ``settings``, its options validated by its ``Settings``. Declare them as a nested ``class Settings(BaseModel)``
-    named as the type parameter, which types ``settings``: ``class Radio(Peripheral["Radio.Settings"])``. A
-    peripheral of any settings is a ``Peripheral[Any]``.
+    named as the type parameter, which types ``settings``: ``class Radio(Peripheral["Radio.Settings"])``. Without,
+    they are `NoSettings`; a bare ``Peripheral`` is one of any settings.
     """
 
     name: str  # what it is shown by
-    contributor: Peripheral[Any] | None = None  # what brought it along
+    contributor: Peripheral | None = None  # what brought it along
     needs: Sequence[Need] = ()
     is_on_demand: bool = False  # runs only while something that runs binds it: containers, in-process providers
     start_timeout: float = START_TIMEOUT
@@ -147,7 +147,7 @@ class Peripheral[S: BaseModel = NoSettings](Protocol):
         return f"{self.contributor.key}/{self.name}" if self.contributor else self.name
 
     @property
-    def provides(self) -> Sequence[Endpoint | Peripheral[Any]]:
+    def provides(self) -> Sequence[Endpoint | Peripheral]:
         """What it serves to the others' needs, and the peripherals it brings along while it runs: the USB scanner a
         radio per stick, ESPHome a Bluetooth proxy per node. When it changes on its own, tell ``runtime``."""
         return ()

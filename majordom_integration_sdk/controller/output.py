@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 from majordom_integration_sdk.schemas.device import Discovery
@@ -31,31 +31,21 @@ class ControllerOutput(Protocol):
     An instance is injected by the Hub into every controller as ``platform.output``.
     """
 
-    async def controller_did_receive_discovery(
-        self, controller: AbstractController[Any, Any, Any], discovery: Discovery
-    ): ...
-    async def controller_did_update_discovery(
-        self, controller: AbstractController[Any, Any, Any], discovery: Discovery
-    ): ...
-    async def controller_did_lose_discovery(
-        self, controller: AbstractController[Any, Any, Any], discovery_id: UUID
-    ): ...
+    async def controller_did_receive_discovery(self, controller: AbstractController, discovery: Discovery): ...
+    async def controller_did_update_discovery(self, controller: AbstractController, discovery: Discovery): ...
+    async def controller_did_lose_discovery(self, controller: AbstractController, discovery_id: UUID): ...
 
-    async def controller_did_connect_device(self, controller: AbstractController[Any, Any, Any], device_id: UUID): ...
+    async def controller_did_connect_device(self, controller: AbstractController, device_id: UUID): ...
 
-    async def controller_did_lose_device(self, controller: AbstractController[Any, Any, Any], device_id: UUID):
+    async def controller_did_lose_device(self, controller: AbstractController, device_id: UUID):
         """Paired device became unreachable while the Hub is running (not just at startup/reboot)."""
         ...
 
-    async def controller_did_receive_events(
-        self, controller: AbstractController[Any, Any, Any], events: Iterable[Event]
-    ):
+    async def controller_did_receive_events(self, controller: AbstractController, events: Iterable[Event]):
         """Report device-domain events (e.g. DeviceParameterChange) observed by the controller."""
         ...
 
-    async def controller_did_encounter_error(
-        self, controller: AbstractController[Any, Any, Any], error: IntegrationError
-    ):
+    async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError):
         """A user-facing problem the integration hit — surfaced to the user, not the developer.
 
         Use this for things the user should know about or can act on (a wrong setup, an unplugged
@@ -72,13 +62,11 @@ class ControllerOutput(Protocol):
         """
         ...
 
-    async def controller_did_resolve_error(self, controller: AbstractController[Any, Any, Any], error_id: str):
+    async def controller_did_resolve_error(self, controller: AbstractController, error_id: str):
         """The problem reported with ``error_id`` is gone. Resolving an id that isn't active does nothing."""
         ...
 
-    async def controller_did_emit_notification(
-        self, controller: AbstractController[Any, Any, Any], notification: Notification
-    ):
+    async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):
         """Surface a general user-facing notification — a floating tile in the app. Unlike
         ``controller_did_encounter_error`` (specifically for failures/health), this is for anything
         informational or advisory: a firmware update is available, a device needs a physical action,

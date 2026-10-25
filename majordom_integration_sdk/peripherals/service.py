@@ -18,17 +18,17 @@ if TYPE_CHECKING:
 class ServiceHost(Protocol):
     """What runs a `Service`'s container, bound to its ``container`` need: the runtime's `Compose`."""
 
-    def provided(self, service: Service[Any]) -> Sequence[Endpoint]:
+    def provided(self, service: Service) -> Sequence[Endpoint]:
         """Its ``provides`` rendered: the host ports it got, the params it renders."""
         ...
 
-    async def up(self, service: Service[Any]):
+    async def up(self, service: Service):
         """Run its container; return once it serves."""
         ...
 
-    async def down(self, service: Service[Any]): ...
+    async def down(self, service: Service): ...
 
-    def is_current(self, service: Service[Any]) -> bool:
+    def is_current(self, service: Service) -> bool:
         """Whether its container still runs what it would render now."""
         ...
 
@@ -36,7 +36,7 @@ class ServiceHost(Protocol):
 CONTAINER_HOST = Need("container", ["compose"])  # what every service needs
 
 
-class Service[S: BaseModel = NoSettings](Peripheral[S]):
+class Service[S: BaseModel = Any](Peripheral[S]):
     """A companion server an integration provides, such as Matter's matterjs-server: a container that runs only while
     something that runs is bound to one of its endpoints. The integration lists it next to its controller, which
     `Need`s what it provides.
@@ -68,7 +68,7 @@ class Service[S: BaseModel = NoSettings](Peripheral[S]):
         compose: Mapping[str, Any],
         needs: Sequence[Need] = (),
         provides: Sequence[Endpoint] = (),
-        settings: type[S] = NoSettings,  # ty: ignore[invalid-parameter-default]  (NoSettings is the default of S)
+        settings: type[S] = NoSettings,  # ty: ignore[invalid-parameter-default]  (none: it takes none)
         ports: Mapping[str, int] | None = None,  # name -> PREFERRED host port; see the docstring
     ):
         self.name, self.compose, self.needs, self.templates = name, compose, [*needs, CONTAINER_HOST], provides
