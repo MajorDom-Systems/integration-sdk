@@ -49,7 +49,6 @@ class StatusKind(StrEnum):
     NEEDS_UNBOUND = "needs-unbound"  # waiting: a required need can't be bound
     NEEDS_STARTING = "needs-starting"  # waiting: its needs are bound, to providers that don't run yet
     UNUSED = "unused"  # waiting: on demand, and nothing that runs uses it
-    CONTRIBUTOR_STOPPED = "contributor-stopped"  # waiting: what brought it along stopped, and it goes with it
     RETRYING = "retrying"  # waiting: it failed, and starts again after a delay
     STOPPED_ITSELF = "stopped-itself"  # waiting: until its needs change or the user restarts it
     GAVE_UP = "gave-up"  # failed: its retries are spent
@@ -644,7 +643,7 @@ class Runtime:
             return _waiting(StatusKind.STOPPED_ITSELF, "stopped by itself: waits for its needs to change or a restart")
         contributor = self._entries.get(by.key) if (by := entry.peripheral.contributor) else None
         if contributor is not None and contributor.state != PeripheralState.RUNNING:  # it goes with the next pass
-            return _waiting(StatusKind.CONTRIBUTOR_STOPPED, f"comes with {contributor.key}, which stopped")
+            return _waiting(detail=f"comes with {contributor.key}, which stopped")
         if entry.key not in self._wanted:
             required = {need.family for need in entry.peripheral.needs if need.is_required}
             if reasons := [why for family, why in self._unbound.get(entry.key, {}).items() if family in required]:
