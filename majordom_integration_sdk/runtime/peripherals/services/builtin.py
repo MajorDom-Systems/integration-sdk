@@ -15,12 +15,7 @@ from majordom_integration_sdk.peripherals import Endpoint, Need, Service
 _IMAGES = Path(__file__).parent / "images"
 
 
-class ThreadNetwork(BaseModel):
-    dataset: str | None = Field(
-        None,
-        title="Thread network",
-        description="Active operational dataset (hex) of an existing network to join. Empty forms a new one.",
-    )
+class ThreadRadio(BaseModel):
     tx_power: int | None = Field(None, title="Thread transmit power, dBm", description="Empty uses the radio default.")
 
 
@@ -29,7 +24,8 @@ FORM_PATIENCE = 15  # seconds a border router answers without a network before o
 
 
 class _BorderRouter(Service):
-    """Its Thread network reaches integrations as ``context.thread_dataset``: it tells it once it serves."""
+    """The hub's Thread network, ``context.thread_dataset``: it joins it, or forms one when there is none yet, and tells
+    the network it has once it serves."""
 
     async def start(self):
         await super().start()
@@ -38,12 +34,10 @@ class _BorderRouter(Service):
 
 
 class _FormingBorderRouter(_BorderRouter):
-    """A border router that comes up without a network: the runtime joins the configured one or forms one."""
-
-    settings: ThreadNetwork | None
+    """A border router that comes up without a network: the runtime has it join the hub's or form one."""
 
     async def provision(self, endpoint: Endpoint):
-        await form_network(endpoint.url, self.settings or ThreadNetwork(), FORM_PATIENCE)
+        await form_network(endpoint.url, self.runtime.context.thread_dataset, FORM_PATIENCE)
 
 
 def silabs_multiprotocol() -> Service:
@@ -52,7 +46,7 @@ def silabs_multiprotocol() -> Service:
         "silabs-multiprotocol",
         needs=[Need("multipan", ["silabs-cpc"])],
         provides=[Endpoint("zigbee", "ezsp", "socket://127.0.0.1:{ports.ezsp}"), _OTBR_REST],
-        settings=ThreadNetwork,
+        settings=ThreadRadio,
         ports={"ezsp": 9999, "rest": 8081},
         compose={
             "image": "majordom/silabs-multiprotocol:gsdk-4.4.6-arm64",
@@ -78,7 +72,7 @@ def silabs_multiprotocol() -> Service:
                 "BACKBONE_IF": "{host.interface}",
                 "EZSP_TCP_PORT": "{ports.ezsp}",
                 "OTBR_REST_PORT": "{ports.rest}",
-                "THREAD_DATASET": "{settings.dataset}",
+                "THREAD_DATASET": "{context.thread_dataset}",
                 "THREAD_TX_DBM": "{settings.tx_power}",
             },
             "healthcheck": {
@@ -97,7 +91,6 @@ def otbr() -> Service:
         "otbr",
         needs=[Need("thread", ["spinel"])],
         provides=[_OTBR_REST],
-        settings=ThreadNetwork,
         ports={"rest": 8081},
         compose={
             # Pinned: a moved :latest once shipped a broken RCP serial init (no wpan0). Bump on purpose.
@@ -145,13 +138,13 @@ async def active_dataset(url: str) -> str:
         await asyncio.sleep(1)
 
 
-async def form_network(url: str, network: ThreadNetwork, patience: float = FORM_PATIENCE):
-    """Once the border router at ``url`` has answered for ``patience`` seconds without a network, join
-    ``network.dataset`` or form a new network — once."""
+async def form_network(url: str, dataset: str | None, patience: float = FORM_PATIENCE):
+    """Once the border router at ``url`` has answered for ``patience`` seconds without a network, join the one of
+    ``dataset`` (its active dataset, hex TLVs) or form a new network — once."""
 
     def form():
-        if network.dataset:
-            _call(url, "PUT", "/node/dataset/active", network.dataset)
+        if dataset:
+            _call(url, "PUT", "/node/dataset/active", dataset)
         else:
             _call(url, "PUT", "/node/dataset/active", json.dumps({"NetworkName": "MajorDom"}), "application/json")
         _call(url, "PUT", "/node/state", json.dumps("enable"), "application/json")

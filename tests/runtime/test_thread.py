@@ -8,10 +8,9 @@ from typing import Any
 
 import pytest
 
-from majordom_integration_sdk import Endpoint, Peripherals, Service
+from majordom_integration_sdk import Context, Endpoint, Peripherals, Service
 from majordom_integration_sdk.runtime.peripherals.services import builtin as services
 from majordom_integration_sdk.runtime.peripherals.services.builtin import (
-    ThreadNetwork,
     active_dataset,
     form_network,
     otbr,
@@ -53,13 +52,13 @@ async def test_returns_the_network_someone_else_formed(border_router):
     url, state = border_router
     state["dataset"] = "0e08existing"
     assert await active_dataset(url) == "0e08existing"
-    await form_network(url, ThreadNetwork())
+    await form_network(url, None)
     assert state["puts"] == []
 
 
 async def test_forms_a_network_when_none_appears(border_router):
     url, state = border_router
-    await form_network(url, ThreadNetwork(), patience=0)
+    await form_network(url, None, patience=0)
     assert await active_dataset(url) == "0e08newnetwork"
     assert state["puts"] == [
         ("/node/dataset/active", json.dumps({"NetworkName": "MajorDom"})),
@@ -67,16 +66,16 @@ async def test_forms_a_network_when_none_appears(border_router):
     ]
 
 
-async def test_joins_the_configured_network(border_router):
+async def test_joins_the_given_network(border_router):
     url, state = border_router
-    await form_network(url, ThreadNetwork(dataset="0e08configured"), patience=0)
-    assert await active_dataset(url) == "0e08configured"
+    await form_network(url, "0e08given", patience=0)
+    assert await active_dataset(url) == "0e08given"
 
 
 async def test_forms_only_once(border_router):
     url, state = border_router
     state["stuck"] = True  # forming takes a while: the dataset doesn't appear yet
-    await asyncio.wait_for(form_network(url, ThreadNetwork(), patience=0), 3)
+    await asyncio.wait_for(form_network(url, None, patience=0), 3)
     assert len(state["puts"]) == 2  # one dataset, one enable
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(active_dataset(url), 2)
@@ -90,6 +89,15 @@ async def test_only_a_border_router_that_doesnt_form_itself_is_provisioned(borde
     assert state["puts"] == []
     await asyncio.wait_for(otbr().provision(rest), 3)
     assert len(state["puts"]) == 2
+
+
+async def test_a_border_router_joins_the_hubs_thread_network(border_router, monkeypatch):
+    url, state = border_router
+    monkeypatch.setattr(services, "FORM_PATIENCE", 0)
+    router, output = otbr(), RecordingPeripheralOutput()
+    router.runtime, output.context = output, Context(thread_dataset="0e08hub")  # learned from the stick before
+    await asyncio.wait_for(router.provision(Endpoint("thread", "otbr-rest", url, is_shared=True)), 3)
+    assert await active_dataset(url) == "0e08hub"
 
 
 class Answering:

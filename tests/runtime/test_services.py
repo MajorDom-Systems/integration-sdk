@@ -89,6 +89,12 @@ async def test_a_multipan_stick_serves_zigbee_and_matter_through_one_container(t
     assert runtime.status(otbr) == PeripheralStatus(PeripheralState.WAITING, "need thread/spinel: nothing offers it")
 
 
+async def test_a_multiprotocol_stick_joins_the_hubs_thread_network(tmp_path):
+    peripherals = (host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol(), zigbee())
+    await run(tmp_path, FakeCompose(), *peripherals, context=lambda: Context(thread_dataset="0e08hub"))
+    assert compose(tmp_path)["silabs-multiprotocol"]["environment"]["THREAD_DATASET"] == "0e08hub"
+
+
 async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp_path):
     ncp, rcp, integration, (app, server) = stick("ncp", NCP), stick("rcp", RCP), zigbee(), matter()
     peripherals = (host(), ncp, rcp, builtin.silabs_multiprotocol(), builtin.otbr(), integration, server, app)
