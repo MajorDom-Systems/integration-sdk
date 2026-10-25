@@ -5,6 +5,10 @@ instead of reinventing them, so every integration is exercised through the same 
 
 - :class:`RecordingControllerOutput` — a spy implementing every ``ControllerOutput``
   callback, capturing what a controller reports back to the Hub.
+- :class:`FakePeripheral` — a peripheral that records how it is run: what it needs, provides and brings
+  along is set per test, its starts can fail, its hooks answer as told.
+- :class:`RecordingPeripheralOutput` — what a peripheral reports to the runtime; :class:`RecordingRuntimeOutput` —
+  what the runtime reports to the Hub.
 - Offline doubles of every capability (no radios/sockets touched): :class:`FakeBLESource` for the
   Bluetooth router to hear through, :class:`FakeBLERouter`, :class:`FakeZeroconf` (the ``discovery``
   extra) and :class:`FakeSSDP`. Each offers itself as ``.endpoint``, to pass in the controller's
@@ -18,15 +22,15 @@ instead of reinventing them, so every integration is exercised through the same 
 from __future__ import annotations
 
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from majordom_integration_sdk.capabilities.ble import BLEConnection, OnAdvertisement
 from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
 from majordom_integration_sdk.controller.platform import Platform
-from majordom_integration_sdk.peripherals import Endpoint, PeripheralChange
+from majordom_integration_sdk.peripherals import Endpoint, Need, Peripheral, PeripheralChange, Peripherals
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
@@ -36,6 +40,7 @@ from majordom_integration_sdk.schemas.notification import Notification
 
 if TYPE_CHECKING:
     from majordom_integration_sdk.controller.abstract_controller import AbstractController as _Controller
+    from majordom_integration_sdk.runtime import PeripheralStatus
 
 
 class RecordingControllerOutput(ControllerOutput):
@@ -80,6 +85,105 @@ class RecordingControllerOutput(ControllerOutput):
 
     async def controller_did_emit_notification(self, controller: _Controller, notification: Notification):
         self.notifications.append(notification)
+
+
+class FakePeripheral(Peripheral):
+    """A peripheral that records how it is run (``calls``: "start", "stop") and the changes it hears. Its first
+    ``failures`` starts raise; ``answer`` is what its hooks return, or an exception they raise. Change ``provided`` or
+    ``peripherals``, then tell ``output``, as a real one does when a stick is plugged in."""
+
+    def __init__(
+        self,
+        name: str,
+        needs: Sequence[Need] = (),
+        provides: Sequence[Endpoint] = (),
+        peripherals: Iterable[Peripheral] = (),
+        *,
+        is_on_demand: bool = False,
+        is_ready_on_start: bool = True,
+        failures: int = 0,
+        answer: bool | Exception = False,
+        settings: type | None = None,
+    ):
+        self.name, self.needs, self.provided = name, list(needs), list(provides)
+        self.is_on_demand, self.is_ready_on_start = is_on_demand, is_ready_on_start
+        self.failures, self.answer = failures, answer
+        self.Settings = settings
+        self._peripherals = Peripherals(peripherals)
+        self.calls: list[str] = []
+        self.changes: list[PeripheralChange | tuple[str, Any]] = []  # needs moved; ("settings"|"context", before)
+
+    @property
+    def provides(self) -> Sequence[Endpoint]:
+        return self.provided
+
+    @property
+    def peripherals(self) -> Peripherals:
+        return self._peripherals
+
+    async def start(self):
+        self.calls.append("start")
+        if self.failures:
+            self.failures -= 1
+            raise RuntimeError(f"{self.name} broke")
+
+    async def stop(self):
+        self.calls.append("stop")
+
+    async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:
+        self.changes.append(change)
+        return self._answer()
+
+    async def settings_did_change(self, before: Any) -> bool:
+        self.changes.append(("settings", before))
+        return self._answer()
+
+    async def context_did_change(self, before: Any) -> bool:
+        self.changes.append(("context", before))
+        return self._answer()
+
+    def _answer(self) -> bool:
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+    def __repr__(self) -> str:
+        return f"FakePeripheral({self.name!r})"
+
+
+class RecordingPeripheralOutput:
+    """Captures what peripherals report to whatever runs them: set it as a peripheral's ``output``."""
+
+    def __init__(self):
+        self.changed: list[Peripheral] = []
+        self.ready: list[Peripheral] = []
+        self.failed: list[tuple[Peripheral, str]] = []
+
+    async def peripheral_did_change_provided(self, peripheral: Peripheral):
+        self.changed.append(peripheral)
+
+    async def peripheral_did_become_ready(self, peripheral: Peripheral):
+        self.ready.append(peripheral)
+
+    async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
+        self.failed.append((peripheral, reason))
+
+
+class RecordingRuntimeOutput:
+    """Captures what a runtime reports to the Hub: every status in order, the last one by name, what was learned."""
+
+    def __init__(self):
+        self.statuses: list[tuple[str, PeripheralStatus]] = []
+        self.learned: list[tuple[str, Mapping[str, Any]]] = []
+
+    def peripheral_did_change_status(self, peripheral: Peripheral, status: PeripheralStatus):
+        self.statuses.append((peripheral.name, status))
+
+    def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+        self.learned.append((peripheral.name, facts))
+
+    def last(self, name: str) -> PeripheralStatus | None:
+        return next((status for n, status in reversed(self.statuses) if n == name), None)
 
 
 class FakeSSDP(SSDPDiscoveryService):
@@ -215,6 +319,9 @@ def build_test_platform(
 
 __all__ = [
     "RecordingControllerOutput",
+    "FakePeripheral",
+    "RecordingPeripheralOutput",
+    "RecordingRuntimeOutput",
     "FakeBLESource",
     "FakeBLERouter",
     "FakeZeroconf",

@@ -1,852 +1,741 @@
-"""Find radios, bind every consumer's needs to what radios, services, the host, the runtime's own providers and the
-consumers themselves offer, and run the services that end up bound through Docker Compose — then keep it in sync as
-sticks come and go and offers change."""
+"""Run peripherals by one rule and bind their needs — what the runtime is given and what those bring along — then keep
+it in sync as sticks come and go, providers change, and the user enables, disables or restarts them."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import errno
-import fcntl
 import json
 import logging
-import os
-import socket
-import string
-import sys
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
-from glob import glob
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, Literal, Protocol
+from time import monotonic
+from typing import Any, Protocol
 
-from pydantic import BaseModel, Field
-
-from majordom_integration_sdk.controller.platform import Context, Platform
-from majordom_integration_sdk.peripherals import Bound, Endpoint, Need, PeripheralChange, Peripherals, Service
-from majordom_integration_sdk.runtime.peripherals.hardware.drivers import DRIVERS, RADIO_USB_IDS
-from majordom_integration_sdk.runtime.peripherals.providers import Provider, builtin_providers
-from majordom_integration_sdk.runtime.peripherals.providers.ble import cpc_hci
-from majordom_integration_sdk.runtime.peripherals.services.builtin import SERVICES
-from majordom_integration_sdk.schemas.credentials import WifiCredentials
+from majordom_integration_sdk.controller.platform import Context
+from majordom_integration_sdk.peripherals import Bound, Endpoint, Need, Peripheral, PeripheralChange, Peripherals
 
 log = logging.getLogger(__name__)
 
-PORTS = range(45800, 46000)  # where a service goes when the port it prefers is taken
-PROBE_TIMEOUT = 60  # per driver or integration probe: one that hangs (bellows resetting a busy port) is given up
+RETRY_DELAYS = (5, 30, 120)  # seconds before each new start of a peripheral that failed, then it is given up on
+STOP_TIMEOUT = 15  # a stop stuck on a vanished radio (zigpy awaiting its dead I/O thread) is abandoned
+_PASSES = 10  # bound on the passes one change takes to settle: each may change what the next one binds
+
+_is_driving: ContextVar[bool] = ContextVar("is_driving", default=False)  # inside a call the runtime makes
 
 
-class Consumer(Protocol):
-    """Anything shaped like an integration controller class."""
-
-    needs: Sequence[Need]
-    services: Sequence[Service]
-    settings: type[BaseModel] | None
-
-    async def probe(self, path: str) -> Endpoint | None: ...
-
-
-#: Radio regulatory regions, named as Z-Wave JS names them.
-Region = Literal[
-    "Europe", "USA", "Australia/New Zealand", "Hong Kong", "India", "Israel", "Russia", "China", "Japan", "Korea",
-    "USA (Long Range)", "Europe (Long Range)",
-]  # fmt: skip
-
-
-class PlatformSettings(BaseModel):
-    region: Region | None = Field(None, title="Radio region", description="Where the hub is used.")
-    wifi: list[WifiCredentials] = Field([], title="Wi-Fi networks", description="Saved networks to set devices up on.")
-    wifi_ssid: str | None = Field(None, title="Wi-Fi for devices", description="Empty uses the hub's own network.")
-    firmware: Literal["stable", "dev"] = Field(
-        "stable", title="Radio firmware", description="Stable offers verified builds only, dev every known build."
-    )
-
-
-@dataclass
-class Radio:
-    id: str
-    path: str
-    is_present: bool
-    driver: str | None  # None: recognised by an integration's probe, or not recognised at all
-    firmware: str | None
-    offers: list[str]  # what it serves right now, through services: zigbee, thread, …
-    options: dict[str, list[str]]  # firmware it can be switched to -> families that firmware would serve
-    used_by: list[str] = field(default_factory=list)
-    is_busy: bool = False  # being flashed
-    held_by: str | None = None  # another program has it open: left alone until claimed (probe, or a pin)
-
-
-type Binding = tuple[str, Endpoint]  # who provides it, and what
+class PeripheralState(StrEnum):
+    DISABLED = "disabled"  # by the user, persisted: until enabled
+    WAITING = "waiting"  # for a need, a provider, what brought it along, something to use it, or a retry
+    STARTING = "starting"
+    RUNNING = "running"
+    FAILED = "failed"  # given up on: until restarted or its settings change
 
 
 @dataclass(frozen=True)
-class _ServiceControl:
-    """A consumer's hold on the services it brings: restarting one leaves the consumers running."""
-
-    runtime: Runtime
-    own: frozenset[str]
-
-    async def restart(self, service: str) -> None:
-        if service not in self.own:
-            raise PermissionError(f"{service} isn't one of this integration's services")
-        await self.runtime.restart(service)
+class PeripheralStatus:
+    state: PeripheralState
+    reason: str = ""  # why it waits or failed, for the user
+    is_ready: bool = False  # it runs and serves: what needs it may start
 
 
-@dataclass(frozen=True)
-class _Offers:
-    """A consumer's offers, bound to its name."""
+class RuntimeOutput(Protocol):
+    """What the runtime reports to its owner (the Hub), delegate style like `PeripheralOutput`. Called synchronously
+    from the runtime's loop, in order: don't block, schedule what takes time."""
 
-    runtime: Runtime
-    owner: str
+    def peripheral_did_change_status(self, peripheral: Peripheral, status: PeripheralStatus): ...
 
-    async def offer(self, endpoint: Endpoint) -> None:
-        await self.runtime.offer(self.owner, endpoint)
+    def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+        """`Context` fields it read from what it runs (a border router's Thread network): merge them into the context
+        the runtime is given, then tell it (`Runtime.context_did_change`)."""
+        ...
 
-    async def withdraw(self, endpoint: Endpoint) -> None:
-        await self.runtime.withdraw(self.owner, endpoint)
+
+class DisabledStore(Protocol):
+    """Where the user's disabling of a peripheral is kept, by name: the Hub's enable/disable store."""
+
+    def is_disabled(self, name: str) -> bool: ...
+    def set_disabled(self, name: str, is_disabled: bool): ...
+
+
+class MemoryDisabledStore:
+    """Disabled until the process ends: library mode, the dev runner."""
+
+    def __init__(self, disabled: Iterable[str] = ()):
+        self.disabled = set(disabled)
+
+    def is_disabled(self, name: str) -> bool:
+        return name in self.disabled
+
+    def set_disabled(self, name: str, is_disabled: bool):
+        (self.disabled.add if is_disabled else self.disabled.discard)(name)
+
+
+type Binding = tuple[Peripheral, Endpoint]  # who provides it, and what
+
+
+@dataclass(eq=False)
+class _Entry:
+    peripheral: Peripheral
+    contributor: str | None  # the name of what brought it along
+    state: PeripheralState
+    reason: str = ""
+    is_ready: bool = False
+    attempts: int = 0  # failures in a row
+    retry_at: float = 0.0  # monotonic: a waiting one starts no earlier
+    failure: str = ""  # why, and when it is tried again
+    bindings: dict[str, list[Binding]] = field(default_factory=dict)  # what it was started or last told with
+    task: asyncio.Task | None = None  # its start
+    reported: PeripheralStatus | None = None
+
+    @property
+    def name(self) -> str:
+        return self.peripheral.name
+
+    @property
+    def status(self) -> PeripheralStatus:
+        return PeripheralStatus(self.state, self.reason, self.is_ready)
+
+    @property
+    def is_started(self) -> bool:
+        return self.state in (PeripheralState.STARTING, PeripheralState.RUNNING)
 
 
 class Runtime:
+    """Runs every peripheral it is given, and what those bring along, by one rule (see `Peripheral`); binds their
+    needs, and is the `PeripheralOutput` of each::
+
+        runtime = Runtime(data, peripherals=[*DEFAULT_PERIPHERALS, HueController(platform)])
+        await runtime.start()
+
+    ``peripherals`` are bound in this order, what each brings along right after it: one listed first wins a single-use
+    endpoint (the Bluetooth router takes every adapter before the containers) and is preferred for a need (list
+    `Pinned` first). ``context`` gives the Hub-wide facts its containers render; ``output`` hears every change of
+    status and what is learned; ``disabled`` keeps what the user disabled (in memory by default). Its own state — the
+    settings, the user's pins and reservations — goes to ``data``.
+
+    A peripheral that isn't disabled or failed runs while what brought it along does, while something that runs binds
+    it if it ``is_on_demand``, and once every required need is bound to a provider that runs and is ready. Only a
+    waiting one starts by itself: a stick plugged in again never revives a disabled or failed one. A start that raises
+    is tried again after each of `RETRY_DELAYS`, then the peripheral is failed; a hook that raises restarts it the same
+    way. Leaving the running state releases what it brought along: what it holds stops with it.
+    """
+
     def __init__(
         self,
         data: Path,
-        consumers: Mapping[str, Consumer] = {},
+        peripherals: Sequence[Peripheral] = (),
         *,
-        is_docker_enabled: bool = True,
-        is_scan_enabled: bool = True,
-        devices: Mapping[str, str] = {},
-        board: Sequence[Mapping[str, str]] = (),
-        pinned: Mapping[str, Endpoint] = {},
-        default_wifi: Callable[[], WifiCredentials | None] = lambda: None,
-        on_change: Callable[[], Awaitable[None]] | None = None,
-        poll: float = 2,
-        builtins: Sequence[Provider] | None = None,
+        context: Callable[[], Context] = Context,
+        output: RuntimeOutput | None = None,
+        disabled: DisabledStore | None = None,
     ):
-        """
-        consumers: integration controller classes by slug, bound in this order after the providers.
-        is_docker_enabled: run the bound services; False leaves them to you (pin their endpoints).
-        is_scan_enabled: look for USB sticks in /dev/serial/by-id; `devices` adds paths by id.
-        board: soldered radios, ``{"id", "path", "driver", "firmware"}``, used without asking; ``"params"``
-            overrides the firmware's serial settings where the board wires its UART differently.
-        pinned: endpoints you provide yourself by family; they win over anything found.
-        builtins: the peripherals run in this process (the Bluetooth router, DNS-SD, SSDP); None runs one of each
-            whose extra is installed.
-        """
-        self.data, self.consumers = data, dict(consumers)
-        self.is_docker_enabled, self.is_scan_enabled = is_docker_enabled, is_scan_enabled
-        self.devices, self.board, self.pinned = dict(devices), list(board), dict(pinned)
-        self.default_wifi, self.on_change, self.poll = default_wifi, on_change, poll
-        self.builtins = {p.name: p for p in (builtin_providers() if builtins is None else builtins)}
-        self.services = {s.name: s for c in self.consumers.values() for s in c.services} | {s.name: s for s in SERVICES}
-        self.state: dict[str, Any] = {"radios": {}, "pins": {}, "reserved": {}, "settings": {}, "ports": {}}
+        self.data, self.given, self.context, self.output = data, list(peripherals), context, output
+        self.disabled = disabled or MemoryDisabledStore()
+        self.state: dict[str, Any] = {"settings": {}, "pins": {}, "reserved": {}}
         with contextlib.suppress(FileNotFoundError):
-            self.state |= json.loads((data / "state.json").read_text())
-        for radio in self.board:
-            self.state["radios"].setdefault(radio["id"], dict(radio))
-        self._bound: dict[str, dict[str, list[Binding]]] = {}  # provider, consumer or service -> family -> bindings
-        self._unbound: dict[str, dict[str, str]] = {}  # owner -> family -> why its need isn't bound
-        self._offered: dict[str, list[Endpoint]] = {}  # consumer -> what it offers right now
-        self._present: dict[str, str] = {}
-        self._nodes: dict[str, str] = {}  # radio id -> device node its path resolves to (a ttyUSB*)
-        self._busy: set[str] = set()  # radios being flashed
-        self._held: dict[str, str] = {}  # radio id -> the other program that has it open
-        self._compose = ""
-        self._learned: dict[tuple[str, str], Mapping[str, Any]] = {}  # bound (provider, url) -> context facts
-        self._tasks: dict[tuple[str, str], list[asyncio.Task]] = {}  # services setting up and learning, by source
+            saved = json.loads((data / "state.json").read_text())
+            self.state |= {key: saved[key] for key in saved.keys() & {"settings", "pins", "reserved", "ports"}}
+        self._entries: dict[str, _Entry] = {}  # in binding order
+        self._wanted: set[str] = set()  # the ones that should run
+        self._bound: dict[str, dict[str, list[Binding]]] = {}
+        self._unbound: dict[str, dict[str, str]] = {}  # name -> family -> why its need isn't bound
         self._lock = asyncio.Lock()
-        self._watcher: asyncio.Task | None = None
-        self._notifying: set[asyncio.Task] = set()
+        self._tasks: set[asyncio.Task] = set()
+        self._timer: asyncio.TimerHandle | None = None
+        self._is_running = False
 
     # Lifecycle
 
     async def start(self):
-        for provider in self.builtins.values():
-            try:
-                await provider.start()
-            except Exception:
-                log.exception(f"{provider.name} failed to start")
+        self._is_running = True
         await self.refresh()
-        self._watcher = asyncio.create_task(self._watch(), name="runtime.watch")
 
     async def stop(self):
-        for task in (self._watcher, *self._notifying, *(t for tasks in self._tasks.values() for t in tasks)):
-            if task:
-                task.cancel()
-        for provider in self.builtins.values():
-            try:
-                await provider.stop()
-            except Exception:
-                log.exception(f"{provider.name} failed to stop")
+        self._is_running = False
+        if self._timer:
+            self._timer.cancel()
+        async with self._lock:
+            with self._driving():
+                for entry in reversed(self._entries.values()):
+                    if entry.is_started:
+                        await self._stop(entry, _waiting())
+        for task in self._tasks:
+            task.cancel()
 
     async def refresh(self):
+        """Collect, bind and run everything anew now."""
+        if not self._is_running:
+            return
         async with self._lock:
-            self._present = self._find()
-            self._nodes = _nodes(self._present)
-            self._held = {}
-            for radio_id, path in self._present.items():
-                known, trusted = radio_id in self.state["radios"], self._trusted(radio_id, path)
-                if holder := self._holder(radio_id, is_opening_allowed=not known and trusted):
-                    self._held[radio_id] = holder
-                if not known and (holder or radio_id in self._busy):
-                    continue  # identified once the other program lets go of it, or by the probe that holds it
-                if not known:
-                    self.state["radios"][radio_id] = await self._identify(path) if trusted else {}
-                self.state["radios"][radio_id]["path"] = path
-                await self._check_bluetooth(self.state["radios"][radio_id])
-            self._save()
-            await self._rebind()
-        if self.on_change:
-            await self.on_change()
+            with self._driving():
+                for _ in range(_PASSES):
+                    if not await self._pass():
+                        break
+                else:
+                    log.warning(f"Peripherals still changing after {_PASSES} passes")
+        self._report()
+        self._schedule_retry()
 
-    async def _rebind(self):
-        """Bind every need again, run what is bound, and tell the providers what they got."""
-        before = {name: self._peripherals(name) for name in self.builtins}
-        self._resolve()
-        await self._allocate()
-        recreated = await self._apply()
-        self._follow(recreated)
-        for name, provider in self.builtins.items():
-            was, now = before[name] or Peripherals(), self._peripherals(name) or Peripherals()
-            for family in sorted(was.keys() | now.keys()):
-                if was.get(family) != now.get(family):
-                    try:
-                        await provider.peripheral_did_change(PeripheralChange(family, was.get(family), now.get(family)))
-                    except Exception:
-                        log.exception(f"{name} failed to take its {family} peripherals")
+    # What the Hub (or you) reads
 
-    async def _check_bluetooth(self, entry: dict[str, Any]):
-        """Whether a multi-PAN radio's firmware serves Bluetooth too: the driver's firmware metadata says, else the
-        radio is asked once."""
-        driver = DRIVERS.get(entry.get("driver", ""))
-        firmware = entry.get("firmware")
-        if (
-            not driver
-            or "bluetooth" in entry
-            or not any(e.family == "multipan" for e in fw_endpoints(driver, firmware, ""))
-        ):
-            return
-        entry["bluetooth"] = firmware in driver.bluetooth or await cpc_hci.has_bluetooth(entry["path"])
+    @property
+    def peripherals(self) -> list[Peripheral]:
+        """Every peripheral it runs, in binding order: what it was given and what those brought along."""
+        return [entry.peripheral for entry in self._entries.values()]
 
-    def _follow(self, is_recreated: bool):
-        """Have services set up what runs and learn facts from what is bound; known facts stay until read
-        again, and go with their provider."""
-        sources = self._sources()
-        for key in [key for key in self._tasks if is_recreated or key not in sources]:
-            for task in self._tasks.pop(key):
-                task.cancel()
-        self._learned = {key: facts for key, facts in self._learned.items() if key in sources}
-        for key, (service, endpoint) in sources.items():
-            running = any(not task.done() for task in self._tasks.get(key, []))
-            if is_recreated or key not in self._learned and not running:  # a source unchanged keeps setting up
-                self._tasks[key] = [asyncio.create_task(self._learn(key, service, endpoint))]
-                if key[0] == service.name:  # never someone else's (pinned)
-                    settings = self.settings(service.name)
-                    self._tasks[key].append(asyncio.create_task(self._provision(service, endpoint, settings)))
+    def peripheral(self, name: str) -> Peripheral:
+        return self._entries[name].peripheral
 
-    async def _learn(self, key: tuple[str, str], service: Service, endpoint: Endpoint):
-        try:
-            facts = dict(await service.learn(endpoint))
-        except Exception:
-            log.exception(f"{service.name} failed to learn from {endpoint.url}")
-            return
-        before = self._facts()
-        self._learned[key] = facts
-        if self._facts() != before and self.on_change:
-            await self.on_change()
+    def status(self, peripheral: Peripheral) -> PeripheralStatus:
+        return self._entry(peripheral).status
 
-    @staticmethod
-    async def _provision(service: Service, endpoint: Endpoint, settings: BaseModel | None):
-        try:
-            await service.provision(endpoint, settings)
-        except Exception:
-            log.exception(f"{service.name} failed to set up {endpoint.url}")
+    def bound(self, peripheral: Peripheral) -> dict[str, Bound]:
+        """What each need is bound to, by family: an `Endpoint`, a list of them for an ``is_many`` need."""
+        return _view(peripheral, self._bound.get(peripheral.name, {}))
 
-    def _facts(self) -> dict[str, Any]:
-        return {name: value for facts in self._learned.values() for name, value in facts.items()}
+    def providers(self, peripheral: Peripheral) -> dict[str, str]:
+        """Who serves each bound need, by family; several, comma-separated, for an ``is_many`` need."""
+        bound = self._bound.get(peripheral.name, {})
+        return {family: ", ".join(p.name for p, _ in bindings) for family, bindings in bound.items()}
 
-    async def _watch(self):
-        seen = self._nodes
+    def unbound(self, peripheral: Peripheral) -> dict[str, str]:
+        """Why each need isn't bound, by family: for the user, with what to do when there is something, e.g.
+        'need ble/bluez: every provider taken by ble-router — use Need("ble", ["router"])'."""
+        return dict(self._unbound.get(peripheral.name, {}))
+
+    def users(self, peripheral: Peripheral) -> list[str]:
+        """Every peripheral that runs on it, directly or through others: a radio's integrations and their containers."""
+        users: list[str] = []
+        providers = {peripheral.name}
         while True:
-            await asyncio.sleep(self.poll)
-            found = _nodes(self._find())
-            if found != seen:  # act once the change held for one more poll (a stick re-enumerating)
-                seen = found
-            elif found != self._nodes or any(not self._holder(i, i not in self.state["radios"]) for i in self._held):
-                try:
-                    await self.refresh()
-                except Exception:
-                    log.exception("Refreshing radios failed")
+            more = [
+                name
+                for name, bound in self._bound.items()
+                if name not in users and any(p.name in providers for b in bound.values() for p, _ in b)
+            ]
+            if not more:
+                return users
+            users += more
+            providers.update(more)
 
-    # What the hub (or you) reads
-
-    def peripherals(self, consumer: str) -> Peripherals | None:
-        """Bound needs of a consumer by family; None while a required need can't be met (see `unbound`)."""
-        return self._peripherals(consumer)
-
-    def providers(self, owner: str) -> dict[str, str]:
-        """Who serves each bound need of a consumer, service or provider: a radio id, a service or provider name, a
-        consumer that offered it, "host" or "pinned"; several, comma-separated, for an ``is_many`` need."""
-        return {family: ", ".join(p for p, _ in bound) for family, bound in self._bound.get(owner, {}).items()}
-
-    def unbound(self, owner: str) -> dict[str, str]:
-        """Why each need of a consumer, service or provider isn't bound, by family: for the user, with what to do
-        when there is something, e.g. 'need ble/bluez: every provider taken by ble-router — use Need("ble",
-        ["router"])'."""
-        return dict(self._unbound.get(owner, {}))
-
-    def platform(self, consumer: str, base: Platform) -> Platform:
-        """``base`` with what the runtime holds for ``consumer``: its settings, the context, its services and offers."""
-        services = _ServiceControl(self, frozenset(s.name for s in self.consumers[consumer].services))
-        settings, context = self.settings(consumer), self.context()
-        return base.copy(settings=settings, context=context, services=services, offers=_Offers(self, consumer))
-
-    def context(self) -> Context:
-        hub = self.settings("hub")
-        wifi = next((w for w in hub.wifi if w.ssid == hub.wifi_ssid), None) or self.default_wifi()
-        return Context(region=hub.region, wifi=wifi, **self._facts())
-
-    def radios(self) -> list[Radio]:
-        result = []
-        unknown = {radio_id: {"path": self._present[radio_id]} for radio_id in self._held}
-        for radio_id, entry in (unknown | self.state["radios"]).items():
-            path, driver = entry.get("path", ""), DRIVERS.get(entry.get("driver", ""))
-            firmwares = driver.flashable(path, self.settings("hub").firmware) if driver else []
-            result.append(
-                Radio(
-                    id=radio_id,
-                    path=path,
-                    is_present=radio_id in self._present,
-                    driver=entry.get("driver"),
-                    firmware=entry.get("firmware"),
-                    offers=self._reach(self._radio_endpoints(radio_id, entry)),
-                    options={fw: self._reach(fw_endpoints(driver, fw, path)) for fw in firmwares},
-                    used_by=[c for c in self.consumers if radio_id in self._roots(c)],
-                    is_busy=radio_id in self._busy,
-                    held_by=self._held.get(radio_id),
+    def reach(self, endpoints: Iterable[Endpoint]) -> list[str]:
+        """The families ``endpoints`` would serve, themselves or through the on-demand peripherals here they would run,
+        that something here needs: what a radio's firmware is good for."""
+        families: set[str] = set()
+        reached = {e.family for e in endpoints}
+        while reached != families:
+            families = reached
+            reached = families.union(
+                *(
+                    {e.family for e in entry.peripheral.provides}
+                    for entry in self._entries.values()
+                    if entry.peripheral.is_on_demand and _satisfied(entry.peripheral.needs, families)
                 )
             )
-        return result
+        return sorted(families & {need.family for entry in self._entries.values() for need in entry.peripheral.needs})
 
-    def settings(self, scope: str) -> Any:
-        """Validated settings of a consumer (slug), a service (name) or the platform ("hub"); None if it has none."""
-        owner = self.consumers.get(scope) or self.services.get(scope)
-        model = PlatformSettings if scope == "hub" else getattr(owner, "settings", None)
-        if model is None:
-            return None
-        stored = self.state["settings"].get(scope, {})
-        current = model.model_validate(stored)
-        if (dumped := current.model_dump(mode="json")) != stored:  # freeze generated defaults (e.g. keys)
-            self.state["settings"][scope] = dumped
-            self._save()
-        return current
+    # What the Hub (or you) changes
 
-    def settings_scopes(self, consumer: str) -> list[str]:
-        """The consumer itself and every service in its chain that has settings — shown together to the user."""
-        scopes = [consumer, *sorted(self._roots(consumer) & self.services.keys())]
-        return [scope for scope in scopes if self.settings(scope) is not None]
+    async def enable(self, peripheral: Peripheral):
+        self.disabled.set_disabled(peripheral.name, False)
+        entry = self._entry(peripheral)
 
-    # What the hub (or you) changes
+        async def apply():
+            if entry.state == PeripheralState.DISABLED:
+                entry.state, entry.attempts, entry.retry_at = PeripheralState.WAITING, 0, 0.0
 
-    async def update_settings(self, scope: str, values: Mapping[str, Any]) -> Any:
-        model = self.settings(scope)
-        if model is None:
-            raise KeyError(f"{scope} has no settings")
-        updated = type(model).model_validate(model.model_dump() | dict(values))
-        self.state["settings"][scope] = updated.model_dump(mode="json")
+        await self._act(apply)
+
+    async def disable(self, peripheral: Peripheral):
+        """Stop it, and what it brought along, until enabled again; kept across restarts."""
+        self.disabled.set_disabled(peripheral.name, True)
+        await self._act(lambda: self._stop(self._entry(peripheral), PeripheralStatus(PeripheralState.DISABLED)))
+
+    async def restart(self, peripheral: Peripheral):
+        """Stop it if it runs and start it again, a failed one too: its retries start over. Called from inside a
+        peripheral's own start, stop or hook, it happens once that call returns."""
+        entry = self._entry(peripheral)
+        if entry.state == PeripheralState.DISABLED:
+            raise ValueError(f"{peripheral.name} is disabled: enable it")
+
+        async def apply():
+            await self._stop(entry, _waiting())
+            entry.attempts, entry.retry_at = 0, 0.0
+
+        await self._act(apply)
+
+    async def update_settings(self, peripheral: Peripheral, values: Mapping[str, Any]) -> Any:
+        """Validate and keep new values of its ``Settings``; one that runs hears it (`settings_did_change`), a failed
+        one tries again."""
+        entry = self._entry(peripheral)
+        if (model := peripheral.Settings) is None:
+            raise KeyError(f"{peripheral.name} has no settings")
+        before = peripheral.settings
+        peripheral.settings = model.model_validate(before.model_dump() | dict(values))
+        self.state["settings"][peripheral.name] = peripheral.settings.model_dump(mode="json")
         self._save()
-        await self.refresh()
-        return self.settings(scope)
 
-    async def restart(self, service: str):
-        """Restart a running service's container; nothing else changes, so integrations aren't told."""
-        if service not in self._running_services():
-            raise LookupError(f"{service} isn't running")
-        if not self.is_docker_enabled:
-            return  # you run the services
-        async with self._lock:  # not while compose is recreating it
-            process = await asyncio.create_subprocess_exec(
-                "docker", "compose", "-f", str(self.data / "compose.json"), "restart", service,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            )  # fmt: skip
-            output = (await process.communicate())[0].decode(errors="replace")
-        if process.returncode:
-            raise RuntimeError(f"Restarting {service} failed:\n{output[-3000:]}")
+        async def apply():
+            if entry.state == PeripheralState.FAILED:
+                entry.state, entry.attempts = PeripheralState.WAITING, 0
+            elif entry.state == PeripheralState.RUNNING:
+                await self._ask(entry, peripheral.settings_did_change(before))
 
-    async def set_firmware(self, radio_id: str, firmware: str):
-        entry = self.state["radios"][radio_id]
-        self._busy.add(radio_id)
-        try:
-            await self.refresh()  # releases the stick: whatever used it is stopped or unlinked
-            channel = self.settings("hub").firmware
-            await DRIVERS[entry["driver"]].flash(entry["path"], firmware, channel, self.data / "firmware")
-            entry["firmware"] = await DRIVERS[entry["driver"]].identify(entry["path"])
-            entry.pop("bluetooth", None)
-        finally:
-            self._busy.discard(radio_id)
-        await self.refresh()
+        await self._act(apply)
+        return peripheral.settings
 
-    async def probe(self, radio_id: str):
-        """Identify a radio now, also one whose USB id isn't a known radio's (its port is opened, which
-        may reset what's behind it). Whatever uses it lets go of it first."""
-        self._busy.add(radio_id)
-        try:
-            await self.refresh()
-            async with self._lock:
-                self.state["radios"][radio_id] = await self._identify(self._present[radio_id]) | {"claimed": True}
-        finally:
-            self._busy.discard(radio_id)
-        await self.refresh()
+    async def context_did_change(self, before: Context):
+        """The Hub-wide facts changed: every peripheral that runs hears it (`Peripheral.context_did_change`)."""
 
-    async def forget(self, radio_id: str):
-        """Drop what is known about a radio; one that is plugged in is identified again."""
-        if radio_id in self._present:
-            await self.probe(radio_id)
-        else:
-            self.state["radios"].pop(radio_id, None)
-            await self.refresh()
+        async def apply():
+            for entry in list(self._entries.values()):
+                if entry.state == PeripheralState.RUNNING:
+                    await self._ask(entry, entry.peripheral.context_did_change(before))
+
+        await self._act(apply)
 
     async def pin(self, family: str, provider: str | None):
-        """Prefer ``provider`` (a radio id or service name) for ``family``; None goes back to automatic."""
+        """Prefer ``provider`` (a peripheral's name) for every need of ``family``; None goes back to the order given."""
         if provider is None:
             self.state["pins"].pop(family, None)
         else:
             self.state["pins"][family] = provider
-        await self.refresh()
+        self._save()
+        await self._settle()
 
     async def reserve(self, owner: str, family: str, url: str | None):
-        """Keep the ``family`` endpoint at ``url`` for ``owner`` alone (a consumer or a service), bound to it before
-        anyone else can bind it, the providers' ``is_many`` needs included: one Bluetooth adapter, ``ble/bluez hci1``,
-        for matterjs-server to use directly. None gives it back."""
+        """Keep the ``family`` endpoint at ``url`` for ``owner`` alone, bound to it before anything else can bind it,
+        ``is_many`` needs included: one Bluetooth adapter, ``ble/bluez hci1``, for matterjs-server to use directly.
+        None gives it back."""
         if url is None:
             self.state["reserved"].get(owner, {}).pop(family, None)
         else:
             self.state["reserved"].setdefault(owner, {})[family] = url
-        await self.refresh()
+        self._save()
+        await self._settle()
 
-    async def pin_endpoint(self, endpoint: Endpoint | None, family: str | None = None):
-        """Provide ``endpoint`` yourself for its family, winning over anything found (a ``socket://`` EZSP stick, a
-        matter-server you run); None with ``family`` drops yours."""
-        if endpoint is None:
-            self.pinned.pop(family or "", None)
-        else:
-            self.pinned[endpoint.family] = endpoint
-        await self.refresh()
+    # PeripheralOutput
 
-    async def offer(self, owner: str, endpoint: Endpoint):
-        """Offer ``endpoint`` on behalf of ``owner`` while it runs, e.g. ESPHome lending a node's Bluetooth as
-        ``ble/esphome-proxy``; one with the same family and url is replaced."""
-        offered = [e for e in self._offered.get(owner, []) if (e.family, e.url) != (endpoint.family, endpoint.url)]
-        self._offered[owner] = [*offered, endpoint]
-        await self._reoffer()
+    async def peripheral_did_change_provided(self, peripheral: Peripheral):
+        await self._settle()
 
-    async def withdraw(self, owner: str, endpoint: Endpoint):
-        offered = self._offered.get(owner, [])
-        self._offered[owner] = [e for e in offered if (e.family, e.url) != (endpoint.family, endpoint.url)]
-        await self._reoffer()
+    async def peripheral_did_become_ready(self, peripheral: Peripheral):
+        entry = self._entry(peripheral)
+        entry.is_ready = entry.is_ready or entry.is_started
+        await self._settle()
 
-    async def _reoffer(self):
-        async with self._lock:
-            await self._rebind()
-        # the offerer may be the one being set up right now: it never waits for itself to be told
-        if self.on_change:
-            self._spawn(self.on_change())
+    async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
+        entry = self._entry(peripheral)
+
+        async def apply():
+            if entry.is_started:
+                await self._stop(entry, PeripheralStatus(PeripheralState.FAILED, reason))
+                entry.attempts = 0
+
+        await self._act(apply)
 
     # Internals
 
-    def _find(self) -> dict[str, str]:
-        found = {Path(p).name: p for p in glob("/dev/serial/by-id/*")} if self.is_scan_enabled else {}
-        found |= {r["id"]: r["path"] for r in self.board if Path(r["path"]).exists()}
-        return found | {i: p for i, p in self.devices.items() if Path(p).exists()}
+    def _entry(self, peripheral: Peripheral) -> _Entry:
+        entry = self._entries.get(peripheral.name)
+        if entry is None or entry.peripheral is not peripheral:
+            raise LookupError(f"{peripheral.name} isn't run here")
+        return entry
 
-    def _holder(self, radio_id: str, is_opening_allowed: bool) -> str | None:
-        """The other program that has a radio open, unless the user claimed it or it is being flashed."""
-        claimed = self.state["radios"].get(radio_id, {}).get("claimed") or radio_id in self.state["pins"].values()
-        if claimed or radio_id in self._busy or (path := self._present.get(radio_id)) is None:
+    async def _act(self, change: Callable[[], Awaitable[Any]]):
+        """Make a change and settle; from inside a call the runtime makes (it holds the lock), once that returns."""
+        if _is_driving.get():
+            self._spawn(self._act_unlocked(change))
+            return
+        await self._act_unlocked(change)
+
+    async def _act_unlocked(self, change: Callable[[], Awaitable[Any]]):
+        async with self._lock:
+            with self._driving():
+                await change()
+        await self.refresh()
+
+    async def _settle(self):
+        """Bind and run anew: now, or from inside a call the runtime makes, once that returns."""
+        if _is_driving.get():
+            self._spawn(self.refresh())
+        else:
+            await self.refresh()
+
+    @contextlib.contextmanager
+    def _driving(self):
+        token = _is_driving.set(True)
+        try:
+            yield
+        finally:
+            _is_driving.reset(token)
+
+    async def _pass(self) -> bool:
+        """One round: collect what there is, bind it, stop what shouldn't run, tell what runs what moved, start what
+        can. True when something changed that the next round may bind differently."""
+        before = self._snapshot()
+        is_changed = False
+        for entry in self._collect():  # gone: what brought it along let go of it
+            is_changed = True
+            await self._stop(entry, _waiting())
+        self._resolve()
+        for entry in reversed(self._entries.values()):  # what uses something stops before it
+            if entry.is_started and entry.name not in self._wanted:
+                is_changed = True
+                await self._stop(entry, _waiting())
+        for entry in list(self._entries.values()):
+            bound = self._bound.get(entry.name, {})
+            if entry.state == PeripheralState.RUNNING and _key(bound) != _key(entry.bindings):
+                is_changed = True
+                await self._deliver(entry, bound)
+            elif entry.state in (PeripheralState.WAITING, PeripheralState.FAILED, PeripheralState.DISABLED):
+                self._bind_view(entry, bound)
+        for entry in self._entries.values():
+            if entry.state == PeripheralState.WAITING:
+                entry.reason = self._why_waiting(entry)
+                if not entry.reason:
+                    self._start(entry)
+        return is_changed or self._snapshot() != before
+
+    def _snapshot(self) -> list[tuple[str, tuple[Endpoint, ...], tuple[str, ...]]]:
+        return [
+            (entry.name, tuple(entry.peripheral.provides), tuple(p.name for p in entry.peripheral.peripherals))
+            for entry in self._entries.values()
+        ]
+
+    def _collect(self) -> list[_Entry]:
+        """Every peripheral given and brought along, in binding order; the ones gone are returned."""
+        entries: dict[str, _Entry] = {}
+        gone: list[_Entry] = []
+
+        def walk(peripheral: Peripheral, contributor: str | None):
+            if (seen := entries.get(peripheral.name)) is not None:
+                if seen.peripheral is not peripheral:
+                    log.error(f"Two peripherals are named {peripheral.name}: the second is left out")
+                return
+            entry = self._entries.get(peripheral.name)
+            if entry is None or entry.peripheral is not peripheral:
+                if entry is not None:
+                    gone.append(entry)  # replaced by another of the same name
+                entry = self._adopt(peripheral, contributor)
+            entries[peripheral.name] = entry
+            for child in peripheral.peripherals:
+                walk(child, peripheral.name)
+
+        for peripheral in self.given:
+            walk(peripheral, None)
+        gone += [entry for name, entry in self._entries.items() if name not in entries]
+        self._entries = entries
+        return gone
+
+    def _adopt(self, peripheral: Peripheral, contributor: str | None) -> _Entry:
+        peripheral.output = self
+        peripheral.settings = self._settings(peripheral)
+        is_disabled = self.disabled.is_disabled(peripheral.name)
+        return _Entry(peripheral, contributor, PeripheralState.DISABLED if is_disabled else PeripheralState.WAITING)
+
+    def _settings(self, peripheral: Peripheral) -> Any:
+        if (model := peripheral.Settings) is None:
             return None
-        return _holder(path, is_opening_allowed=is_opening_allowed)
+        stored = self.state["settings"].get(peripheral.name, {})
+        current = model.model_validate(stored)
+        if (dumped := current.model_dump(mode="json")) != stored:  # freeze generated defaults (e.g. keys)
+            self.state["settings"][peripheral.name] = dumped
+            self._save()
+        return current
 
-    def _trusted(self, radio_id: str, path: str) -> bool:
-        """Safe to open unasked: given explicitly, soldered on the board, or a known radio's USB id."""
-        soldered = any(r["id"] == radio_id for r in self.board)
-        return radio_id in self.devices or soldered or _usb_id(path) in RADIO_USB_IDS
-
-    async def _identify(self, path: str) -> dict[str, Any]:
-        for name, driver in DRIVERS.items():
-            with contextlib.suppress(Exception):
-                async with asyncio.timeout(PROBE_TIMEOUT):
-                    if firmware := await driver.identify(path):
-                        return {"driver": name, "firmware": firmware}
-        for consumer in self.consumers.values():
-            with contextlib.suppress(Exception):
-                async with asyncio.timeout(PROBE_TIMEOUT):
-                    if endpoint := await consumer.probe(path):
-                        return {"family": endpoint.family, "dialect": endpoint.dialect}
-        log.info(f"No driver or integration recognised {path}")
-        return {}
-
-    def _radio_endpoints(self, radio_id: str, entry: Mapping[str, Any]) -> list[Endpoint]:
-        if radio_id not in self._present or radio_id in self._busy or radio_id in self._held:
-            return []
-        node = self._nodes.get(radio_id, entry["path"])
-        if "family" in entry:
-            return [Endpoint(entry["family"], entry["dialect"], node)]
-        endpoints = fw_endpoints(
-            DRIVERS.get(entry.get("driver", "")), entry.get("firmware"), node, entry.get("params", {})
-        )
-        if entry.get("bluetooth"):  # computed: the firmware serves Bluetooth over CPC too
-            endpoints.append(Endpoint("ble", "silabs-cpc-hci", node, params={"hci": entry.get("hci")}))
-        return endpoints
-
-    def _offers(self) -> list[Binding]:
-        offers: list[Binding] = [("pinned", e) for e in self.pinned.values()] + [("host", e) for e in _host_endpoints()]
-        offers += [(i, e) for i, entry in self.state["radios"].items() for e in self._radio_endpoints(i, entry)]
-        offers += [(name, e) for name, s in self.services.items() for e in s.provides]
-        offers += [(name, p.endpoint) for name, p in self.builtins.items()]
-        offers += [(owner, e) for owner, endpoints in self._offered.items() for e in endpoints]
-        pins = self.state["pins"]
-        return sorted(offers, key=lambda offer: (offer[0] != "pinned", pins.get(offer[1].family) != offer[0]))
-
-    def _owner_needs(self, owner: str) -> Sequence[Need]:
-        holder = self.builtins.get(owner) or self.services.get(owner) or self.consumers.get(owner)
-        return holder.needs if holder else ()
-
-    def _peripherals(self, owner: str) -> Peripherals | None:
-        if (bound := self._bound.get(owner)) is None:
-            return None
-        many = {need.family for need in self._owner_needs(owner) if need.is_many}
-        return Peripherals({family: [e for _, e in b] if family in many else b[0][1] for family, b in bound.items()})
-
-    def _running_services(self) -> set[str]:
-        return self._bound.keys() & self.services.keys()
+    def _is_alive(self, entry: _Entry) -> bool:
+        """Neither it nor what brought it along is disabled or failed."""
+        while True:
+            if entry.state in (PeripheralState.DISABLED, PeripheralState.FAILED):
+                return False
+            if entry.contributor is None:
+                return True
+            entry = self._entries[entry.contributor]
 
     def _resolve(self):
-        """Providers first, then the consumers in order, each binding the services it reaches."""
-        resolved: dict[str, dict[str, list[Binding]] | None] = {}
-        unbound: dict[str, dict[str, str]] = {}
+        """The ones that should run, as the greatest set where each one alive is bound by another of the set if it
+        is on demand and has every required need bound to the set; binding in order, single-use endpoints taken."""
+        alive = {name for name, entry in self._entries.items() if self._is_alive(entry)}
+        provides = {name: list(entry.peripheral.provides) for name, entry in self._entries.items()}
+        wanted = set(alive)
+        while True:
+            bound, taken = self._bind(wanted, provides)
+            used = {p.name for owner, b in bound.items() for bindings in b.values() for p, _ in bindings}
+            still = {
+                name
+                for name in wanted
+                if name in bound and (not self._entries[name].peripheral.is_on_demand or name in used)
+            }
+            if still == wanted:
+                break
+            wanted = still
+        self._wanted, self._bound = wanted, bound
+        self._unbound = _Reasons(self, alive, wanted, provides, taken).all()
+
+    def _bind(
+        self, wanted: set[str], provides: Mapping[str, list[Endpoint]]
+    ) -> tuple[dict[str, dict[str, list[Binding]]], dict[tuple[str, str, str], str]]:
+        """Bind the needs of every wanted one in order; one whose required need finds nothing is left out."""
+        bound: dict[str, dict[str, list[Binding]]] = {}
         taken: dict[tuple[str, str, str], str] = {}  # (provider, family, url) of a single-use endpoint -> who took it
-        offers = self._offers()
-        reserved = {
-            (family, url): owner for owner, kept in self.state["reserved"].items() for family, url in kept.items()
-        }
-        offered_by = {}  # what each provider, service or consumer offers, by family: for the hint
-        for provider, endpoint in offers:
-            offered_by.setdefault((provider, endpoint.family), endpoint)
-
-        def why(need: Need, rejected: list[str]) -> str:
-            wanted = f"{need.family}/{'|'.join(need.dialects) or '*'}"
-            return f"need {wanted}: {'; '.join(dict.fromkeys(rejected)) or 'nothing offers it'}"
-
-        def bind(owner: str, needs: Sequence[Need]) -> dict[str, list[Binding]] | None:
-            if owner in resolved:
-                return resolved[owner]
-            resolved[owner] = None  # also guards against cycles
-            bound: dict[str, list[Binding]] = {}
-            mine: list[tuple[str, str, str]] = []
-            failed = False
-            for need in needs:
-                chosen: list[Binding] = []
-                rejected: list[str] = []
-                candidates = sorted(offers, key=lambda o: reserved.get((o[1].family, o[1].url)) != owner)
-                for provider, endpoint in candidates:
-                    if not need.accepts(endpoint) or provider == owner:
-                        continue
-                    key = (provider, endpoint.family, endpoint.url)
-                    if (keeper := reserved.get((endpoint.family, endpoint.url), owner)) != owner:
-                        rejected.append(f"{endpoint.url or endpoint.dialect} is reserved for {keeper}")
-                        continue
-                    if (taker := taken.get(key)) is not None:
-                        rejected.append(f"every provider taken by {taker}" + _hint(offered_by, taker, need.family))
-                        continue
-                    if provider in self.services and bind(provider, self.services[provider].needs) is None:
-                        rejected.append(f"{provider} can't run ({'; '.join(unbound.get(provider, {}).values())})")
-                        continue
+        for name in [name for name in self._entries if name in wanted]:
+            owner, mine, bindings = self._entries[name].peripheral, [], {}
+            for need in owner.needs:
+                chosen = [
+                    (provider, endpoint)
+                    for provider, endpoint in self._candidates(name, need, wanted, provides)
+                    if self._is_free(provider, endpoint, name, taken)
+                ]
+                chosen = chosen if need.is_many else chosen[:1]
+                for provider, endpoint in chosen:
                     if not endpoint.is_shared:
-                        taken[key] = owner
-                        mine.append(key)
-                    chosen.append((provider, endpoint))
-                    if not need.is_many:
-                        break
+                        taken[provider.name, endpoint.family, endpoint.url] = name
+                        mine.append((provider.name, endpoint.family, endpoint.url))
                 if chosen:
-                    bound[need.family] = chosen
-                    continue
-                unbound.setdefault(owner, {})[need.family] = why(need, rejected)
-                failed = failed or need.is_required  # the rest are still looked at: each says why it's unbound
-            if failed:
-                for key in mine:  # what it took goes back to the others
-                    del taken[key]
-                return None
-            resolved[owner] = bound
-            return bound
+                    bindings[need.family] = chosen
+                elif need.is_required:
+                    for key in mine:  # what it took goes back to the others
+                        del taken[key]
+                    break
+            else:
+                bound[name] = bindings
+        return bound, taken
 
-        for name, provider in self.builtins.items():
-            bind(name, provider.needs)
-        for name, consumer in self.consumers.items():
-            bind(name, consumer.needs)
-        self._bound = {o: v for o, v in resolved.items() if v is not None}
-        self._unbound = unbound
+    def _candidates(
+        self, owner: str, need: Need, among: set[str], provides: Mapping[str, list[Endpoint]]
+    ) -> list[Binding]:
+        """What could serve ``need`` of ``owner``, best first: reserved for it, then the user's pin, then in order."""
+        candidates = [
+            (self._entries[name].peripheral, endpoint)
+            for name in self._entries
+            if name in among and name != owner
+            for endpoint in provides[name]
+            if need.accepts(endpoint)
+        ]
+        pin = self.state["pins"].get(need.family)
+        reserved = self.state["reserved"].get(owner, {})
+        return sorted(candidates, key=lambda c: (reserved.get(c[1].family) != c[1].url, c[0].name != pin))
 
-    async def _allocate(self):
-        """Host ports for the bound services, then the links to them. A service keeps its ports across
-        restarts; it gets the preferred one when free and moves only when something else took it."""
-        allocated: dict[str, dict[str, int]] = self.state["ports"]
-        running: set[str] | None = None
-        for name in sorted(self._running_services()):
-            mine = allocated.setdefault(name, {})
-            for port_name, preferred in self.services[name].ports.items():
-                others = {p for s, ports in allocated.items() for n, p in ports.items() if (s, n) != (name, port_name)}
-                port = mine.get(port_name)
-                if port in others:
-                    port = None
-                elif port and _listening(port):
-                    running = await self._running() if running is None else running
-                    port = port if name in running else None  # ours holds it, or something else took it
-                if not port:
-                    port = next(p for p in (preferred, *PORTS) if p not in others and not _listening(p))
-                mine[port_name] = port
-        self._save()
-        for bound in self._bound.values():
-            for family, bindings in bound.items():
-                bound[family] = [
-                    (p, replace(e, url=_render(e.url, self._templates(p))) if p in self.services else e)
-                    for p, e in bindings
-                ]
-        # then the params, which may say what the service itself got, e.g. its adapter: once every URL is known
-        values = {name: self._values(name) for name in self._running_services()}
-        for bound in self._bound.values():
-            for family, bindings in bound.items():
-                bound[family] = [
-                    (p, replace(e, params=_render(e.params, values[p])) if p in values else e) for p, e in bindings
-                ]
+    def _is_free(
+        self, provider: Peripheral, endpoint: Endpoint, owner: str, taken: Mapping[tuple[str, str, str], str]
+    ) -> bool:
+        """Whether ``owner`` may bind ``endpoint``: no one took it, and it isn't reserved for another."""
+        reserved = self.state["reserved"].items()
+        is_kept = any(kept.get(endpoint.family) == endpoint.url and name != owner for name, kept in reserved)
+        return not is_kept and (provider.name, endpoint.family, endpoint.url) not in taken
 
-    async def _running(self) -> set[str]:
-        """Our services whose containers are up."""
-        if not self.is_docker_enabled:
-            return set()
-        process = await asyncio.create_subprocess_exec(
-            "docker", "compose", "-p", "majordom", "ps", "--status", "running", "--services",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-        )  # fmt: skip
-        return set((await process.communicate())[0].decode().split())
+    def _why_waiting(self, entry: _Entry) -> str:
+        """Why a waiting one doesn't start now; empty when it can."""
+        if (contributor := entry.contributor) is not None and not self._is_alive(self._entries[contributor]):
+            return f"comes with {contributor}, which is {self._entries[contributor].state}"
+        if entry.name not in self._wanted:
+            required = {need.family for need in entry.peripheral.needs if need.is_required}
+            reasons = [why for family, why in self._unbound.get(entry.name, {}).items() if family in required]
+            return "; ".join(reasons) or "nothing that runs uses it"
+        if entry.retry_at > monotonic():
+            return entry.failure
+        bound = self._bound[entry.name]
+        required = [n.family for n in entry.peripheral.needs if n.is_required and n.family in bound]
+        pending = dict.fromkeys(p.name for family in required for p, _ in bound[family] if not self._is_serving(p.name))
+        return f"waiting for {', '.join(pending)}" if pending else ""
 
-    def _templates(self, service: str) -> dict[str, Any]:
-        return {"ports": SimpleNamespace(**self.state["ports"].get(service, {}))}
+    def _is_serving(self, name: str) -> bool:
+        entry = self._entries[name]
+        return entry.state == PeripheralState.RUNNING and entry.is_ready
 
-    def _values(self, service: str) -> dict[str, Any]:
-        """What a service's compose and the params it provides render with."""
-        peripherals = _Peripherals(self._peripherals(service) or {})
-        values = {
-            "data": self.data / "services" / service,
-            "peripherals": peripherals,
-            "settings": self.settings(service),
-        }
-        return values | {"context": self.context(), "host": _Host()} | self._templates(service)
+    def _bind_view(self, entry: _Entry, bound: Mapping[str, list[Binding]]):
+        if isinstance(view := entry.peripheral.peripherals, Peripherals):
+            view.bind(_view(entry.peripheral, bound), restart=self.restart)
 
-    def _roots(self, owner: str) -> set[str]:
-        """Every provider ``owner`` depends on, directly or through services."""
-        direct = {p for bindings in self._bound.get(owner, {}).values() for p, _ in bindings}
-        return direct.union(*(self._roots(p) for p in direct if p in self.services))
+    def _start(self, entry: _Entry):
+        entry.state, entry.reason, entry.is_ready = PeripheralState.STARTING, "", False
+        entry.bindings = self._bound[entry.name]
+        self._bind_view(entry, entry.bindings)
+        entry.peripheral.settings = self._settings(entry.peripheral)
+        entry.task = self._spawn(self._run_start(entry))
 
-    def _sources(self) -> dict[tuple[str, str], tuple[Service, Endpoint]]:
-        """Bound endpoints by (provider, url) with the service that sets them up or reads them: their own,
-        or for a pinned one any service providing that kind."""
-        readers = {(e.family, e.dialect): s for s in self.services.values() for e in s.provides}
-        sources = {}
-        for bound in self._bound.values():
-            for provider, endpoint in (binding for bindings in bound.values() for binding in bindings):
-                kind = readers.get((endpoint.family, endpoint.dialect)) if provider == "pinned" else None
-                if service := self.services.get(provider) or kind:
-                    sources[provider, endpoint.url] = service, endpoint
-        return sources
-
-    def _reach(self, endpoints: list[Endpoint]) -> list[str]:
-        """Families a firmware would serve, through services, that some integration asks for."""
-        families: set[str] = set()
-        reached = {e.family for e in endpoints}
-        while reached != families:  # follow services until nothing new is reachable
-            families = reached
-            reached = families.union(
-                *({e.family for e in s.provides} for s in self.services.values() if _satisfied(s.needs, families))
-            )
-        wanted = {need.family for c in self.consumers.values() for need in c.needs}
-        wanted |= {need.family for c in self.consumers.values() for s in c.services for need in s.needs}
-        return sorted(families & wanted)
-
-    async def _apply(self) -> bool:
-        """Run the bound services; True when what runs changed."""
-        services = {}
-        for name in self._running_services():
-            values = self._values(name)
-            values["data"].mkdir(parents=True, exist_ok=True)
-            # no depends_on: everything retries until its links answer, and a dependency would recreate
-            # a service whenever an optional provider (matter-server's border router) comes or goes
-            services[name] = {"restart": "unless-stopped", **_render(self.services[name].compose, values)}
-        compose = json.dumps({"name": "majordom", "services": services}, indent=2)
-        if compose == self._compose:
-            return False
-        (self.data / "compose.json").write_text(compose)
-        if not self.is_docker_enabled:
-            self._compose = compose
-            return True
-        args = ["up", "-d", "--remove-orphans"] if services else ["down"]  # integrations retry while services start
-        process = await asyncio.create_subprocess_exec(
-            "docker", "compose", "-f", str(self.data / "compose.json"), *args,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        )  # fmt: skip
-        output = (await process.communicate())[0].decode(errors="replace")
-        if process.returncode:
-            log.error(f"docker compose {args[0]} failed:\n{output[-3000:]}")
+    async def _run_start(self, entry: _Entry):
+        peripheral = entry.peripheral
+        try:
+            with self._driving():
+                await peripheral.start()
+        except Exception as error:
+            log.error(f"{peripheral.name} failed to start: {error}", exc_info=error)
+            async with self._lock:
+                entry.task = None
+                if entry.state == PeripheralState.STARTING:
+                    self._fail(entry, str(error) or type(error).__name__)
         else:
-            self._compose = compose  # only what actually runs; a failure is retried on the next refresh
-        return True
+            async with self._lock:
+                entry.task = None
+                if entry.state == PeripheralState.STARTING:
+                    entry.state, entry.attempts = PeripheralState.RUNNING, 0
+                    entry.is_ready = entry.is_ready or peripheral.is_ready_on_start
+        await self.refresh()
+
+    def _fail(self, entry: _Entry, reason: str):
+        """Count a failure: wait to try again, or give up once the retries are spent."""
+        entry.attempts += 1
+        if entry.attempts > len(RETRY_DELAYS):
+            entry.state, entry.reason, entry.attempts = PeripheralState.FAILED, reason, 0
+            return
+        delay = RETRY_DELAYS[entry.attempts - 1]
+        entry.state, entry.retry_at = PeripheralState.WAITING, monotonic() + delay
+        entry.reason = entry.failure = f"{reason}; trying again in {delay} s"
+
+    async def _stop(self, entry: _Entry, status: PeripheralStatus):
+        """Stop it if it runs or starts, and leave it in ``status``."""
+        if entry.state == PeripheralState.DISABLED and status.state != PeripheralState.DISABLED:
+            return  # only enabling ends it
+        is_started = entry.is_started
+        if entry.task:
+            entry.task.cancel()
+            await asyncio.gather(entry.task, return_exceptions=True)
+            entry.task = None
+        if is_started:
+            try:
+                async with asyncio.timeout(STOP_TIMEOUT):
+                    await entry.peripheral.stop()
+            except Exception as error:
+                log.error(f"{entry.name} failed to stop cleanly: {error}", exc_info=error)
+        entry.state, entry.reason, entry.is_ready, entry.bindings = status.state, status.reason, False, {}
+
+    async def _deliver(self, entry: _Entry, bound: dict[str, list[Binding]]):
+        """Tell one that runs what moved; restart it unless it handles every change."""
+        before, entry.bindings = entry.bindings, bound
+        self._bind_view(entry, bound)
+        was, now = _view(entry.peripheral, before), _view(entry.peripheral, bound)
+        for family in sorted(was.keys() | now.keys()):
+            if _key({family: before.get(family, [])}) != _key({family: bound.get(family, [])}):
+                change = PeripheralChange(family, was.get(family), now.get(family))
+                if not await self._ask(entry, entry.peripheral.needed_peripheral_did_change(change)):
+                    return
+
+    async def _ask(self, entry: _Entry, hook: Awaitable[bool]) -> bool:
+        """Whether it handled a change in place; if not it restarts, and a hook that raised counts as a failure."""
+        try:
+            if await hook:
+                return True
+            await self._stop(entry, _waiting())
+        except Exception as error:
+            log.error(f"{entry.name} failed to take a change: {error}", exc_info=error)
+            await self._stop(entry, _waiting())
+            self._fail(entry, str(error) or type(error).__name__)
+        return False
+
+    def _report(self):
+        for entry in self._entries.values():
+            if entry.reported != (status := entry.status):
+                entry.reported = status
+                if self.output:
+                    self.output.peripheral_did_change_status(entry.peripheral, status)
+
+    def _schedule_retry(self):
+        if self._timer:
+            self._timer.cancel()
+        now = monotonic()
+        waiting = [e for e in self._entries.values() if e.state == PeripheralState.WAITING]
+        retries = [e.retry_at for e in waiting if e.retry_at > now]
+        if retries and self._is_running:
+            delay = min(retries) - now
+            self._timer = asyncio.get_running_loop().call_later(delay, lambda: self._spawn(self.refresh()))
+
+    def _learned(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+        if self.output:
+            self.output.peripheral_did_learn(peripheral, facts)
 
     def _save(self):
         self.data.mkdir(parents=True, exist_ok=True)
         (self.data / "state.json").write_text(json.dumps(self.state, indent=2))
 
-    def _spawn(self, awaitable: Awaitable[None]):
+    def _spawn(self, awaitable: Awaitable[Any]) -> asyncio.Task:
         task = asyncio.ensure_future(awaitable)
-        self._notifying.add(task)
-        task.add_done_callback(self._notifying.discard)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
 
-def _hint(offered_by: Mapping[tuple[str, str], Endpoint], taker: str, family: str) -> str:
-    """What to need instead when what took the endpoint offers the same family itself: the router for raw BLE."""
-    if endpoint := offered_by.get((taker, family)):
-        return f' — use Need("{family}", ["{endpoint.dialect}"])'
-    return ""
+@dataclass
+class _Reasons:
+    """Why each need of every peripheral alive isn't bound, from the final binding."""
+
+    runtime: Runtime
+    alive: set[str]
+    wanted: set[str]
+    provides: Mapping[str, list[Endpoint]]
+    taken: Mapping[tuple[str, str, str], str]
+    reasons: dict[str, dict[str, str]] = field(default_factory=dict)
+
+    def all(self) -> dict[str, dict[str, str]]:
+        for name in self.runtime._entries:
+            if name in self.alive:
+                self.of(name)
+        return {name: reasons for name, reasons in self.reasons.items() if reasons}
+
+    def of(self, name: str) -> dict[str, str]:
+        if name in self.reasons:
+            return self.reasons[name]
+        self.reasons[name] = reasons = {}  # also guards against cycles
+        bound = self.runtime._bound.get(name, {})
+        for need in self.runtime._entries[name].peripheral.needs:
+            if need.family not in bound and (why := self.why(name, need)):
+                reasons[need.family] = why
+        return reasons
+
+    def why(self, owner: str, need: Need) -> str | None:
+        """Why ``need`` of ``owner`` can't be bound; None when it could be, had the owner a reason to run."""
+        rejected: list[str] = []
+        entries, reserved = self.runtime._entries, self.runtime.state["reserved"]
+        for provider, endpoint in self.runtime._candidates(owner, need, set(entries), self.provides):
+            keeper = next((n for n, kept in reserved.items() if kept.get(need.family) == endpoint.url), owner)
+            if keeper != owner:
+                rejected.append(f"{endpoint.url or endpoint.dialect} is reserved for {keeper}")
+            elif (taker := self.taken.get((provider.name, endpoint.family, endpoint.url))) not in (None, owner):
+                rejected.append(f"every provider taken by {taker}" + self.hint(taker, need.family))
+            elif provider.name not in self.alive:
+                rejected.append(f"{provider.name} is {entries[provider.name].state}")
+            elif provider.name not in self.wanted and (why := "; ".join(self.of(provider.name).values())):
+                rejected.append(f"{provider.name} can't run ({why})")
+            else:
+                return None  # free, or on demand and idle only because the owner doesn't run
+        wanted = f"{need.family}/{'|'.join(need.dialects) or '*'}"
+        return f"need {wanted}: {'; '.join(dict.fromkeys(rejected)) or 'nothing offers it'}"
+
+    def hint(self, taker: str, family: str) -> str:
+        """What to need instead when what took the endpoint offers the same family itself: the router for raw BLE."""
+        endpoint = next((e for e in self.provides.get(taker, []) if e.family == family), None)
+        return f' — use Need("{family}", ["{endpoint.dialect}"])' if endpoint else ""
+
+
+def _waiting(reason: str = "") -> PeripheralStatus:
+    return PeripheralStatus(PeripheralState.WAITING, reason)
+
+
+def _view(peripheral: Peripheral, bound: Mapping[str, list[Binding]]) -> dict[str, Bound]:
+    many = {need.family for need in peripheral.needs if need.is_many}
+    return {family: [e for _, e in b] if family in many else b[0][1] for family, b in bound.items()}
+
+
+def _key(bound: Mapping[str, list[Binding]]) -> dict[str, list[tuple[Peripheral, Endpoint, Any]]]:
+    """What tells two bindings apart: the provider, the endpoint and the very instance it carries."""
+    return {family: [(p, e, id(e.instance)) for p, e in bindings] for family, bindings in bound.items()}
 
 
 def _satisfied(needs: Sequence[Need], families: set[str]) -> bool:
     return all(need.family in families for need in needs if need.is_required)
 
 
-def fw_endpoints(driver, firmware: str | None, path: str, params: Mapping[str, Any] = {}) -> list[Endpoint]:
-    endpoints = driver.firmwares.get(firmware, []) if driver else []
-    return [replace(e, url=e.url.format(device=path), params={**e.params, **params}) for e in endpoints]
-
-
-def _nodes(paths: Mapping[str, str]) -> dict[str, str]:
-    """The device node behind each path. After a USB reset a stick keeps its by-id name but may come back
-    on another tty; a container keeps the node it was created with, which may then be another device."""
-    return {radio_id: os.path.realpath(path) for radio_id, path in paths.items()}
-
-
-def _usb_id(path: str) -> tuple[str, str] | None:
-    """USB vendor and product id of the device behind a serial port; None for a UART."""
-    device = Path("/sys/class/tty", Path(os.path.realpath(path)).name, "device").resolve()
-    for parent in (device, *device.parents):
-        with contextlib.suppress(OSError):
-            return (parent / "idVendor").read_text().strip(), (parent / "idProduct").read_text().strip()
-    return None
-
-
-def _holder(path: str, is_opening_allowed: bool = False) -> str | None:
-    """The other program that has a serial port open: one whose open files we may read, or with
-    ``is_opening_allowed`` (it opens the port) one that locked it, whoever runs it. Our own containers see the port
-    under another name (/dev/ttyRCP), so they don't count."""
-    names = {path, os.path.realpath(path)}
-    for fd in glob("/proc/[0-9]*/fd/*"):
-        with contextlib.suppress(OSError):
-            if (pid := fd.split("/")[2]) != str(os.getpid()) and os.readlink(fd) in names:
-                return Path(f"/proc/{pid}/comm").read_text().strip()
-    if not is_opening_allowed:
-        return None
-    try:
-        port = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-    except OSError as error:
-        return "another program" if error.errno == errno.EBUSY else None  # EBUSY: opened exclusively (TIOCEXCL)
-    try:
-        fcntl.flock(port, fcntl.LOCK_EX | fcntl.LOCK_NB)  # pyserial's and node-serialport's exclusive lock
-    except OSError:
-        return "another program"
-    finally:
-        os.close(port)
-    return None
-
-
-def _listening(port: int) -> bool:
-    """Whether something on the host listens on a TCP port (all services run on the host network)."""
-    with socket.socket() as probe:
-        probe.settimeout(0.5)
-        if probe.connect_ex(("127.0.0.1", port)) == 0:  # also one on loopback only, which BSDs let a bind pass
-            return True
-    with socket.socket() as probe:
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # a closed connection in TIME_WAIT is no one's
-        try:
-            probe.bind(("", port))
-        except OSError:
-            return True
-    return False
-
-
-def _host_endpoints() -> list[Endpoint]:
-    """IP, and every Bluetooth adapter as its own single-use ``ble/bluez`` endpoint with its ``index`` (the router takes
-    them all, unless one is reserved); off Linux, bleak's default adapter on the OS's own stack."""
-    adapters = sorted(Path(p).name for p in glob("/sys/class/bluetooth/hci*") if ":" not in Path(p).name)
-    if sys.platform != "linux":
-        adapters = [""]
-    ble = [Endpoint("ble", "bluez", name, params={"index": name.removeprefix("hci")}) for name in adapters]
-    return [Endpoint("ip", is_shared=True), *ble]
-
-
-class _Peripherals(dict):
-    """Template access ``{peripherals.thread.url}``; an unbound optional need, or a param it lacks, renders empty. An
-    ``is_many`` need renders its first endpoint."""
-
-    def __getattr__(self, family: str) -> Endpoint:
-        bound: Bound = self.get(family, Endpoint(""))
-        endpoint = (bound or [Endpoint("")])[0] if isinstance(bound, list) else bound
-        return replace(endpoint, params=_Params(endpoint.params))
-
-
-class _Params(dict):
-    def __missing__(self, name: str) -> None:
-        return None
-
-
-class _Host:
-    uid, gid = os.getuid(), os.getgid()  # for services that should write their data as the hub's user
-
-    @property
-    def interface(self) -> str:
-        """The backbone interface: a wired one with a link (Wi-Fi drops the multicast a Thread border
-        router relies on), else the one of the default route."""
-        for wired in sorted(glob("/sys/class/net/e*/carrier")):
-            with contextlib.suppress(OSError):
-                if Path(wired).read_text().strip() == "1":
-                    return Path(wired).parent.name
-        with contextlib.suppress(OSError):
-            for line in Path("/proc/net/route").read_text().splitlines()[1:]:
-                name, destination, *_ = line.split()
-                if destination == "00000000":
-                    return name
-        return "eth0"
-
-
-class _Formatter(string.Formatter):
-    """None renders empty; a flag with a format spec renders the spec when set: ``{x:&uart-flow-control}``; a ``!`` spec
-    renders what follows when the value is empty, e.g. a proxy without an adapter: ``{peripherals.ble.url:!true}``, a
-    ``?`` spec when it isn't, e.g. a backend only with one: ``{peripherals.ble.url:?dbus}``."""
-
-    def format_field(self, value: Any, format_spec: str) -> str:
-        if format_spec.startswith("!"):
-            return "" if value else format_spec[1:]
-        if format_spec.startswith("?"):
-            return format_spec[1:] if value else ""
-        if isinstance(value, bool) and format_spec:
-            return format_spec if value else ""
-        return "" if value is None else super().format_field(value, format_spec)
-
-
-def _render(value: Any, values: Mapping[str, Any]) -> Any:
-    if isinstance(value, str):
-        return _Formatter().vformat(value, (), values)
-    if isinstance(value, Mapping):
-        return {k: _render(v, values) for k, v in value.items()}
-    if isinstance(value, list | tuple):  # an item rendering empty is left out: a volume only with an adapter
-        return [item for v in value if (item := _render(v, values)) != ""]
-    return value
-
-
-__all__ = ["Runtime", "Radio", "PlatformSettings", "Consumer"]
+__all__ = [
+    "Runtime",
+    "RuntimeOutput",
+    "PeripheralState",
+    "PeripheralStatus",
+    "DisabledStore",
+    "MemoryDisabledStore",
+    "RETRY_DELAYS",
+]
