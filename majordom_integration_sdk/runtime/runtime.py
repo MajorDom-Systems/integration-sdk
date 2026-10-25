@@ -32,6 +32,8 @@ log = logging.getLogger(__name__)
 
 RETRY_DELAYS = (5, 30, 120)  # seconds before each new start of a peripheral that failed, then it is given up on
 STABLE_RUN = 300  # seconds of running that clear the failures in a row
+START_TIMEOUT = 600  # seconds a start may take to be ready, pulling a container's image included, else it failed
+HOOK_TIMEOUT = 30  # seconds a hook may take: it runs while the runtime waits
 STOP_TIMEOUT = 15  # a stop stuck on a vanished radio (zigpy awaiting its dead I/O thread) is abandoned
 _PASSES = 10  # bound on the passes one change takes to settle: each may change what the next one binds
 
@@ -614,21 +616,26 @@ class Runtime:
         entry.task = self._spawn(self._run_start(entry))
 
     async def _run_start(self, entry: _Entry):
-        peripheral = entry.peripheral
+        peripheral, failure = entry.peripheral, ""
         try:
-            await peripheral.start()
+            await _within(START_TIMEOUT, peripheral.start(), f"didn't start within {START_TIMEOUT} s")
+        except asyncio.CancelledError as error:
+            if (task := asyncio.current_task()) and task.cancelling():  # stopped
+                raise
+            failure = _failure(error)  # raised from inside, e.g. by a task it awaited
         except Exception as error:
             log.error(f"{peripheral.name} failed to start: {error}", exc_info=error)
-            async with self._locked():
-                entry.task = None
-                if entry.state == PeripheralState.STARTING:
-                    self._fail(entry, str(error) or type(error).__name__)
-        else:
-            async with self._locked():
-                entry.task = None
-                if entry.state == PeripheralState.STARTING:
-                    entry.state, entry.running_since = PeripheralState.RUNNING, monotonic()
-                    entry.is_ready = entry.is_ready or peripheral.is_ready_on_start
+            failure = _failure(error)
+        async with self._locked():
+            if entry.task is not asyncio.current_task():  # stopped, though it went on
+                return
+            entry.task = None
+            if failure:
+                await self._stop(entry, _waiting())  # it releases what it took before it failed
+                self._fail(entry, failure)
+            else:
+                entry.state, entry.running_since = PeripheralState.RUNNING, monotonic()
+                entry.is_ready = entry.is_ready or peripheral.is_ready_on_start
         await self.refresh()
 
     def _fail(self, entry: _Entry, reason: str):
@@ -646,17 +653,17 @@ class Runtime:
         if entry.state == PeripheralState.DISABLED and status.state != PeripheralState.DISABLED:
             return  # only enabling ends it
         is_started = entry.is_started
-        if entry.task:
-            entry.task.cancel()
-            await asyncio.gather(entry.task, return_exceptions=True)
+        if task := entry.task:
             entry.task = None
+            task.cancel()
+            if not (await asyncio.wait({task}, timeout=STOP_TIMEOUT))[0]:
+                log.error(f"{entry.name} goes on starting though stopped: left behind")
         if entry.running_since is not None and monotonic() - entry.running_since >= STABLE_RUN:
             entry.attempts = 0
         entry.running_since = None
         if is_started:
             try:
-                async with asyncio.timeout(STOP_TIMEOUT):
-                    await entry.peripheral.stop()
+                await _within(STOP_TIMEOUT, entry.peripheral.stop(), f"didn't stop within {STOP_TIMEOUT} s")
             except Exception as error:
                 log.error(f"{entry.name} failed to stop cleanly: {error}", exc_info=error)
         entry.state, entry.reason, entry.is_ready, entry.bindings = status.state, status.reason, False, {}
@@ -674,14 +681,16 @@ class Runtime:
 
     async def _ask(self, entry: _Entry, hook: Awaitable[bool]) -> bool:
         """Whether it handled a change in place; if not it restarts, and a hook that raised counts as a failure."""
+        failure = ""
         try:
-            if await hook:
+            if await _within(HOOK_TIMEOUT, hook, f"didn't take the change within {HOOK_TIMEOUT} s"):
                 return True
-            await self._stop(entry, _waiting())
         except Exception as error:
             log.error(f"{entry.name} failed to take a change: {error}", exc_info=error)
-            await self._stop(entry, _waiting())
-            self._fail(entry, str(error) or type(error).__name__)
+            failure = _failure(error)
+        await self._stop(entry, _waiting())
+        if failure:
+            self._fail(entry, failure)
         return False
 
     def _report(self):
@@ -768,6 +777,22 @@ class _Reasons:
         """What to need instead when what took the endpoint offers the same family itself: the router for raw BLE."""
         endpoint = next((e for e in self.provides.get(taker, []) if e.family == family), None)
         return f' — use Need("{family}", ["{endpoint.dialect}"])' if endpoint else ""
+
+
+async def _within[T](seconds: float, call: Awaitable[T], late: str) -> T:
+    """What ``call`` returns, or TimeoutError(``late``) once it took ``seconds``."""
+    timeout = asyncio.timeout(seconds)
+    try:
+        async with timeout:
+            return await call
+    except TimeoutError:
+        if timeout.expired():
+            raise TimeoutError(late) from None
+        raise
+
+
+def _failure(error: BaseException) -> str:
+    return str(error) or type(error).__name__
 
 
 def _read(peripheral: Peripheral, name: str) -> list[Any]:

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from support import changed, run, settle, state, until
 
 from majordom_integration_sdk import Context, Endpoint, Need, PeripheralChange
-from majordom_integration_sdk.runtime import MemoryDisabledStore, PeripheralStatus
+from majordom_integration_sdk.runtime import MemoryDisabledStore, PeripheralStatus, Runtime
 from majordom_integration_sdk.runtime import PeripheralState as S
 from majordom_integration_sdk.runtime import runtime as module
 from majordom_integration_sdk.testing import FakePeripheral, RecordingRuntimeOutput
@@ -111,6 +111,21 @@ async def test_an_optional_need_lost_or_back_is_handed_over(tmp_path):
     assert matter.calls == ["start"]
 
 
+async def test_a_hook_that_hangs_times_out(tmp_path, monkeypatch):
+    monkeypatch.setattr(module, "HOOK_TIMEOUT", 0.01)
+
+    class Hangs(FakePeripheral):
+        async def needed_peripheral_did_change(self, change):
+            await asyncio.Event().wait()
+
+    stick, integration = radio(ZIGBEE), Hangs("zigbee", [Need("zigbee")])
+    runtime = await run(tmp_path, stick, integration)
+    stick.provided = [MOVED]
+    await changed(runtime, stick)
+    expected = PeripheralStatus(S.WAITING, "didn't take the change within 0.01 s; trying again in 0.01 s")
+    assert runtime.status(integration) == expected
+
+
 async def test_a_hook_that_raises_restarts_it_through_the_retries(tmp_path):
     stick, integration = radio(ZIGBEE), zigbee(answer=RuntimeError("confused"))
     runtime = await run(tmp_path, stick, integration)
@@ -161,15 +176,67 @@ async def test_a_start_that_raises_is_tried_again_then_given_up_on(tmp_path):
 
     await until(runtime, lambda: state(runtime, broken) == S.FAILED)
     assert runtime.status(broken) == PeripheralStatus(S.FAILED, "broken broke")
-    assert broken.calls == ["start"] * 4  # the first, then one per retry delay
+    assert broken.calls == ["start", "stop"] * 4  # the first, then one per retry delay; each releases what it holds
     assert output.last("broken") == PeripheralStatus(S.FAILED, "broken broke")
+
+
+async def test_a_start_that_hangs_times_out_and_is_tried_again(tmp_path, monkeypatch):
+    monkeypatch.setattr(module, "START_TIMEOUT", 0.01)
+
+    class Hangs(FakePeripheral):
+        async def start(self):
+            await super().start()
+            if len(self.calls) == 1:
+                await asyncio.Event().wait()
+
+    hangs = Hangs("hangs")
+    runtime = await run(tmp_path, hangs)
+    assert runtime.status(hangs) == PeripheralStatus(S.WAITING, "didn't start within 0.01 s; trying again in 0.01 s")
+    await until(runtime, lambda: state(runtime, hangs) == S.RUNNING)
+    assert hangs.calls == ["start", "stop", "start"]
+
+
+async def test_a_start_cancelled_from_inside_is_a_failure(tmp_path):
+    class Cancelled(FakePeripheral):
+        async def start(self):
+            await super().start()
+            if len(self.calls) == 1:
+                raise asyncio.CancelledError  # e.g. a task it awaited was cancelled
+
+    cancelled = Cancelled("cancelled")
+    runtime = await run(tmp_path, cancelled)
+    assert runtime.status(cancelled) == PeripheralStatus(S.WAITING, "CancelledError; trying again in 0.01 s")
+    await until(runtime, lambda: state(runtime, cancelled) == S.RUNNING)
+
+
+async def test_a_start_that_ignores_being_stopped_is_left_behind(tmp_path, monkeypatch):
+    monkeypatch.setattr(module, "STOP_TIMEOUT", 0.01)
+    started = asyncio.Event()
+
+    class Stubborn(FakePeripheral):
+        async def start(self):
+            await super().start()
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await asyncio.sleep(0.05)  # goes on regardless
+
+    stubborn = Stubborn("stubborn")
+    runtime = Runtime(tmp_path / "data", [stubborn])
+    await runtime.start()
+    await started.wait()
+    await asyncio.wait_for(runtime.disable(stubborn), 1)
+    assert state(runtime, stubborn) == S.DISABLED
+    await settle(runtime)
+    assert state(runtime, stubborn) == S.DISABLED
 
 
 async def test_a_start_that_raises_once_runs_on_the_retry(tmp_path):
     flaky = FakePeripheral("flaky", failures=1)
     runtime = await run(tmp_path, flaky)
     await until(runtime, lambda: state(runtime, flaky) == S.RUNNING)
-    assert flaky.calls == ["start", "start"]
+    assert flaky.calls == ["start", "stop", "start"]
 
 
 async def test_a_failed_one_isnt_revived_by_a_replug_only_by_the_user(tmp_path):
@@ -182,7 +249,7 @@ async def test_a_failed_one_isnt_revived_by_a_replug_only_by_the_user(tmp_path):
     stick.provided = [ZIGBEE]
     await changed(runtime, stick)
     assert state(runtime, integration) == S.FAILED
-    assert integration.calls == ["start"] * 4
+    assert integration.calls == ["start", "stop"] * 4
 
     integration.failures = 0
     await runtime.restart(integration)
