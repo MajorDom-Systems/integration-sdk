@@ -124,6 +124,7 @@ class _Entry:
     told_failure: str = ""  # while starting
     is_stopping_itself: bool = False  # told while starting
     context_before: Context | None = None  # what the context was when it changed while starting: told once it runs
+    settings_before: BaseModel | None = None  # the same of its settings
     task: asyncio.Task | None = None  # its start
     reported: PeripheralStatus | None = None
 
@@ -336,8 +337,8 @@ class Runtime:
         await self._act(apply)
 
     async def update_settings[S: BaseModel](self, peripheral: Peripheral[S], values: Mapping[str, Any]) -> S:
-        """Validate and keep new values of its ``Settings``; one that runs hears it (`settings_did_change`), a failed
-        one or one that stopped by itself tries again."""
+        """Validate and keep new values of its ``Settings``; one that runs hears it (`settings_did_change`), one still
+        starting once it runs, a failed one or one that stopped by itself tries again."""
         entry = self._entry(peripheral)
         settings = peripheral.Settings.model_validate(self.state["settings"].get(entry.key, {}) | dict(values))
         before = getattr(peripheral, "settings", settings)  # none yet when the ones kept didn't validate
@@ -351,8 +352,8 @@ class Runtime:
                 self._revive(entry)
             elif entry.state == PeripheralState.RUNNING:
                 await self._ask(entry, peripheral.settings_did_change(before))
-            elif entry.state == PeripheralState.STARTING:  # it may have read the ones before: start it anew
-                await self._stop(entry, _waiting())
+            elif entry.state == PeripheralState.STARTING and entry.settings_before is None:  # it may have read them
+                entry.settings_before = before
 
         await self._act(apply)
         return peripheral.settings
@@ -679,7 +680,7 @@ class Runtime:
     def _start(self, entry: _Entry):
         entry.state, entry.kind, entry.detail = PeripheralState.STARTING, None, ""
         entry.bindings, entry.told_failure, entry.is_stopping_itself = self._handed(entry), "", False
-        entry.context_before = None
+        entry.context_before = entry.settings_before = None
         self._bind_view(entry, entry.bindings)
         entry.task = self._spawn(self._run_start(entry))
 
@@ -706,10 +707,17 @@ class Runtime:
                 await self._stop_itself(entry)
             else:
                 entry.state, entry.running_since = PeripheralState.RUNNING, monotonic()
-                if (before := entry.context_before) is not None:
-                    entry.context_before = None
-                    await self._ask(entry, peripheral.context_did_change(before))
+                await self._tell_missed(entry)
         await self.refresh()
+
+    async def _tell_missed(self, entry: _Entry):
+        """Tell one that just started what changed while it started, from what it may have read."""
+        context, settings = entry.context_before, entry.settings_before
+        entry.context_before = entry.settings_before = None
+        if context is not None and not await self._ask(entry, entry.peripheral.context_did_change(context)):
+            return  # restarted: it reads the settings anew
+        if settings is not None:
+            await self._ask(entry, entry.peripheral.settings_did_change(settings))
 
     async def _stop_itself(self, entry: _Entry):
         stopped_with = _identity(entry.bindings)

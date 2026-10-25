@@ -657,15 +657,14 @@ async def test_a_start_cut_short_by_disabling_it_stays_disabled(tmp_path):
     assert (state(runtime, slow), slow.calls) == (S.DISABLED, ["start", "stop"])
 
 
-async def test_a_start_cut_short_by_a_restart_or_new_settings_starts_anew(tmp_path):
-    slow = Gated("slow", settings=Channel)
+async def test_a_start_cut_short_by_a_restart_starts_anew(tmp_path):
+    slow = Gated("slow")
     runtime = await starting(tmp_path, slow)
     await runtime.restart(slow)
     await until(runtime, lambda: slow.calls == ["start", "stop", "start"], settled=False)
-    await runtime.update_settings(slow, {"channel": 15})
     slow.gate.set()
     await settle(runtime)
-    assert (state(runtime, slow), slow.calls) == (S.RUNNING, ["start", "stop", "start", "stop", "start"])
+    assert (state(runtime, slow), slow.calls) == (S.RUNNING, ["start", "stop", "start"])
 
 
 async def test_a_start_cut_short_by_losing_its_need_waits_for_it(tmp_path):
@@ -758,6 +757,23 @@ async def test_a_changed_context_reaches_one_still_starting_once_it_runs(tmp_pat
     await settle(runtime)
     assert handles.changes == restarts.changes == [("context", Context(region="Europe"))]  # once, since what it read
     assert (handles.calls, restarts.calls) == (["start"], ["start", "stop", "start"])
+    assert state(runtime, handles) == state(runtime, restarts) == S.RUNNING
+
+
+async def test_new_settings_reach_one_still_starting_once_it_runs(tmp_path):
+    handles, restarts = Gated("handles", answer=True, settings=Channel), Gated("restarts", settings=Channel)
+    runtime = await run(tmp_path, handles, restarts, settled=False)
+    await until(runtime, lambda: state(runtime, handles) == state(runtime, restarts) == S.STARTING, settled=False)
+
+    for slow in (handles, restarts):
+        await runtime.update_settings(slow, {"channel": 15})  # it may have read the ones before
+        await runtime.update_settings(slow, {"channel": 20})
+        slow.gate.set()
+    assert handles.changes == restarts.changes == []
+    await settle(runtime)
+    assert handles.changes == restarts.changes == [("settings", Channel())]  # once, since what it read
+    assert (handles.calls, restarts.calls) == (["start"], ["start", "stop", "start"])
+    assert handles.settings == restarts.settings == Channel(channel=20)
     assert state(runtime, handles) == state(runtime, restarts) == S.RUNNING
 
 
