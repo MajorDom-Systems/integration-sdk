@@ -182,10 +182,10 @@ async def test_a_start_that_raises_is_tried_again_then_given_up_on(tmp_path):
     assert output.last("broken") == PeripheralStatus(S.FAILED, K.GAVE_UP, "broken broke")
 
 
-async def test_a_start_that_hangs_times_out_and_is_tried_again(tmp_path, monkeypatch):
-    monkeypatch.setattr(module, "START_TIMEOUT", 0.01)
-
+async def test_a_start_that_hangs_times_out_and_is_tried_again(tmp_path):
     class Hangs(FakePeripheral):
+        start_timeout = 0.01
+
         async def start(self):
             await super().start()
             if len(self.calls) == 1:

@@ -13,6 +13,8 @@ from majordom_integration_sdk.peripherals.need import Need
 if TYPE_CHECKING:
     from majordom_integration_sdk.controller.platform import Context
 
+START_TIMEOUT = 600  # seconds a start may take to serve by default, else it failed
+
 
 class PeripheralOutput(Protocol):
     """What a peripheral tells whatever runs it, as its ``runtime``, delegate style like `ControllerOutput`: what
@@ -117,6 +119,7 @@ class Peripheral(Protocol):
     contributor: Peripheral | None = None  # what brought it along
     needs: Sequence[Need] = ()
     is_on_demand: bool = False  # runs only while something that runs binds it: containers, in-process providers
+    start_timeout: float = START_TIMEOUT
     Settings: Any = None  # Any: ty forbids a subclass to narrow a typed one (to its nested Settings)
     settings: Any = None
     runtime: PeripheralOutput = _NoRuntime()  # what runs it
@@ -137,7 +140,7 @@ class Peripheral(Protocol):
 
     async def start(self):
         """Set up what it serves, and return once it serves: what needs it starts then. Raising, or taking longer than
-        the runtime's ``START_TIMEOUT``, has the runtime stop it, try again later (``RETRY_DELAYS``), then give up."""
+        its ``start_timeout``, has the runtime stop it, try again later (``RETRY_DELAYS``), then give up."""
         return
 
     async def stop(self):

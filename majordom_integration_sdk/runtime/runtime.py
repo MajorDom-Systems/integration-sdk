@@ -30,7 +30,6 @@ log = logging.getLogger(__name__)
 
 RETRY_DELAYS = (5, 30, 120)  # seconds before each new start of a peripheral that failed, then it is given up on
 STABLE_RUN = 300  # seconds of running that clear the failures in a row
-START_TIMEOUT = 600  # seconds a start may take to be ready, pulling a container's image included, else it failed
 HOOK_TIMEOUT = 30  # seconds a hook may take: it runs while the runtime waits
 STOP_TIMEOUT = 15  # a stop stuck on a vanished radio (zigpy awaiting its dead I/O thread) is abandoned
 _PASSES = 10  # bound on the passes one change takes to settle: each may change what the next one binds
@@ -674,8 +673,9 @@ class Runtime:
 
     async def _run_start(self, entry: _Entry):
         peripheral, failure = entry.peripheral, ""
+        timeout = peripheral.start_timeout
         try:
-            await _within(START_TIMEOUT, peripheral.start(), f"didn't start within {START_TIMEOUT} s")
+            await _within(timeout, peripheral.start(), f"didn't start within {timeout} s")
         except asyncio.CancelledError as error:
             if (task := asyncio.current_task()) and task.cancelling():  # stopped
                 raise

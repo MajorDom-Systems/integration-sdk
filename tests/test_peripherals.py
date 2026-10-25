@@ -15,6 +15,7 @@ from majordom_integration_sdk import (
     Service,
     UsbDriver,
 )
+from majordom_integration_sdk.peripherals.peripheral import START_TIMEOUT
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter
 from majordom_integration_sdk.testing import build_test_platform
 
@@ -36,7 +37,7 @@ async def test_a_peripheral_needs_provides_and_is_bound_nothing_by_default():
     assert (host.needs, host.provides, host.peripherals.bound) == ((), [Endpoint("ip", is_shared=True)], {})
     with pytest.raises(TypeError):
         cast(Any, host.peripherals.bound)["ip"] = Endpoint("ip")  # shared by every peripheral until bound: read-only
-    assert not host.is_on_demand
+    assert not host.is_on_demand and host.start_timeout == START_TIMEOUT
     assert host.Settings is None and host.settings is None
     await host.start()
     await host.stop()
@@ -82,7 +83,7 @@ SERVER = Service("server", compose={}, provides=[Endpoint("matter", "matter-serv
 
 
 async def test_a_service_runs_on_demand_and_hooks_in_doing_nothing():
-    assert SERVER.is_on_demand
+    assert SERVER.is_on_demand and SERVER.start_timeout == 30 * 60  # long enough to pull its image first
     assert SERVER.ports == {} and SERVER.Settings is None
     assert await SERVER.provision(Endpoint("matter", "matter-server", "ws://127.0.0.1:5580")) is None
     assert await SERVER.is_healthy()

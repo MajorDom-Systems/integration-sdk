@@ -60,6 +60,7 @@ class Service(Peripheral):
     """
 
     is_on_demand = True
+    start_timeout = 30 * 60  # its first start pulls its image
 
     def __init__(
         self,

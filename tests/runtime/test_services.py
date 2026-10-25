@@ -403,10 +403,10 @@ async def test_a_container_is_ready_once_compose_runs_it_and_its_ports_answer(tm
     await until(runtime, lambda: state(runtime, app) == PeripheralState.RUNNING)
 
 
-async def test_a_container_that_never_answers_fails_its_start(tmp_path, docker, monkeypatch):
-    monkeypatch.setattr("majordom_integration_sdk.runtime.runtime.START_TIMEOUT", 0.05)
+async def test_a_container_that_never_answers_fails_its_start(tmp_path, docker):
     docker.is_answering = False
     app, server = matter()
+    server.start_timeout = 0.05
     runtime = await run(tmp_path, Compose(), host(), server, app)
     await until(runtime, lambda: state(runtime, server) == PeripheralState.FAILED)
     assert runtime.status(server) == PeripheralStatus(PeripheralState.FAILED, K.GAVE_UP, "didn't start within 0.05 s")
