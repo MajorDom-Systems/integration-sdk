@@ -9,7 +9,7 @@ import fcntl
 import logging
 import os
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from glob import glob
 from pathlib import Path
 from typing import Any, Literal
@@ -144,7 +144,7 @@ class UsbScanner(Peripheral):
     def __init__(self, drivers: Sequence[UsbDriver] = DEFAULT_USB_DRIVERS):
         self.drivers = list(drivers)
         self._peripherals = Peripherals()
-        self._watcher: asyncio.Task | None = None
+        self._tasks: set[asyncio.Task] = set()  # watching the sticks, and asking new drivers about them
 
     @property
     def peripherals(self) -> Peripherals:
@@ -156,17 +156,23 @@ class UsbScanner(Peripheral):
 
     async def start(self):
         await self._scan()
-        self._watcher = asyncio.create_task(self._watch(), name="usb.watch")
+        self._spawn(self._watch())
 
     async def stop(self):
-        if self._watcher:
-            self._watcher.cancel()
+        for task in self._tasks:
+            task.cancel()
         self.peripherals.clear()
 
     async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:
-        """An integration brought a driver along: it may know the sticks no other driver did."""
-        await self._scan()
+        """An integration brought a driver along: it may know the sticks no other driver did. Asked in the background,
+        as a probe may take long."""
+        self._spawn(self._rescan())
         return True
+
+    def _spawn(self, coroutine: Coroutine[Any, Any, Any]):
+        task = asyncio.create_task(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     def _drivers(self) -> list[UsbDriver]:
         return [*self.drivers, *(endpoint.instance for endpoint in self.peripherals.endpoints(USB_DRIVER))]
@@ -197,11 +203,14 @@ class UsbScanner(Peripheral):
             is_moved = found != {radio.name: radio.node for radio in self.radios}
             is_let_go = any(r.held_by and not _holder(r.path, is_opening_allowed=False) for r in self.radios)
             if is_moved or is_let_go:
-                try:
-                    await self._scan()
-                    await self.output.peripheral_did_change_provided(self)
-                except Exception:
-                    log.exception("Following the USB sticks failed")
+                await self._rescan()
+
+    async def _rescan(self):
+        try:
+            await self._scan()
+            await self.output.peripheral_did_change_provided(self)
+        except Exception:
+            log.exception("Following the USB sticks failed")
 
 
 def _sticks() -> dict[str, str]:

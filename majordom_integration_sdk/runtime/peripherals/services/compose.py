@@ -9,8 +9,9 @@ import logging
 import os
 import socket
 import string
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
+from functools import partial
 from glob import glob
 from pathlib import Path
 from types import SimpleNamespace
@@ -145,18 +146,10 @@ class Compose:
 
     async def _follow(self, service: Service):
         """Wait for it to be up, set it up, tell it is ready, then learn what it knows."""
-        while not await self._is_up(service):
-            await asyncio.sleep(READY_POLL)
+        await _until(lambda: self._is_up(service), f"{service.name} isn't up")
         for endpoint in service.provides:
-            while True:
-                try:
-                    await service.provision(endpoint)
-                    break
-                except Exception as error:
-                    log.warning(f"{service.name} failed to set up {endpoint.url}, trying again: {error}")
-                    await asyncio.sleep(READY_POLL)
-        while not await service.is_healthy():
-            await asyncio.sleep(READY_POLL)
+            await _until(partial(_provision, service, endpoint), f"{service.name} failed to set up {endpoint.url}")
+        await _until(service.is_healthy, f"{service.name} isn't healthy")
         await service.output.peripheral_did_become_ready(service)
         facts: dict[str, Any] = {}
         for endpoint in service.provides:
@@ -182,6 +175,22 @@ class Compose:
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         )  # fmt: skip
         return set((await process.communicate())[0].decode().split())
+
+
+async def _until(check: Callable[[], Awaitable[bool]], failure: str):
+    """Ask ``check`` until it says yes; one that raises says no."""
+    while True:
+        try:
+            if await check():
+                return
+        except Exception as error:
+            log.warning(f"{failure}, trying again: {error}")
+        await asyncio.sleep(READY_POLL)
+
+
+async def _provision(service: Service, endpoint: Endpoint) -> bool:
+    await service.provision(endpoint)
+    return True
 
 
 def _listening(port: int) -> bool:

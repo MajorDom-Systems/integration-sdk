@@ -159,6 +159,7 @@ async def test_a_driver_an_integration_brings_along_recognises_what_the_others_d
     scanner = UsbScanner([Driver()])  # the SDK's drivers know nothing of it
     runtime = await run(tmp_path, scanner, integration)
 
+    await until(runtime, lambda: state(runtime, integration) == PeripheralState.RUNNING)
     assert integration.peripherals.endpoint("zigbee") == Endpoint("zigbee", "deconz", "/dev/serial/by-id/conbee")
     assert zigpy.opened == ["conbee"]
     assert runtime.providers(scanner) == {"usb-driver": "zigpy"}
