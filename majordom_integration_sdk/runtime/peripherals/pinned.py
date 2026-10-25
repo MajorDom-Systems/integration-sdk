@@ -12,7 +12,7 @@ class Pinned(Peripheral):
     own. Give it to the runtime first, so they win over anything found.
 
         stick = Endpoint("zigbee", "ezsp", "socket://192.168.1.5:6638")
-        Runtime(data, peripherals=[Pinned(stick), *DEFAULT_PERIPHERALS])
+        Runtime(data, peripherals=[Pinned(stick), *default_peripherals()])
     """
 
     name = "pinned"

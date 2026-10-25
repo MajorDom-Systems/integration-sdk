@@ -2,7 +2,7 @@
 
 This is the "run standalone, then bridge into the MajorDom language" half of the
 integration workflow: the runtime (the ``runtime`` extra) runs the controller among the SDK's
-`DEFAULT_PERIPHERALS` as under the Hub — the radios it finds, the Bluetooth router over the local
+`default_peripherals()` as under the Hub — the radios it finds, the Bluetooth router over the local
 adapters, DNS-SD, SSDP and the containers it runs — and starts it once its needs are bound, then
 you watch what it discovers/reports on the console.
 
@@ -133,16 +133,16 @@ def build_runtime(
     is_docker_enabled: bool = True,
 ) -> Runtime:
     """The runtime for one controller, as under the Hub: the endpoints you pin first, then ``runtime_peripherals``
-    (`DEFAULT_PERIPHERALS` by default), then the controller. Needs the ``runtime`` extra."""
+    (`default_peripherals()` by default), then the controller. Needs the ``runtime`` extra."""
     if importlib.util.find_spec("serial") is None:
         raise ImportError(
             "Resolving needs takes the runtime — install it with:\n"
             '    pip install "majordom-integration-sdk[runtime,ble,discovery]"\n'
             "or pass peripherals={...} yourself."
         )
-    from majordom_integration_sdk.runtime import DEFAULT_PERIPHERALS, Pinned, Runtime
+    from majordom_integration_sdk.runtime import Pinned, Runtime, default_peripherals
 
-    around = DEFAULT_PERIPHERALS if runtime_peripherals is None else runtime_peripherals
+    around = default_peripherals() if runtime_peripherals is None else runtime_peripherals
     return Runtime(
         data, [Pinned(*pinned), *around, controller], output=LoggingRuntimeOutput(), is_docker_enabled=is_docker_enabled
     )

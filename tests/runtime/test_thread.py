@@ -84,14 +84,14 @@ async def test_only_a_border_router_that_doesnt_form_itself_is_provisioned(borde
     url, state = border_router
     monkeypatch.setattr(services, "FORM_PATIENCE", 0)
     rest = Endpoint("thread", "otbr-rest", url, is_shared=True)
-    await asyncio.wait_for(silabs_multiprotocol.provision(rest), 2)  # its container forms the network
+    await asyncio.wait_for(silabs_multiprotocol().provision(rest), 2)  # its container forms the network
     assert state["puts"] == []
-    await asyncio.wait_for(otbr.provision(rest), 3)
+    await asyncio.wait_for(otbr().provision(rest), 3)
     assert len(state["puts"]) == 2
 
 
 async def test_border_routers_tell_their_thread_network(border_router):
     url, state = border_router
     state["dataset"] = "0e08existing"
-    assert await otbr.learn(Endpoint("thread", "otbr-rest", url)) == {"thread_dataset": "0e08existing"}
-    assert await silabs_multiprotocol.learn(Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999")) == {}
+    assert await otbr().learn(Endpoint("thread", "otbr-rest", url)) == {"thread_dataset": "0e08existing"}
+    assert await silabs_multiprotocol().learn(Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999")) == {}

@@ -132,5 +132,8 @@ RADIO_USB_IDS = {
     ("0451", "16a8"),  # TI CC2531
 }
 
-#: Every driver of the SDK, tried in this order on every unidentified stick: the cheap single-frame Z-Wave check first.
-DEFAULT_USB_DRIVERS: tuple[UsbDriver, ...] = (ZWave(), Silabs())
+
+def default_usb_drivers() -> list[UsbDriver]:
+    """Every driver of the SDK, tried in this order on every unidentified stick: the cheap single-frame Z-Wave check
+    first."""
+    return [ZWave(), Silabs()]

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from majordom_integration_sdk.peripherals import Peripheral, UsbDriver
-from majordom_integration_sdk.runtime.peripherals.hardware.drivers import DEFAULT_USB_DRIVERS
+from majordom_integration_sdk.runtime.peripherals.hardware.drivers import default_usb_drivers
 from majordom_integration_sdk.runtime.peripherals.hardware.usb import Radio
 
 
@@ -33,8 +33,8 @@ class FixedPeripherals(Peripheral):
 
     name = "board"
 
-    def __init__(self, *radios: FixedRadio, drivers: Sequence[UsbDriver] = DEFAULT_USB_DRIVERS):
-        self.radios, self.drivers = radios, list(drivers)
+    def __init__(self, *radios: FixedRadio, drivers: Sequence[UsbDriver] | None = None):
+        self.radios, self.drivers = radios, default_usb_drivers() if drivers is None else list(drivers)
         self._present: list[Radio] = []
 
     @property

@@ -1,11 +1,11 @@
 """The runtime (the ``runtime`` extra): runs peripherals — radios, the host's adapters and network, containers, the
-in-process providers, integrations — and binds their needs. `DEFAULT_PERIPHERALS` are what it runs around integrations
+in-process providers, integrations — and binds their needs. `default_peripherals` are what it runs around integrations
 (see `majordom_integration_sdk.runtime.defaults`); DNS-SD, the ``discovery`` extra, is in
 `majordom_integration_sdk.runtime.peripherals.providers.zeroconf`.
 """
 
-from majordom_integration_sdk.runtime.defaults import DEFAULT_PERIPHERALS
-from majordom_integration_sdk.runtime.peripherals.hardware.drivers import DEFAULT_USB_DRIVERS, Silabs, ZWave
+from majordom_integration_sdk.runtime.defaults import default_peripherals
+from majordom_integration_sdk.runtime.peripherals.hardware.drivers import Silabs, ZWave, default_usb_drivers
 from majordom_integration_sdk.runtime.peripherals.hardware.fixed import FixedPeripherals, FixedRadio
 from majordom_integration_sdk.runtime.peripherals.hardware.host import BluetoothAdapters, HostNetwork
 from majordom_integration_sdk.runtime.peripherals.hardware.usb import Radio, UsbScanner
@@ -13,6 +13,7 @@ from majordom_integration_sdk.runtime.peripherals.pinned import Pinned
 from majordom_integration_sdk.runtime.peripherals.providers.ble.proxy import BLEProxy
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
+from majordom_integration_sdk.runtime.peripherals.services.builtin import otbr, silabs_multiprotocol
 from majordom_integration_sdk.runtime.runtime import (
     RETRY_DELAYS,
     DisabledStore,
@@ -24,7 +25,7 @@ from majordom_integration_sdk.runtime.runtime import (
 )
 
 __all__ = [
-    "DEFAULT_PERIPHERALS",
+    "default_peripherals",
     "Runtime",
     "RuntimeOutput",
     "PeripheralState",
@@ -34,7 +35,9 @@ __all__ = [
     "RETRY_DELAYS",
     "UsbScanner",
     "Radio",
-    "DEFAULT_USB_DRIVERS",
+    "default_usb_drivers",
+    "otbr",
+    "silabs_multiprotocol",
     "Silabs",
     "ZWave",
     "FixedPeripherals",

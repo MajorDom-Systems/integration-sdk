@@ -68,8 +68,8 @@ def compose(tmp_path) -> dict[str, Any]:
 
 
 async def test_a_multipan_stick_serves_zigbee_and_matter_through_one_container(tmp_path):
-    radio, integration, (app, server) = stick("sky", MULTIPAN), zigbee(), matter()
-    peripherals = (host(), radio, builtin.silabs_multiprotocol, builtin.otbr, integration, server, app)
+    radio, integration, (app, server), otbr = stick("sky", MULTIPAN), zigbee(), matter(), builtin.otbr()
+    peripherals = (host(), radio, builtin.silabs_multiprotocol(), otbr, integration, server, app)
     runtime = await run(tmp_path, *peripherals, is_docker_enabled=False)
 
     assert integration.peripherals.endpoint("zigbee") == Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999")
@@ -84,14 +84,12 @@ async def test_a_multipan_stick_serves_zigbee_and_matter_through_one_container(t
     assert runtime.users(radio) == ["silabs-multiprotocol", "zigbee", "matterjs-server", "matter"]
     assert runtime.uses(app) == ["matterjs-server", "host", "silabs-multiprotocol", "sky"]
     assert runtime.reach([MULTIPAN]) == ["thread", "zigbee"]  # through the containers it would run
-    assert runtime.status(builtin.otbr) == PeripheralStatus(
-        PeripheralState.WAITING, "need thread/spinel: nothing offers it"
-    )
+    assert runtime.status(otbr) == PeripheralStatus(PeripheralState.WAITING, "need thread/spinel: nothing offers it")
 
 
 async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp_path):
     ncp, rcp, integration, (app, server) = stick("ncp", NCP), stick("rcp", RCP), zigbee(), matter()
-    peripherals = (host(), ncp, rcp, builtin.silabs_multiprotocol, builtin.otbr, integration, server, app)
+    peripherals = (host(), ncp, rcp, builtin.silabs_multiprotocol(), builtin.otbr(), integration, server, app)
     await run(tmp_path, *peripherals, is_docker_enabled=False)
 
     assert integration.peripherals.endpoint("zigbee") == NCP
@@ -103,7 +101,7 @@ async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp
 
 async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
     integration, (app, server) = zigbee(), matter()
-    peripherals = (host(), builtin.silabs_multiprotocol, builtin.otbr, integration, server, app)
+    peripherals = (host(), builtin.silabs_multiprotocol(), builtin.otbr(), integration, server, app)
     runtime = await run(tmp_path, *peripherals, is_docker_enabled=False)
 
     assert state(runtime, integration) == PeripheralState.WAITING
@@ -114,7 +112,7 @@ async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
 async def test_an_endpoint_given_first_replaces_the_border_router(tmp_path):
     mine = stick("pinned", Endpoint("thread", "otbr-rest", "http://mine:8081", is_shared=True))
     app, server = matter()
-    await run(tmp_path, mine, host(), stick("rcp", RCP), builtin.otbr, server, app, is_docker_enabled=False)
+    await run(tmp_path, mine, host(), stick("rcp", RCP), builtin.otbr(), server, app, is_docker_enabled=False)
 
     assert set(compose(tmp_path)) == {"matterjs-server"}
     assert compose(tmp_path)["matterjs-server"]["environment"]["OTBR"] == "http://mine:8081"
@@ -194,7 +192,7 @@ async def test_services_get_free_host_ports_and_keep_them(tmp_path, listening):
     async def ezsp() -> tuple[str, str]:
         """The zigbee URL bound after a (re)boot, and the port the container got."""
         integration = zigbee()
-        peripherals = (host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol, integration)
+        peripherals = (host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol(), integration)
         runtime = await run(tmp_path, *peripherals, is_docker_enabled=False)
         port = compose(tmp_path)["silabs-multiprotocol"]["environment"]["EZSP_TCP_PORT"]
         await runtime.stop()
@@ -211,7 +209,7 @@ async def test_services_get_free_host_ports_and_keep_them(tmp_path, listening):
 
 
 async def test_a_port_held_by_our_own_running_container_is_kept(tmp_path, listening, monkeypatch):
-    peripherals = (host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol)
+    peripherals = (host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol())
     runtime = await run(tmp_path, *peripherals, zigbee(), is_docker_enabled=False)
     await runtime.stop()
     listening.update({9999, 8081})  # our silabs-multiprotocol container is up and holds them
@@ -368,7 +366,7 @@ async def test_a_container_that_never_answers_fails_its_start(tmp_path, docker, 
 async def test_restarting_a_service_recreates_only_its_container(tmp_path, docker):
     app, server = matter()
     integration = zigbee()
-    peripherals = (host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol, integration, server, app)
+    peripherals = (host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol(), integration, server, app)
     runtime = await run(tmp_path, *peripherals)
     await until(runtime, lambda: state(runtime, app) == state(runtime, integration) == PeripheralState.RUNNING)
     before = compose(tmp_path)

@@ -127,7 +127,7 @@ class Runtime:
     """Runs every peripheral it is given, and what those bring along, by one rule (see `Peripheral`); binds their
     needs, and is the `PeripheralOutput` of each::
 
-        runtime = Runtime(data, peripherals=[*DEFAULT_PERIPHERALS, HueController(platform)])
+        runtime = Runtime(data, peripherals=[*default_peripherals(), HueController(platform)])
         await runtime.start()
 
     ``peripherals`` are bound in this order, what each brings along right after it: one listed first wins a single-use

@@ -278,7 +278,7 @@ async def needs_session(tmp_path):
     runtime = build_runtime(
         controller,
         tmp_path / "runtime",
-        runtime_peripherals=[adapter, silabs_multiprotocol, FakeBLERouter(), matter],
+        runtime_peripherals=[adapter, silabs_multiprotocol(), FakeBLERouter(), matter],
         is_docker_enabled=False,
     )
     runner = Runner(controller, runtime)

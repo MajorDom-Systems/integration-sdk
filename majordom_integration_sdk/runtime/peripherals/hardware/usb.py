@@ -24,7 +24,7 @@ from majordom_integration_sdk.peripherals import (
     PeripheralChange,
     UsbDriver,
 )
-from majordom_integration_sdk.runtime.peripherals.hardware.drivers import DEFAULT_USB_DRIVERS, RADIO_USB_IDS
+from majordom_integration_sdk.runtime.peripherals.hardware.drivers import RADIO_USB_IDS, default_usb_drivers
 from majordom_integration_sdk.runtime.peripherals.providers.ble import cpc_hci
 
 log = logging.getLogger(__name__)
@@ -134,15 +134,15 @@ class UsbScanner(Peripheral):
     radio's is opened unasked; another is identified when the user asks (`Radio.probe`). One another program holds is
     left alone until then.
 
-        UsbScanner()  # every SDK driver: DEFAULT_USB_DRIVERS
+        UsbScanner()  # every SDK driver: default_usb_drivers()
         UsbScanner(drivers=[Silabs()])
     """
 
     name = "usb"
     needs = [Need(USB_DRIVER, is_many=True, is_required=False)]
 
-    def __init__(self, drivers: Sequence[UsbDriver] = DEFAULT_USB_DRIVERS):
-        self.drivers = list(drivers)
+    def __init__(self, drivers: Sequence[UsbDriver] | None = None):
+        self.drivers = default_usb_drivers() if drivers is None else list(drivers)
         self._radios: list[Radio] = []
         self._tasks: set[asyncio.Task] = set()  # watching the sticks, and asking new drivers about them
         self._scanning = asyncio.Lock()  # one scan at a time: two would open a stick at once
