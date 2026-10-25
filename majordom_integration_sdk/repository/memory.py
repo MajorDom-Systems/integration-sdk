@@ -29,7 +29,7 @@ class DeviceRepositoryMemory:
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[DeviceRepositoryMemory]:
-        """Async-context-manager factory to pass as ``make_device_repository``."""
+        """One unit of work: what ``Platform.make_device_repository`` returns for its integration."""
         yield self
 
     def _in_scope(self, record: Record) -> bool:

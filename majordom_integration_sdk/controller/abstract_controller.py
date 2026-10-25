@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Any, cast, final
 from uuid import UUID, uuid5
@@ -17,6 +18,7 @@ from slugify import slugify
 
 from majordom_integration_sdk.controller.platform import Context, Platform
 from majordom_integration_sdk.peripherals import Need, Peripheral, PeripheralChange
+from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtocol
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 
@@ -56,8 +58,9 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
 
     It holds:
 
-    - ``self.platform``: the app's services (output, device repository, documents folder, context), given to its
-      constructor;
+    - ``self.platform``: the app's services (output, device repository, documents folder, context), the same for every
+      integration, given to its constructor: ``self.device_repository()`` and ``self.documents_folder`` scope them to
+      it;
     - ``self.settings``: its validated ``Settings``, declared as a nested ``class Settings(BaseModel)`` named as the
       last type parameter, ``AbstractController[Device, Parameter, "HueController.Settings"]``; `NoSettings` without;
     - ``self.peripherals``: the endpoints its needs are bound to (``endpoint()``, ``endpoints()``, ``instance()``).
@@ -269,8 +272,18 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
     @final
     @property
     def documents_folder(self) -> Path:
-        """Folder for storing files related to this integration that don't belong in the device database."""
-        return self.platform.documents_folder
+        """Its own folder for files that don't belong in the device database: by its slug, under the platform's."""
+        folder = self.platform.documents_folder / self.name_slug
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
+
+    @final
+    def device_repository(self) -> AbstractAsyncContextManager[DeviceRepositoryProtocol]:
+        """One unit of work on the device repository, scoped to its own devices::
+
+        async with self.device_repository() as repository: ...
+        """
+        return self.platform.make_device_repository(self.name)
 
     # def add_service_coroutine(self, coroutine: Callable[[], Awaitable]): ... # FUTURE
 

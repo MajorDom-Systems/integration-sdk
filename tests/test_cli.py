@@ -80,7 +80,7 @@ class FakeController(AbstractController):
             manufacturer=None,
             parameters=[_param(self._param_role)],
         )
-        async with self.platform.make_device_repository() as repo:
+        async with self.device_repository() as repo:
             await repo.save(state)
         self.paired.append(device_id)
         return device_id
@@ -113,7 +113,7 @@ def _discovery() -> Discovery:
 
 @pytest.fixture
 def session_and_controller():
-    deps = build_test_platform(integration=INTEGRATION)
+    deps = build_test_platform()
     controller = FakeController(deps)
     return _CliSession(controller), controller
 
@@ -170,7 +170,7 @@ async def test_actions_on_missing_device(session_and_controller):
 
 
 async def test_control_rejects_non_control_parameter():
-    deps = build_test_platform(integration=INTEGRATION)
+    deps = build_test_platform()
     controller = FakeController(deps, param_role=ParameterRole.sensor)
     session = _CliSession(controller)
 
@@ -185,7 +185,7 @@ async def test_control_rejects_non_control_parameter():
 
 
 async def test_output_delegate_persists_event_values():
-    deps = build_test_platform(integration=INTEGRATION)
+    deps = build_test_platform()
     controller = FakeController(deps)
     session = _CliSession(controller)
 
@@ -194,21 +194,19 @@ async def test_output_delegate_persists_event_values():
     device_id = await session.pair(discovery.id)
     parameter = (await session.device_state(device_id)).parameters[0]
 
-    output = _CliControllerOutput(deps.make_device_repository)
+    output = _CliControllerOutput()
     await output.controller_did_receive_events(
         controller, [DeviceParameterChange(device_id=device_id, parameter_id=parameter.id, value=True)]
     )
 
-    async with deps.make_device_repository() as repo:
+    async with controller.device_repository() as repo:
         stored = await repo.get_parameter_state(device_id, parameter.id)
     assert stored is not None
     assert stored.value  # a (non-empty, encoded) value was written back by the event
 
 
 async def test_output_delegate_prints_reported_and_resolved_errors(capsys):
-    deps = build_test_platform(integration=INTEGRATION)
-    output = _CliControllerOutput(deps.make_device_repository)
-    controller = FakeController(deps)
+    output, controller = _CliControllerOutput(), FakeController(build_test_platform())
 
     await output.controller_did_encounter_error(controller, IntegrationError("stick-unplugged", "Re-plug it"))
     await output.controller_did_resolve_error(controller, "stick-unplugged")
@@ -274,7 +272,7 @@ async def needs_session(tmp_path):
         "bluetooth-adapters", provides=[Endpoint("ble", "bluez", "hci0", instance=FakeBLESource())]
     )
     matter = FakePeripheral("matter", [Need("ble", ["router"])])  # runs the router: it takes the adapter
-    controller = _ZigbeeController(build_test_platform(integration=INTEGRATION))
+    controller = _ZigbeeController(build_test_platform())
     runtime = build_runtime(
         [controller],
         tmp_path / "runtime",
@@ -320,7 +318,7 @@ async def test_a_pinned_endpoint_binds_the_need_and_starts_the_integration(needs
 
 
 async def test_needs_without_a_runtime_list_what_was_given():
-    controller = _ZigbeeController(build_test_platform(integration=INTEGRATION))
+    controller = _ZigbeeController(build_test_platform())
     controller.peripherals = Peripherals({"zigbee": Endpoint("zigbee", "ezsp", "/dev/ttyUSB0")})
     session = _CliSession(controller)
     assert session.needs()[0] == "zigbee/ezsp|znp  -> /dev/ttyUSB0  by you"

@@ -10,7 +10,7 @@ you watch what it discovers/reports on the console.
     import majordom_hue  # your integration
     from majordom_integration_sdk.dev import run_controller
 
-    asyncio.run(run_controller(majordom_hue.peripherals, majordom_hue.HueController))
+    asyncio.run(run_controller(majordom_hue.peripherals))  # its controller and the servers it needs
 
 Without Docker, ``pinned=[Endpoint(...)]`` gives the endpoints of the servers you run yourself;
 ``runtime_peripherals=[HostNetwork(), ...]`` runs only those around it (no USB scanning);
@@ -23,6 +23,7 @@ import asyncio
 import importlib.util
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -80,31 +81,25 @@ def build_platform(
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
-    integration: str | None = None,
-    slug: str | None = None,
     output: ControllerOutput | None = None,
 ) -> Platform:
-    """Assemble the app's services for a standalone run.
+    """Assemble the app's services for a standalone run, as the Hub gives them to every integration.
 
     ``db_path`` selects a file-backed :class:`SqliteDeviceRepository` (state survives
-    restarts); omit it for an in-memory repository. ``integration`` scopes the repository to
-    that integration's devices and gives it its own ``documents_folder`` subtree. The storage
-    root defaults to ``./.majordom-dev``.
+    restarts); omit it for an in-memory repository. The storage root, where each integration
+    gets its documents folder, defaults to ``./.majordom-dev``.
     """
-    repository: DeviceRepositoryProtocol
-    repository = (
-        SqliteDeviceRepository(db_path, integration=integration)
-        if db_path is not None
-        else DeviceRepositoryMemory(integration=integration)
-    )
+    store: dict = {}  # what the in-memory repositories of every integration share
+
+    def make_device_repository(integration: str) -> AbstractAsyncContextManager[DeviceRepositoryProtocol]:
+        if db_path is not None:
+            return SqliteDeviceRepository(db_path, integration=integration).session()
+        return DeviceRepositoryMemory(integration=integration, store=store).session()
+
     root = Path(storage_root) if storage_root is not None else Path(".majordom-dev")
-    subfolder = slug or integration
-    folder = root / subfolder if subfolder else root
-    folder.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
     return Platform(
-        output=output or LoggingControllerOutput(),
-        make_device_repository=repository.session,
-        documents_folder=folder,
+        output=output or LoggingControllerOutput(), make_device_repository=make_device_repository, documents_folder=root
     )
 
 
@@ -180,7 +175,6 @@ type Integration = Callable[[Platform], Sequence[Peripheral]]  # what an integra
 
 async def run_controller(
     integration: Integration,
-    controller: type[AbstractController],
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
@@ -189,13 +183,13 @@ async def run_controller(
     pinned: Sequence[Endpoint] = (),
     **platform: Any,
 ):
-    """Start what ``integration`` exports (its ``peripherals``: the ``controller`` and the servers it needs) under the
+    """Start what ``integration`` exports (its ``peripherals``: the controller and the servers it needs) under the
     runtime, or only its controller with the ``peripherals`` you bind, and run until interrupted (Ctrl-C), then stop
     everything cleanly. It is given its platform as by the Hub, ``platform`` overriding fields of `Platform`, e.g.
     ``context``; ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    exported = integration(_platform(controller, storage_root, db_path).copy(**platform))
-    runner = _runner(exported, controller, storage_root, peripherals, runtime_peripherals, pinned)
+    exported = integration(build_platform(storage_root=storage_root, db_path=db_path).copy(**platform))
+    runner = _runner(exported, storage_root, peripherals, runtime_peripherals, pinned)
     await runner.start()
     try:
         await asyncio.Event().wait()  # run forever until cancelled
@@ -206,25 +200,17 @@ async def run_controller(
         logger.info(f"{runner.controller.name} stopped.")
 
 
-def _platform(controller: type[AbstractController], storage_root: Path | None, db_path: str | Path | None) -> Platform:
-    """The platform the Hub gives the integration of ``controller``: a repository and documents folder of its own."""
-    return build_platform(
-        storage_root=storage_root, db_path=db_path, integration=controller.name, slug=controller.slug()
-    )
-
-
-def _runner[C: AbstractController](
+def _runner(
     exported: Sequence[Peripheral],
-    kind: type[C],
     storage_root: Path | None,
     peripherals: Mapping[str, Bound] | None,
     runtime_peripherals: Sequence[Peripheral] | None,
     pinned: Sequence[Endpoint],
 ) -> Runner:
-    """What an integration exported, run around its one controller of ``kind``."""
-    controllers = [peripheral for peripheral in exported if isinstance(peripheral, kind)]
+    """What an integration exported, run around its one controller."""
+    controllers = [peripheral for peripheral in exported if isinstance(peripheral, AbstractController)]
     if len(controllers) != 1:
-        raise ValueError(f"An integration exports one {kind.__name__}, not {len(controllers)}: {list(exported)}")
+        raise ValueError(f"An integration exports one controller, not {len(controllers)}: {list(exported)}")
     controller, root = controllers[0], Path(storage_root) if storage_root is not None else Path(".majordom-dev")
     if peripherals is not None:
         controller.peripherals = Peripherals(peripherals)

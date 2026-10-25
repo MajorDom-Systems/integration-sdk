@@ -13,7 +13,7 @@ Needs the ``cli`` extra (typer-shell + rich)::
     from majordom_integration_sdk.dev import run_cli
     import majordom_matter  # your integration
 
-    asyncio.run(run_cli(majordom_matter.peripherals, majordom_matter.MatterController, db_path="devices.db"))
+    asyncio.run(run_cli(majordom_matter.peripherals, db_path="devices.db"))
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from ..schemas.command import DeviceCommand
 from ..schemas.credentials import CredentialsType, ProvidedCredentials
 from ..schemas.event import DeviceParameterChange
 from ..schemas.parameter import ParameterRole
-from . import Integration, _platform, _runner
+from . import Integration, _runner, build_platform
 
 if TYPE_CHECKING:
     from ..runtime import Pinned, Runtime
@@ -110,10 +110,6 @@ class _CliSession:
         self._runtime = runtime
 
     @property
-    def _deps(self):
-        return self._controller.platform
-
-    @property
     def discoveries(self):
         return self._controller.discoveries
 
@@ -128,15 +124,15 @@ class _CliSession:
         await self._controller.start_pairing_window(seconds)
 
     async def list_devices(self):
-        async with self._deps.make_device_repository() as repo:
+        async with self._controller.device_repository() as repo:
             return await repo.get_all()
 
     async def device_state(self, device_id: UUID):
-        async with self._deps.make_device_repository() as repo:
+        async with self._controller.device_repository() as repo:
             return await repo.state(device_id)
 
     async def _device(self, device_id: UUID):
-        async with self._deps.make_device_repository() as repo:
+        async with self._controller.device_repository() as repo:
             device = await repo.get(device_id)
         return self._controller.device_type.model_validate(device) if device else None
 
@@ -160,7 +156,7 @@ class _CliSession:
 
     async def control(self, device_id: UUID, parameter_id: UUID, value: object) -> str:
         command = DeviceCommand(device_id=device_id, parameter_id=parameter_id, value=value)
-        async with self._deps.make_device_repository() as repo:
+        async with self._controller.device_repository() as repo:
             device = await repo.get(command.device_id)
             if not device:
                 return f"No device {device_id}"
@@ -226,9 +222,6 @@ class _CliControllerOutput(ControllerOutput):
     state to the repository, so ``devices`` / ``device`` reflect live availability and values. A
     single-controller stand-in for the Hub relay's output side."""
 
-    def __init__(self, make_device_repository):
-        self._make_device_repository = make_device_repository
-
     async def controller_did_receive_discovery(self, controller, discovery):
         _print(f"[discovered] {discovery.id}  {discovery.device_name}  ({discovery.transport})")
 
@@ -240,7 +233,7 @@ class _CliControllerOutput(ControllerOutput):
 
     async def controller_did_connect_device(self, controller, device_id):
         _print(f"[connected] {device_id}")
-        async with self._make_device_repository() as repo:
+        async with controller.device_repository() as repo:
             if device := await repo.get(device_id):
                 device.last_seen = datetime.now()
                 device.available = True
@@ -248,7 +241,7 @@ class _CliControllerOutput(ControllerOutput):
 
     async def controller_did_lose_device(self, controller, device_id):
         _print(f"[lost] {device_id}")
-        async with self._make_device_repository() as repo:
+        async with controller.device_repository() as repo:
             if device := await repo.get(device_id):
                 device.available = False
                 device.last_error = f"Device is no longer connected to the {controller.name} network"
@@ -256,7 +249,7 @@ class _CliControllerOutput(ControllerOutput):
 
     async def controller_did_receive_events(self, controller, events):
         events = list(events)
-        async with self._make_device_repository() as repo:
+        async with controller.device_repository() as repo:
             for event in events:
                 if not isinstance(event, DeviceParameterChange):
                     continue
@@ -281,7 +274,6 @@ class _CliControllerOutput(ControllerOutput):
 
 async def run_cli(
     integration: Integration,
-    controller: type[AbstractController],
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
@@ -290,7 +282,7 @@ async def run_cli(
     pinned: Sequence[Endpoint] = (),
     **platform: Any,
 ):
-    """Start what ``integration`` exports (its ``peripherals``: the ``controller`` and the servers it needs) under the
+    """Start what ``integration`` exports (its ``peripherals``: the controller and the servers it needs) under the
     runtime, or only its controller with the ``peripherals`` you bind, with a local repository and drop into an
     interactive prompt. ``platform`` overrides
     fields of `Platform` (``context``); ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`).
@@ -311,10 +303,10 @@ async def run_cli(
 
     # Identity is class-level, so the repository/documents folder are scoped before construction;
     # the output also persists state.
-    base = _platform(controller, storage_root, db_path)
-    base = base.copy(output=_CliControllerOutput(base.make_device_repository), **platform)
-    runner = _runner(integration(base), controller, storage_root, peripherals, runtime_peripherals, pinned)
-    session = _CliSession(runner.controller, runner.runtime)
+    base = build_platform(storage_root=storage_root, db_path=db_path, output=_CliControllerOutput()).copy(**platform)
+    runner = _runner(integration(base), storage_root, peripherals, runtime_peripherals, pinned)
+    controller = runner.controller
+    session = _CliSession(controller, runner.runtime)
 
     await runner.start()
     state = "started" if runner.is_running else "waiting for its needs (see `needs`)"

@@ -303,22 +303,18 @@ class FakeBLESource:
         self.on_advertisement(BLEDevice(address, local_name, self.name), adv)  # details: the radio
 
 
-def build_test_platform(
-    documents_folder: Path | None = None,
-    integration: str | None = None,
-) -> Platform:
-    """Assemble a controller ``Platform`` wired entirely with offline test doubles.
+def build_test_platform(documents_folder: Path | None = None) -> Platform:
+    """Assemble a controller ``Platform`` wired entirely with offline test doubles, as the Hub gives it to every
+    integration: an in-memory repository each controller sees only its own devices of, scoped by its name.
 
-    Pass ``documents_folder`` to control where the controller writes files; a fresh temp dir
-    is used otherwise. Pass ``integration`` to scope the in-memory repository to that
-    integration's devices (access-control guard), mirroring how the Hub injects it. The
+    Pass ``documents_folder`` as the root of the controllers' folders; a fresh temp dir is used otherwise. The
     recording output is reachable as ``platform.output``.
     """
-    repository = DeviceRepositoryMemory(integration=integration)
-    folder = documents_folder or Path(tempfile.mkdtemp(prefix="majordom-sdk-test-"))
-    folder.mkdir(parents=True, exist_ok=True)
+    store: dict = {}  # shared by the repositories of every integration
     return Platform(
-        output=RecordingControllerOutput(), make_device_repository=repository.session, documents_folder=folder
+        output=RecordingControllerOutput(),
+        make_device_repository=lambda integration: DeviceRepositoryMemory(integration, store).session(),
+        documents_folder=documents_folder or Path(tempfile.mkdtemp(prefix="majordom-sdk-test-")),
     )
 
 

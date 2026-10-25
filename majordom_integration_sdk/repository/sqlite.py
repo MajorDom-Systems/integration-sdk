@@ -51,7 +51,7 @@ class SqliteDeviceRepository:
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[SqliteDeviceRepository]:
-        """Async-context-manager factory to pass as ``make_device_repository``."""
+        """One unit of work: what ``Platform.make_device_repository`` returns for its integration."""
         # A fresh connection per unit of work; sharing one across concurrent tasks is unsafe.
         self._conn = self._connect()
         try:

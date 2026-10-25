@@ -101,14 +101,12 @@ async def until(condition):
 
 
 def test_build_platform_defaults_to_memory_and_logging_output(tmp_path):
-    assert isinstance(build_platform(storage_root=tmp_path, integration="Example").output, LoggingControllerOutput)
+    assert isinstance(build_platform(storage_root=tmp_path).output, LoggingControllerOutput)
 
 
-def test_build_platform_scopes_documents_folder(tmp_path):
-    # slug wins over integration for the subfolder name; the folder is created eagerly.
-    platform = build_platform(storage_root=tmp_path, integration="Example", slug="example-protocol")
-    assert platform.documents_folder == tmp_path / "example-protocol"
-    assert platform.documents_folder.is_dir()
+def test_build_platform_roots_every_integrations_documents_folder(tmp_path):
+    platform = build_platform(storage_root=tmp_path)
+    assert platform.documents_folder == tmp_path and tmp_path.is_dir()
 
 
 def test_build_platform_honors_custom_output(tmp_path):
@@ -118,26 +116,29 @@ def test_build_platform_honors_custom_output(tmp_path):
     assert build_platform(storage_root=tmp_path, output=output).output is output
 
 
-async def test_build_platform_memory_repository_round_trips(tmp_path):
-    platform = build_platform(storage_root=tmp_path, integration="example")
+async def test_build_platform_memory_repository_round_trips_in_its_scope(tmp_path):
+    platform = build_platform(storage_root=tmp_path)
     device = make_device_state(integration="example")
-    async with platform.make_device_repository() as repo:
+    async with platform.make_device_repository("example") as repo:
         await repo.save(device)
+    async with platform.make_device_repository("example") as repo:
         assert (await repo.state(device.id)) is not None
+    async with platform.make_device_repository("other") as repo:
+        assert (await repo.state(device.id)) is None
 
 
 async def test_build_platform_sqlite_persists_to_file(tmp_path):
     db_path = tmp_path / "dev.sqlite"
     device = make_device_state(integration="example")
 
-    platform = build_platform(storage_root=tmp_path, db_path=db_path, integration="example")
-    async with platform.make_device_repository() as repo:
+    platform = build_platform(storage_root=tmp_path, db_path=db_path)
+    async with platform.make_device_repository("example") as repo:
         await repo.save(device)
 
     assert db_path.exists(), "a db_path should select the file-backed sqlite repository"
     # A fresh platform over the same file sees the persisted device (survives 'restarts').
-    again = build_platform(storage_root=tmp_path, db_path=db_path, integration="example")
-    async with again.make_device_repository() as repo:
+    again = build_platform(storage_root=tmp_path, db_path=db_path)
+    async with again.make_device_repository("example") as repo:
         assert (await repo.state(device.id)) is not None
 
 
@@ -189,9 +190,7 @@ async def test_the_runner_hands_a_moved_peripheral_over_or_restarts(tmp_path, ro
 
 async def test_run_controller_with_peripherals_given_runs_without_the_runtime(tmp_path):
     _RecordingController.instances.clear()
-    task = asyncio.create_task(
-        run_controller(peripherals, _RecordingController, storage_root=tmp_path, peripherals={"zwave": ZWAVE})
-    )
+    task = asyncio.create_task(run_controller(peripherals, storage_root=tmp_path, peripherals={"zwave": ZWAVE}))
 
     async with asyncio.timeout(5):
         while not (_RecordingController.instances and _RecordingController.instances[-1].started):
@@ -203,13 +202,13 @@ async def test_run_controller_with_peripherals_given_runs_without_the_runtime(tm
     controller = _RecordingController.instances[-1]
     assert controller.started and controller.stopped
     assert controller.peripherals.endpoint("zwave") == ZWAVE
-    assert controller.platform.documents_folder == tmp_path / "dev-example"  # given its platform, as by the Hub
+    assert controller.documents_folder == tmp_path / "dev-example"  # under the platform's, as by the Hub
     assert not (tmp_path / "runtime").exists()
 
 
 async def test_run_controller_wants_one_controller_among_what_an_integration_exports(tmp_path):
-    with pytest.raises(ValueError, match="one _RecordingController, not 2"):
-        await run_controller(lambda platform: peripherals(platform) * 2, _RecordingController, storage_root=tmp_path)
+    with pytest.raises(ValueError, match="one controller, not 2"):
+        await run_controller(lambda platform: peripherals(platform) * 2, storage_root=tmp_path)
 
 
 async def test_run_controller_starts_and_stops_cleanly_under_the_runtime(tmp_path):
@@ -217,7 +216,6 @@ async def test_run_controller_starts_and_stops_cleanly_under_the_runtime(tmp_pat
     task = asyncio.create_task(
         run_controller(
             peripherals,
-            _RecordingController,
             storage_root=tmp_path,
             runtime_peripherals=[FakeSSDP()],
             pinned=[ZWAVE],

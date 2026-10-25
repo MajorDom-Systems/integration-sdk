@@ -23,14 +23,15 @@ class Context:
 
 @dataclass(frozen=True)
 class Platform:
-    """The app's services the Hub gives each integration, ``peripherals(platform)``: its controller's
-    ``self.platform``."""
+    """The app's services the Hub gives every integration alike, ``peripherals(platform)``: its controller's
+    ``self.platform``, which the controller scopes to itself (`AbstractController.device_repository`,
+    `AbstractController.documents_folder`)."""
 
     output: ControllerOutput
-    make_device_repository: Callable[[], AbstractAsyncContextManager[DeviceRepositoryProtocol]]
-    # The directory this integration may write files into that don't belong in the
-    # device database (certificates, protocol caches, …). The Hub computes and injects
-    # it per integration; the standalone dev runner points it at a local folder.
+    # One unit of work on the device repository, scoped to the devices of the integration named
+    make_device_repository: Callable[[str], AbstractAsyncContextManager[DeviceRepositoryProtocol]]
+    # Where each integration gets a folder of its own, by its slug, for files that don't belong in the device
+    # database (certificates, protocol caches, …): the Hub's, or a local one under the standalone dev runner.
     documents_folder: Path
     context: Context = field(default_factory=Context)  # kept current by the Hub, which merges what the runtime learns
 
