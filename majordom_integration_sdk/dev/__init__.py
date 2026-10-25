@@ -30,7 +30,7 @@ from uuid import UUID
 from majordom_integration_sdk.controller.abstract_controller import AbstractController
 from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
 from majordom_integration_sdk.controller.platform import Platform
-from majordom_integration_sdk.peripherals import Bound, Endpoint, Peripheral
+from majordom_integration_sdk.peripherals import Bound, Endpoint, Peripheral, Peripherals
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtocol
 from majordom_integration_sdk.repository.sqlite import SqliteDeviceRepository
@@ -221,8 +221,9 @@ def _runner(
     base = build_platform(
         storage_root=root, db_path=db_path, integration=controller_type.name, slug=controller_type.slug()
     )
-    controller = controller_type(base.copy(**overrides), peripherals)
+    controller = controller_type(base.copy(**overrides))
     if peripherals is not None:
+        controller.peripherals = Peripherals(peripherals)
         return Runner(controller)
     runtime = build_runtime(
         controller,

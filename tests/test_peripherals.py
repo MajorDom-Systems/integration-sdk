@@ -1,3 +1,4 @@
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -30,9 +31,11 @@ class Host(Peripheral):
     provides = [Endpoint("ip", is_shared=True)]
 
 
-async def test_a_peripheral_needs_provides_and_brings_nothing_by_default():
+async def test_a_peripheral_needs_provides_and_is_bound_nothing_by_default():
     host = Host()
-    assert (host.needs, host.provides, host.peripherals) == ((), [Endpoint("ip", is_shared=True)], ())
+    assert (host.needs, host.provides, host.peripherals.bound) == ((), [Endpoint("ip", is_shared=True)], {})
+    with pytest.raises(TypeError):
+        cast(Any, host.peripherals.bound)["ip"] = Endpoint("ip")  # shared by every peripheral until bound: read-only
     assert not host.is_on_demand
     assert host.Settings is None and host.settings is None
     await host.start()
@@ -46,7 +49,7 @@ async def test_a_peripheral_needs_provides_and_brings_nothing_by_default():
 def test_peripherals_hand_out_one_endpoint_many_or_an_instance():
     router = object()
     adapters = [Endpoint("ble", "bluez", "hci0"), Endpoint("ble", "bluez", "hci1")]
-    peripherals = Peripherals(bound={"zigbee": Endpoint("zigbee", "ezsp", "/dev/ttyUSB0"), "raw": adapters})
+    peripherals = Peripherals({"zigbee": Endpoint("zigbee", "ezsp", "/dev/ttyUSB0"), "raw": adapters})
     assert peripherals.endpoint("zigbee").url == "/dev/ttyUSB0"
     assert peripherals.endpoints("zigbee") == [peripherals.bound["zigbee"]]
     assert peripherals.endpoints("raw") == adapters
@@ -57,27 +60,8 @@ def test_peripherals_hand_out_one_endpoint_many_or_an_instance():
     with pytest.raises(KeyError):
         peripherals.endpoint("thread")
 
-    peripherals.bind({"ble": Endpoint("ble", "router", "router", is_shared=True, instance=router)})
+    peripherals = Peripherals({"ble": Endpoint("ble", "router", "router", is_shared=True, instance=router)})
     assert peripherals.instance("ble") is router
-    assert "zigbee" not in peripherals.bound  # a binding replaces the last one
-
-
-async def test_peripherals_restart_only_what_was_brought_along():
-    own, other = Host(), Host()
-    restarted: list[Peripheral] = []
-
-    async def restart(peripheral: Peripheral):
-        restarted.append(peripheral)
-
-    peripherals = Peripherals([own])
-    with pytest.raises(NotImplementedError, match="restart it yourself"):
-        await peripherals.restart(own)  # nothing runs it
-
-    peripherals.bind({}, restart=restart)
-    await peripherals.restart(own)
-    with pytest.raises(PermissionError):
-        await peripherals.restart(other)
-    assert restarted == [own]
 
 
 def test_an_endpoint_is_the_same_whatever_instance_it_carries():
@@ -128,7 +112,6 @@ def test_a_usb_driver_says_what_a_firmware_serves_and_offers_itself():
 
 class ExampleController(AbstractController[Device, Parameter]):
     needs = [Need("example")]
-    services = [SERVER]
 
     class Settings(BaseModel):
         channel: int = 11
@@ -162,10 +145,10 @@ class ExampleController(AbstractController[Device, Parameter]):
 
 
 async def test_a_controller_is_a_peripheral_with_its_settings_and_its_peripherals():
-    controller = ExampleController(build_test_platform(), {"example": Endpoint("example", "echo", "ws://x")})
+    controller = ExampleController(build_test_platform())
+    controller.peripherals = Peripherals({"example": Endpoint("example", "echo", "ws://x")})  # library mode
     assert controller.settings.channel == 11  # its defaults until the runtime hands over the saved ones
     assert controller.peripherals.endpoint("example").url == "ws://x"
-    assert list(controller.peripherals) == [SERVER]  # its services, brought along
     assert not controller.is_on_demand and controller.provides == ()
     assert await controller.needed_peripheral_did_change(PeripheralChange("example", None, None)) is False
     assert await controller.context_did_change(Context()) is False  # restarted, unless it handles it
@@ -174,4 +157,3 @@ async def test_a_controller_is_a_peripheral_with_its_settings_and_its_peripheral
 def test_a_controller_without_settings_has_none():
     assert AbstractController.Settings is None
     assert AbstractController.needs == ()
-    assert AbstractController.services == ()

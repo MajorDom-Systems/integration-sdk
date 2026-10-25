@@ -8,6 +8,7 @@ from majordom_integration_sdk.runtime import PeripheralState, PeripheralStatus
 from majordom_integration_sdk.testing import FakePeripheral
 
 ADAPTERS = [Endpoint("ble", "bluez", "hci0"), Endpoint("ble", "bluez", "hci1")]
+ROUTER = Endpoint("ble", "router", "router", is_shared=True, instance=object())
 
 
 def adapters() -> FakePeripheral:
@@ -18,7 +19,7 @@ def router() -> FakePeripheral:
     return FakePeripheral(
         "ble-router",
         [Need("ble", ["bluez"], is_many=True, is_required=False)],
-        [Endpoint("ble", "router", "router", is_shared=True, instance=object())],
+        [ROUTER],
         is_on_demand=True,
         answer=True,
     )
@@ -46,7 +47,7 @@ async def test_an_in_process_provider_is_a_shared_endpoint_carrying_itself(tmp_p
     homekit = FakePeripheral("homekit", [Need("ble", ["router"])])
     runtime = await run(tmp_path, ble, matter, homekit)
 
-    instance = ble.provides[0].instance
+    instance = ROUTER.instance
     assert matter.peripherals.instance("ble") is instance and homekit.peripherals.instance("ble") is instance
     assert runtime.users(ble) == ["matter", "homekit"]
 

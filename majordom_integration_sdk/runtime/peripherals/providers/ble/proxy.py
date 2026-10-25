@@ -10,8 +10,8 @@ from majordom_integration_sdk.peripherals import Endpoint, Peripheral
 
 class BLEProxy(Peripheral):
     """A Bluetooth source an integration brings along while it has it, e.g. an ESPHome node's proxy as
-    ``ble/esphome-proxy``: the router binds it and hears through ``source``. Add one to your ``self.peripherals`` when
-    the source connects, remove it when it goes, and tell your ``output`` each time; clear them when you stop.
+    ``ble/esphome-proxy``: the router binds it and hears through ``source``. Add one to what you provide when the source
+    connects, remove it when it goes, and tell your ``runtime`` each time; they go when you stop.
     """
 
     def __init__(self, source: BLESource, dialect: str = "esphome-proxy"):

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from majordom_integration_sdk.peripherals import Peripheral, Peripherals, UsbDriver
+from majordom_integration_sdk.peripherals import Peripheral, UsbDriver
 from majordom_integration_sdk.runtime.peripherals.hardware.drivers import DEFAULT_USB_DRIVERS
 from majordom_integration_sdk.runtime.peripherals.hardware.usb import Radio
 
@@ -35,14 +35,15 @@ class FixedPeripherals(Peripheral):
 
     def __init__(self, *radios: FixedRadio, drivers: Sequence[UsbDriver] = DEFAULT_USB_DRIVERS):
         self.radios, self.drivers = radios, list(drivers)
-        self._peripherals = Peripherals()
+        self._present: list[Radio] = []
 
     @property
-    def peripherals(self) -> Peripherals:
-        return self._peripherals
+    def provides(self) -> list[Radio]:
+        return self._present
 
     async def start(self):
         drivers = {driver.name: driver for driver in self.drivers}
+        present = []
         for fixed in self.radios:
             if not Path(fixed.path).exists():
                 continue
@@ -50,7 +51,8 @@ class FixedPeripherals(Peripheral):
             known = driver if fixed.firmware else None
             radio = Radio(fixed.name, fixed.path, lambda driver=driver: [driver], known, fixed.firmware, fixed.params)
             await (radio.check_bluetooth() if known else radio.identify())
-            self.peripherals.append(radio)
+            present.append(radio)
+        self._present = present
 
     async def stop(self):
-        self.peripherals.clear()
+        self._present = []

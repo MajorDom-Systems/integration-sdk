@@ -4,7 +4,7 @@ import json
 from uuid import UUID
 
 from pydantic import BaseModel
-from support import run, settle, state, until
+from support import run, settle
 
 from majordom_integration_sdk import AbstractController, Endpoint, Need, Service
 from majordom_integration_sdk.runtime import HostNetwork, PeripheralState, PeripheralStatus
@@ -35,9 +35,8 @@ class EchoController(AbstractController[Device, Parameter]):
 
     settings: Settings
 
-    def __init__(self, platform, peripherals=None):
-        super().__init__(platform, peripherals)
-        self.server = self.peripherals[0]
+    def __init__(self, platform):
+        super().__init__(platform)
         self.started_with: list[tuple[str, bool]] = []
 
     @property
@@ -51,8 +50,7 @@ class EchoController(AbstractController[Device, Parameter]):
         pass
 
     async def settings_did_change(self, before) -> bool:
-        await self.peripherals.restart(self.server)  # it reconfigures the server it brought along
-        return True
+        return True  # it tells the server over its connection
 
     async def pair_device(self, discovery, credentials):
         pass
@@ -70,42 +68,42 @@ class EchoController(AbstractController[Device, Parameter]):
         pass
 
 
-def controller() -> EchoController:
-    EchoController.services = [echo_server()]
-    return EchoController(build_test_platform())
+def integration() -> tuple[Service, EchoController]:
+    """What the integration package provides: its server, and the controller that needs it."""
+    return echo_server(), EchoController(build_test_platform())
 
 
-async def test_an_integration_runs_once_the_server_it_brings_along_is_ready(tmp_path):
-    echo = controller()
-    runtime = await run(tmp_path, HostNetwork(), echo, is_docker_enabled=False)
+async def test_an_integration_runs_once_the_server_it_provides_serves(tmp_path):
+    server, echo = integration()
+    runtime = await run(tmp_path, HostNetwork(), server, echo, is_docker_enabled=False)
 
-    assert runtime.peripherals == [runtime.peripherals[0], echo, echo.server]
     assert runtime.status(echo) == PeripheralStatus(PeripheralState.RUNNING)
     assert echo.started_with == [("ws://127.0.0.1:5600", False)]  # its needs bound, its settings given, before start
-    assert runtime.users(echo.server) == ["Echo"]
+    assert runtime.users(server) == ["Echo"]
 
 
-async def test_an_integration_keeps_its_settings_and_restarts_the_server_it_brought(tmp_path):
-    echo = controller()
-    runtime = await run(tmp_path, HostNetwork(), echo, is_docker_enabled=False)
+async def test_an_integration_and_its_server_keep_their_settings(tmp_path):
+    server, echo = integration()
+    runtime = await run(tmp_path, HostNetwork(), server, echo, is_docker_enabled=False)
     compose = tmp_path / "data" / "compose.json"
 
-    await runtime.update_settings(echo.server, {"greeting": "hi"})
+    await runtime.update_settings(server, {"greeting": "hi"})
     await settle(runtime)
     assert json.loads(compose.read_text())["services"]["echo-server"]["command"] == ["--greeting", "hi"]
+    assert echo.started_with == [("ws://127.0.0.1:5600", False)]  # the server restarted under it: it reconnects
 
     await runtime.update_settings(echo, {"is_loud": True})
-    await until(runtime, lambda: state(runtime, echo.server) == PeripheralState.RUNNING)
-    assert echo.settings.is_loud and len(echo.started_with) == 1  # applied in place: only its server restarted
+    await settle(runtime)
+    assert echo.settings.is_loud and len(echo.started_with) == 1  # applied in place
 
-    again = controller()  # after a reboot
-    await run(tmp_path, HostNetwork(), again, is_docker_enabled=False)
+    server, again = integration()  # after a reboot
+    await run(tmp_path, HostNetwork(), server, again, is_docker_enabled=False)
     assert again.started_with == [("ws://127.0.0.1:5600", True)]
 
 
-async def test_an_integration_stops_with_a_reason_when_its_server_cant_run(tmp_path):
-    echo = controller()
-    runtime = await run(tmp_path, echo, is_docker_enabled=False)  # no network for the server
+async def test_an_integration_waits_with_a_reason_when_its_server_cant_run(tmp_path):
+    server, echo = integration()
+    runtime = await run(tmp_path, server, echo, is_docker_enabled=False)  # no network for the server
     assert runtime.status(echo) == PeripheralStatus(
         PeripheralState.WAITING, "need example/echo: echo-server can't run (need ip/*: nothing offers it)"
     )

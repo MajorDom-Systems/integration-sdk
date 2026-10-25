@@ -172,9 +172,9 @@ async def test_a_driver_an_integration_brings_along_recognises_what_the_others_d
 
     plug(sticks, "conbee")
     zigpy = Zigpy("zigpy", conbee="deconz")
-    integration = FakePeripheral("zigbee", [Need("zigbee")], peripherals=[zigpy])
+    integration = FakePeripheral("zigbee", [Need("zigbee")])
     scanner = UsbScanner([Driver()])  # the SDK's drivers know nothing of it
-    runtime = await run(tmp_path, scanner, integration)
+    runtime = await run(tmp_path, scanner, zigpy, integration)
 
     await until(runtime, lambda: state(runtime, integration) == PeripheralState.RUNNING)
     assert integration.peripherals.endpoint("zigbee") == Endpoint("zigbee", "deconz", "/dev/serial/by-id/conbee")
@@ -263,7 +263,7 @@ async def test_a_radio_whose_flash_failed_serves_what_it_runs_now(tmp_path, stic
 
 async def test_the_firmware_offered_follows_the_radios_channel(tmp_path):
     radio = Radio(SKYCONNECT, f"/dev/serial/by-id/{SKYCONNECT}", lambda: [], Silabs(), "thread-rcp")
-    runtime = await run(tmp_path, FakePeripheral("board", peripherals=[radio]), zigbee())
+    runtime = await run(tmp_path, FakePeripheral("board", provides=[radio]), zigbee())
     assert radio.options == []  # stable channel: nothing verified to flash yet
 
     await runtime.update_settings(radio, {"firmware_channel": "dev"})
@@ -308,11 +308,11 @@ async def test_soldered_radios_are_used_without_asking_wired_as_the_board_says(t
     integration = zigbee()
     runtime = await run(tmp_path, board, integration)
 
-    assert [radio.name for radio in board.peripherals] == ["mg26", "unknown"]  # one that isn't there is left out
+    assert [radio.name for radio in board.provides] == ["mg26", "unknown"]  # one that isn't there is left out
     expected = Endpoint("zigbee", "ezsp", str(tmp_path / "ttyAMA3"), params={"baud": 115200, "flow_control": False})
     assert integration.peripherals.endpoint("zigbee") == expected
     assert driver.opened == ["ttyAMA3"]  # only the one whose firmware the board doesn't tell
-    assert runtime.status(board.peripherals[1]).state == PeripheralState.RUNNING
+    assert runtime.status(board.provides[1]).state == PeripheralState.RUNNING
 
 
 async def test_the_host_offers_its_network_and_every_adapter_with_its_index(tmp_path, monkeypatch):

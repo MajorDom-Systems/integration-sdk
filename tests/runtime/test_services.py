@@ -60,7 +60,7 @@ def matter(**compose: Any) -> tuple[FakePeripheral, Service]:
         provides=[Endpoint("matter", "matter-server-ws", "ws://127.0.0.1:{ports.api}/ws")],
         ports={"api": 5580},
     )
-    return FakePeripheral("matter", [Need("matter", ["matter-server-ws"])], peripherals=[server]), server
+    return FakePeripheral("matter", [Need("matter", ["matter-server-ws"])]), server
 
 
 def compose(tmp_path) -> dict[str, Any]:
@@ -68,8 +68,8 @@ def compose(tmp_path) -> dict[str, Any]:
 
 
 async def test_a_multipan_stick_serves_zigbee_and_matter_through_one_container(tmp_path):
-    radio, integration, (app, _) = stick("sky", MULTIPAN), zigbee(), matter()
-    peripherals = (host(), radio, builtin.silabs_multiprotocol, builtin.otbr, integration, app)
+    radio, integration, (app, server) = stick("sky", MULTIPAN), zigbee(), matter()
+    peripherals = (host(), radio, builtin.silabs_multiprotocol, builtin.otbr, integration, server, app)
     runtime = await run(tmp_path, *peripherals, is_docker_enabled=False)
 
     assert integration.peripherals.endpoint("zigbee") == Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999")
@@ -90,8 +90,8 @@ async def test_a_multipan_stick_serves_zigbee_and_matter_through_one_container(t
 
 
 async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp_path):
-    ncp, rcp, integration, (app, _) = stick("ncp", NCP), stick("rcp", RCP), zigbee(), matter()
-    peripherals = (host(), ncp, rcp, builtin.silabs_multiprotocol, builtin.otbr, integration, app)
+    ncp, rcp, integration, (app, server) = stick("ncp", NCP), stick("rcp", RCP), zigbee(), matter()
+    peripherals = (host(), ncp, rcp, builtin.silabs_multiprotocol, builtin.otbr, integration, server, app)
     await run(tmp_path, *peripherals, is_docker_enabled=False)
 
     assert integration.peripherals.endpoint("zigbee") == NCP
@@ -102,8 +102,8 @@ async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp
 
 
 async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
-    integration, (app, _) = zigbee(), matter()
-    peripherals = (host(), builtin.silabs_multiprotocol, builtin.otbr, integration, app)
+    integration, (app, server) = zigbee(), matter()
+    peripherals = (host(), builtin.silabs_multiprotocol, builtin.otbr, integration, server, app)
     runtime = await run(tmp_path, *peripherals, is_docker_enabled=False)
 
     assert state(runtime, integration) == PeripheralState.WAITING
@@ -113,8 +113,8 @@ async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
 
 async def test_an_endpoint_given_first_replaces_the_border_router(tmp_path):
     mine = stick("pinned", Endpoint("thread", "otbr-rest", "http://mine:8081", is_shared=True))
-    app, _ = matter()
-    await run(tmp_path, mine, host(), stick("rcp", RCP), builtin.otbr, app, is_docker_enabled=False)
+    app, server = matter()
+    await run(tmp_path, mine, host(), stick("rcp", RCP), builtin.otbr, server, app, is_docker_enabled=False)
 
     assert set(compose(tmp_path)) == {"matterjs-server"}
     assert compose(tmp_path)["matterjs-server"]["environment"]["OTBR"] == "http://mine:8081"
@@ -122,7 +122,7 @@ async def test_an_endpoint_given_first_replaces_the_border_router(tmp_path):
 
 async def test_a_disabled_integration_takes_its_container_down(tmp_path):
     app, server = matter()
-    runtime = await run(tmp_path, host(), app, is_docker_enabled=False)
+    runtime = await run(tmp_path, host(), server, app, is_docker_enabled=False)
     assert set(compose(tmp_path)) == {"matterjs-server"}
 
     await runtime.disable(app)
@@ -141,9 +141,9 @@ async def test_a_service_setting_recreates_only_that_service(tmp_path):
         provides=[Endpoint("zwave", "zwave-js-ws", "ws://127.0.0.1:3000")],
         settings=Keys,
     )
-    zwave = FakePeripheral("zwave", [Need("zwave")], peripherals=[zwave_server])
-    app, _ = matter()
-    runtime = await run(tmp_path, host(), zwave, app, is_docker_enabled=False)
+    zwave = FakePeripheral("zwave", [Need("zwave")])
+    app, server = matter()
+    runtime = await run(tmp_path, host(), zwave_server, zwave, server, app, is_docker_enabled=False)
     before = compose(tmp_path)
     assert before["zwave-js-server"]["environment"]["KEY"] == "secret"
 
@@ -158,8 +158,8 @@ async def test_the_context_renders_and_a_change_recreates_only_what_renders_it(t
     region = Context(region="Europe")
     app, server = matter(REGION="{context.region}")
     plain = Service("plain", {"image": "plain"}, [Need("ip")], [Endpoint("plain")])
-    user = FakePeripheral("user", [Need("plain")], peripherals=[plain])
-    runtime = await run(tmp_path, host(), app, user, context=lambda: region, is_docker_enabled=False)
+    user = FakePeripheral("user", [Need("plain")])
+    runtime = await run(tmp_path, host(), server, app, plain, user, context=lambda: region, is_docker_enabled=False)
     assert compose(tmp_path)["matterjs-server"]["environment"]["REGION"] == "Europe"
 
     before, region = region, Context(region="USA")
@@ -180,12 +180,12 @@ async def test_a_service_renders_only_when_it_is_created(tmp_path):
         "radio", {"image": "radio", "environment": {"REGION": "{context.region}"}}, [Need("ip")], [Endpoint("r")]
     )
     plain = Service("plain", {"image": "plain"}, [Need("ip")], [Endpoint("plain")])
-    user = FakePeripheral("user", [Need("r"), Need("plain")], peripherals=[radio, plain])
-    runtime = await run(tmp_path, host(), user, context=lambda: region, is_docker_enabled=False)
+    user = FakePeripheral("user", [Need("r"), Need("plain")])
+    runtime = await run(tmp_path, host(), radio, plain, user, context=lambda: region, is_docker_enabled=False)
 
     before, region = region, Context(region="USA")
     await runtime.context_did_change(before)
-    await user.peripherals.restart(plain)
+    await runtime.restart(plain)
     await settle(runtime)
     assert compose(tmp_path)["radio"]["environment"]["REGION"] == "Europe"  # not recreated behind its back
 
@@ -232,9 +232,9 @@ async def test_services_preferring_the_same_port_get_different_ones(tmp_path):
         provides=[Endpoint("bridge", "x", "ws://127.0.0.1:{ports.api}")],
         ports={"api": 5580},
     )
-    user = FakePeripheral("user", [Need("bridge")], peripherals=[bridge])
-    app, _ = matter()
-    await run(tmp_path, host(), app, user, is_docker_enabled=False)
+    user = FakePeripheral("user", [Need("bridge")])
+    app, server = matter()
+    await run(tmp_path, host(), server, app, bridge, user, is_docker_enabled=False)
     api = compose(tmp_path)["bridge"]["command"][1]
     assert user.peripherals.endpoint("bridge").url == f"ws://127.0.0.1:{api}"
     ports = {api, app.peripherals.endpoint("matter").url.rsplit(":", 1)[1].removesuffix("/ws")}
@@ -259,8 +259,8 @@ class Router(Service):
 
 async def test_what_needs_a_service_waits_for_its_setup_then_hears_what_it_learned(tmp_path):
     router, output = Router(), RecordingRuntimeOutput()
-    thread = FakePeripheral("thread", [Need("thread")], peripherals=[router])
-    runtime = await run(tmp_path, host(), thread, output=output, is_docker_enabled=False, settled=False)
+    thread = FakePeripheral("thread", [Need("thread")])
+    runtime = await run(tmp_path, host(), router, thread, output=output, is_docker_enabled=False, settled=False)
     await until(runtime, lambda: state(runtime, router) == PeripheralState.STARTING, settled=False)
     assert runtime.status(thread) == PeripheralStatus(PeripheralState.WAITING, "waiting for router")
 
@@ -270,7 +270,7 @@ async def test_what_needs_a_service_waits_for_its_setup_then_hears_what_it_learn
     assert router.calls == [("provision", "http://ours"), ("learn", "http://ours")]
     assert output.learned == [("router", {"thread_dataset": "0e08"})]
 
-    await thread.peripherals.restart(router)  # recreated: it may hold another network now
+    await runtime.restart(router)  # recreated: it may hold another network now
     await until(runtime, lambda: len(output.learned) == 2)
     assert router.calls[-2:] == [("provision", "http://ours"), ("learn", "http://ours")]
     assert thread.calls == ["start"]
@@ -335,7 +335,7 @@ def docker(monkeypatch, listening) -> Docker:
 async def test_a_failed_compose_up_is_tried_again(tmp_path, docker):
     docker.failure = b"Conflict. The container name is already in use"
     app, server = matter()
-    runtime = await run(tmp_path, host(), app)
+    runtime = await run(tmp_path, host(), server, app)
     assert runtime.status(server).state == PeripheralState.WAITING
     assert "Conflict. The container name is already in use" in runtime.status(server).reason
 
@@ -347,7 +347,7 @@ async def test_a_failed_compose_up_is_tried_again(tmp_path, docker):
 async def test_a_container_is_ready_once_compose_runs_it_and_its_ports_answer(tmp_path, docker):
     docker.is_answering = False
     app, server = matter()
-    runtime = await run(tmp_path, host(), app, settled=False)
+    runtime = await run(tmp_path, host(), server, app, settled=False)
     await until(runtime, lambda: state(runtime, server) == PeripheralState.STARTING, settled=False)
     assert runtime.status(app).reason == "waiting for matterjs-server"
 
@@ -359,7 +359,7 @@ async def test_a_container_that_never_answers_fails_its_start(tmp_path, docker, 
     monkeypatch.setattr("majordom_integration_sdk.runtime.runtime.START_TIMEOUT", 0.05)
     docker.is_answering = False
     app, server = matter()
-    runtime = await run(tmp_path, host(), app)
+    runtime = await run(tmp_path, host(), server, app)
     await until(runtime, lambda: state(runtime, server) == PeripheralState.FAILED)
     assert runtime.status(server) == PeripheralStatus(PeripheralState.FAILED, "didn't start within 0.05 s")
     assert runtime.status(app).reason == "need matter/matter-server-ws: matterjs-server is failed"
@@ -368,12 +368,12 @@ async def test_a_container_that_never_answers_fails_its_start(tmp_path, docker, 
 async def test_restarting_a_service_recreates_only_its_container(tmp_path, docker):
     app, server = matter()
     integration = zigbee()
-    peripherals = (host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol, integration, app)
+    peripherals = (host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol, integration, server, app)
     runtime = await run(tmp_path, *peripherals)
     await until(runtime, lambda: state(runtime, app) == state(runtime, integration) == PeripheralState.RUNNING)
     before = compose(tmp_path)
 
-    await app.peripherals.restart(server)
+    await runtime.restart(server)
     await until(runtime, lambda: state(runtime, server) == PeripheralState.RUNNING)
     assert compose(tmp_path) == before
     assert [call[-1] for call in docker.calls][-2:] == ["--remove-orphans"] * 2  # without it, then with it again
@@ -381,14 +381,14 @@ async def test_restarting_a_service_recreates_only_its_container(tmp_path, docke
 
 
 async def test_a_container_whose_start_was_stopped_is_taken_down(tmp_path, docker):
-    app, _ = matter()
+    app, server = matter()
     plain = Service("plain", {"image": "plain"}, [Need("ip")], [Endpoint("plain")])
-    user = FakePeripheral("user", [Need("plain")], peripherals=[plain])
-    runtime = await run(tmp_path, host(), app)
+    user = FakePeripheral("user", [Need("plain")])
+    runtime = await run(tmp_path, host(), server, app)
     await until(runtime, lambda: state(runtime, app) == PeripheralState.RUNNING)
 
     docker.gate = asyncio.Event()
-    runtime.given.append(user)
+    runtime.given += [plain, user]
     refresh = asyncio.ensure_future(runtime.refresh())
     await until(runtime, lambda: docker.applied[-1] == {"matterjs-server", "plain"}, settled=False)
     asyncio.get_running_loop().call_later(0.05, docker.gate.set)  # docker takes it after all

@@ -16,7 +16,7 @@ USB_DRIVER = "usb-driver"  # the family a driver provides itself as, to the scan
 class UsbDriver(Peripheral):
     """One kind of USB device: recognises which firmware a device runs and says what each firmware serves.
 
-    The scanner asks its own drivers first, then the ones integrations bring along in their ``services``: Zigbee's
+    The scanner asks its own drivers first, then the ones integrations provide next to their controller: Zigbee's
     tells the radios only zigpy knows apart. ``firmwares`` maps a firmware to what it serves: ``{device}`` in a URL is
     the device's path, ``params`` its serial settings (soldered hardware may wire them differently).
     """

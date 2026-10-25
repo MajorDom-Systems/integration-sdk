@@ -22,7 +22,6 @@ from majordom_integration_sdk.peripherals import (
     Need,
     Peripheral,
     PeripheralChange,
-    Peripherals,
     UsbDriver,
 )
 from majordom_integration_sdk.runtime.peripherals.hardware.drivers import DEFAULT_USB_DRIVERS, RADIO_USB_IDS
@@ -131,7 +130,7 @@ class Radio(Peripheral):
 
 class UsbScanner(Peripheral):
     """USB devices plugged in (``/dev/serial/by-id``), each brought along as a `Radio` and identified by its drivers,
-    then by the ones integrations bring along (``usb-driver``): radios today. Only a device whose USB id is a known
+    then by the ones integrations provide (``usb-driver``): radios today. Only a device whose USB id is a known
     radio's is opened unasked; another is identified when the user asks (`Radio.probe`). One another program holds is
     left alone until then.
 
@@ -144,17 +143,17 @@ class UsbScanner(Peripheral):
 
     def __init__(self, drivers: Sequence[UsbDriver] = DEFAULT_USB_DRIVERS):
         self.drivers = list(drivers)
-        self._peripherals = Peripherals()
+        self._radios: list[Radio] = []
         self._tasks: set[asyncio.Task] = set()  # watching the sticks, and asking new drivers about them
         self._scanning = asyncio.Lock()  # one scan at a time: two would open a stick at once
 
     @property
-    def peripherals(self) -> Peripherals:
-        return self._peripherals
+    def provides(self) -> list[Radio]:
+        return self._radios
 
     @property
     def radios(self) -> list[Radio]:
-        return [radio for radio in self.peripherals if isinstance(radio, Radio)]
+        return list(self._radios)
 
     async def start(self):
         await self._scan()
@@ -163,7 +162,7 @@ class UsbScanner(Peripheral):
     async def stop(self):
         for task in self._tasks:
             task.cancel()
-        self.peripherals.clear()
+        self._radios = []
 
     async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:
         """An integration brought a driver along: it may know the sticks no other driver did. Asked in the background,
@@ -193,7 +192,7 @@ class UsbScanner(Peripheral):
                 if is_trusted and radio.driver is None and not radio.held_by and not radio.is_busy:
                     await radio.identify()
                 radios[name] = radio
-            self.peripherals[:] = [radios[name] for name in sorted(found)]
+            self._radios = [radios[name] for name in sorted(found)]
 
     async def _watch(self):
         seen = _nodes(_sticks())

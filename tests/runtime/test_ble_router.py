@@ -528,16 +528,16 @@ async def test_the_router_hears_through_the_proxies_an_integration_brings_along(
     esphome = FakePeripheral("esphome", [Need("ble", ["router"], is_required=False)], answer=True)
     runtime = await run(tmp_path, ble, esphome)
 
-    esphome.peripherals.append(BLEProxy(proxy))  # a node connected
+    esphome.provided.append(BLEProxy(proxy))  # a node connected
     await changed(runtime, esphome)
     assert proxy.on_advertisement is not None  # heard through
 
     again = FakeBLESource("esphome:aa")  # it reconnected: another source under the same name
-    esphome.peripherals[:] = [BLEProxy(again)]
+    esphome.provided[:] = [BLEProxy(again)]
     await changed(runtime, esphome)
     assert proxy.on_advertisement is None and again.on_advertisement is not None
 
-    esphome.peripherals.clear()  # gone
+    esphome.provided.clear()  # gone
     await changed(runtime, esphome)
     assert again.on_advertisement is None
 

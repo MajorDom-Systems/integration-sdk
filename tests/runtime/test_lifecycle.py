@@ -408,56 +408,50 @@ async def test_a_call_scheduled_by_a_status_callback_returns_once_acted_on(tmp_p
     assert seen == [S.DISABLED]
 
 
-# what a peripheral brings along: the cascade
+# a server next to what needs it, and what a peripheral brings along while it runs
 
 
-def matter_with_server(**server) -> tuple[FakePeripheral, FakePeripheral]:
-    server_ = FakePeripheral("matter-server", provides=[SERVER], is_on_demand=True, **server)
-    return FakePeripheral("matter", [Need("matter")], peripherals=[server_]), server_
+def matter_and_server() -> tuple[FakePeripheral, FakePeripheral]:
+    return FakePeripheral("matter", [Need("matter")]), FakePeripheral(
+        "matter-server", provides=[SERVER], is_on_demand=True
+    )
 
 
-async def test_what_it_brings_along_starts_first_and_stops_with_it(tmp_path):
-    matter, server = matter_with_server()
-    runtime = await run(tmp_path, matter)
-    assert runtime.peripherals == [matter, server]
+async def test_a_server_runs_while_what_needs_it_runs(tmp_path):
+    matter, server = matter_and_server()
+    runtime = await run(tmp_path, server, matter)
     assert (state(runtime, matter), state(runtime, server)) == (S.RUNNING, S.RUNNING)
 
     await runtime.disable(matter)
     assert server.calls == ["start", "stop"]
-    assert runtime.status(server) == PeripheralStatus(S.WAITING, "comes with matter, which is disabled")
+    assert runtime.status(server) == PeripheralStatus(S.WAITING, "nothing that runs uses it")
 
     await runtime.enable(matter)
     await settle(runtime)
     assert (state(runtime, matter), state(runtime, server)) == (S.RUNNING, S.RUNNING)
 
 
-async def test_what_a_failed_one_brought_along_stops_with_it(tmp_path):
-    matter, server = matter_with_server()
-    runtime = await run(tmp_path, matter)
-
+async def test_a_server_only_a_failed_one_needs_stops(tmp_path):
+    matter, server = matter_and_server()
+    runtime = await run(tmp_path, server, matter)
     for _ in range(len(module.RETRY_DELAYS) + 1):
         await until(runtime, lambda: state(runtime, matter) == S.RUNNING)
         await matter.runtime.peripheral_did_fail(matter, "gave up")
-    assert runtime.status(server) == PeripheralStatus(S.WAITING, "comes with matter, which is failed")
+    assert runtime.status(server) == PeripheralStatus(S.WAITING, "nothing that runs uses it")
 
 
-async def test_what_it_brought_along_while_running_goes_when_it_lets_go(tmp_path):
-    class ESPHome(FakePeripheral):
-        async def stop(self):
-            await super().stop()
-            self.peripherals.clear()  # releases its proxies
-
-    esphome = ESPHome("esphome")
+async def test_what_it_brought_along_while_running_goes_when_it_stops(tmp_path):
+    esphome = FakePeripheral("esphome")
     proxy = FakePeripheral("esphome:aa", provides=[Endpoint("ble", "esphome-proxy", "esphome:aa")])
     router = FakePeripheral("router", [Need("ble", ["esphome-proxy"], is_many=True, is_required=False)], answer=True)
     runtime = await run(tmp_path, router, esphome)
 
-    esphome.peripherals.append(proxy)  # a node connected
+    esphome.provided.append(proxy)  # a node connected
     await changed(runtime, esphome)
     assert state(runtime, proxy) == S.RUNNING
     assert router.peripherals.endpoints("ble") == list(proxy.provides)
 
-    await runtime.disable(esphome)
+    await runtime.disable(esphome)  # it holds on to it: it goes all the same
     assert proxy not in runtime.peripherals
     assert proxy.calls == ["start", "stop"]
     assert router.peripherals.endpoints("ble") == []
@@ -483,16 +477,6 @@ async def test_what_uses_a_provider_stops_before_it(tmp_path):
     stopped.clear()
     await runtime.stop()
     assert stopped == ["app", "bridge", "matter-server"]
-
-
-async def test_a_peripheral_restarts_what_it_brought_along_and_nothing_else(tmp_path):
-    matter, server = matter_with_server()
-    runtime = await run(tmp_path, matter)
-
-    await matter.peripherals.restart(server)
-    await settle(runtime)
-    assert server.calls == ["start", "stop", "start"]
-    assert matter.calls == ["start"]  # what it is bound to is the same: it reconnects on its own
 
 
 # on demand
@@ -541,8 +525,8 @@ class Gated(FakePeripheral):
 
 async def test_what_needs_a_provider_starts_once_its_start_returned(tmp_path):
     server = Gated("matter-server", provides=[SERVER], is_on_demand=True)
-    matter = FakePeripheral("matter", [Need("matter")], peripherals=[server])
-    runtime = await run(tmp_path, matter, settled=False)
+    matter = FakePeripheral("matter", [Need("matter")])
+    runtime = await run(tmp_path, server, matter, settled=False)
     await until(runtime, lambda: state(runtime, server) == S.STARTING, settled=False)
     assert runtime.status(matter) == PeripheralStatus(S.WAITING, "waiting for matter-server")
 
@@ -554,8 +538,8 @@ async def test_what_needs_a_provider_starts_once_its_start_returned(tmp_path):
 async def test_a_running_peripheral_rides_out_its_provider_restarting(tmp_path):
     server = Gated("matter-server", provides=[SERVER], is_on_demand=True)
     server.gate.set()
-    matter = FakePeripheral("matter", [Need("matter")], peripherals=[server])
-    runtime = await run(tmp_path, matter)
+    matter = FakePeripheral("matter", [Need("matter")])
+    runtime = await run(tmp_path, server, matter)
 
     server.gate.clear()
     await runtime.restart(server)

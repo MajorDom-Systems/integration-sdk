@@ -5,14 +5,14 @@ instead of reinventing them, so every integration is exercised through the same 
 
 - :class:`RecordingControllerOutput` — a spy implementing every ``ControllerOutput``
   callback, capturing what a controller reports back to the Hub.
-- :class:`FakePeripheral` — a peripheral that records how it is run: what it needs, provides and brings
-  along is set per test, its starts can fail, its hooks answer as told.
+- :class:`FakePeripheral` — a peripheral that records how it is run: what it needs and provides (endpoints
+  and the peripherals it brings along) is set per test, its starts can fail, its hooks answer as told.
 - :class:`RecordingPeripheralOutput` — what a peripheral reports to the runtime; :class:`RecordingRuntimeOutput` —
   what the runtime reports to the Hub.
 - Offline doubles of every capability (no radios/sockets touched): :class:`FakeBLESource` for the
   Bluetooth router to hear through (``router.add_source(source)``), :class:`FakeBLERouter`,
   :class:`FakeZeroconf` (the ``discovery`` extra) and :class:`FakeSSDP`. Each provides itself as
-  ``.endpoint``, to bind in the controller's peripherals: ``Controller(platform, {"ble": router.endpoint})``.
+  ``.endpoint``, to bind as the controller's peripherals: ``Peripherals({"ble": router.endpoint})``.
 - :func:`build_test_platform` — assembles a controller ``Platform`` wired with the recording
   output, an in-memory device repository and temp-dir storage, so a test can drive a controller
   exactly as the Hub would.
@@ -29,7 +29,7 @@ from uuid import UUID
 from majordom_integration_sdk.capabilities.ble import BLEConnection, OnAdvertisement
 from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
 from majordom_integration_sdk.controller.platform import Platform
-from majordom_integration_sdk.peripherals import Endpoint, Need, Peripheral, PeripheralChange, Peripherals
+from majordom_integration_sdk.peripherals import Endpoint, Need, Peripheral, PeripheralChange
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
@@ -88,15 +88,14 @@ class RecordingControllerOutput(ControllerOutput):
 
 class FakePeripheral(Peripheral):
     """A peripheral that records how it is run (``calls``: "start", "stop") and the changes it hears. Its first
-    ``failures`` starts raise; ``answer`` is what its hooks return, or an exception they raise. Change ``provided`` or
-    ``peripherals``, then tell ``runtime``, as a real one does when a stick is plugged in."""
+    ``failures`` starts raise; ``answer`` is what its hooks return, or an exception they raise. Change ``provided``,
+    then tell ``runtime``, as a real one does when a stick is plugged in."""
 
     def __init__(
         self,
         name: str,
         needs: Sequence[Need] = (),
-        provides: Sequence[Endpoint] = (),
-        peripherals: Iterable[Peripheral] = (),
+        provides: Sequence[Endpoint | Peripheral] = (),
         *,
         is_on_demand: bool = False,
         failures: int = 0,
@@ -107,17 +106,12 @@ class FakePeripheral(Peripheral):
         self.is_on_demand = is_on_demand
         self.failures, self.answer = failures, answer
         self.Settings = settings
-        self._peripherals = Peripherals(peripherals)
         self.calls: list[str] = []
         self.changes: list[PeripheralChange | tuple[str, Any]] = []  # needs moved; ("settings"|"context", before)
 
     @property
-    def provides(self) -> Sequence[Endpoint]:
+    def provides(self) -> Sequence[Endpoint | Peripheral]:
         return self.provided
-
-    @property
-    def peripherals(self) -> Peripherals:
-        return self._peripherals
 
     async def start(self):
         self.calls.append("start")

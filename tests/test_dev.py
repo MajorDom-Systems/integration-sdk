@@ -33,8 +33,8 @@ class _RecordingController(AbstractController[Device, Parameter]):
     instances: list["_RecordingController"] = []
     handles_changes = True
 
-    def __init__(self, platform, peripherals=None):
-        super().__init__(platform, peripherals)
+    def __init__(self, platform):
+        super().__init__(platform)
         self.started = self.stopped = 0
         self.changes: list[PeripheralChange] = []
         _RecordingController.instances.append(self)

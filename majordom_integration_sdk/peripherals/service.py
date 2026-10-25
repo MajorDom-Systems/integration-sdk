@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from majordom_integration_sdk.peripherals.endpoint import Endpoint
 from majordom_integration_sdk.peripherals.need import Need
-from majordom_integration_sdk.peripherals.peripheral import Peripheral, Peripherals
+from majordom_integration_sdk.peripherals.peripheral import Peripheral
 
 if TYPE_CHECKING:
     from majordom_integration_sdk.controller.platform import Context
@@ -48,8 +48,9 @@ class _NoHost:
 
 
 class Service(Peripheral):
-    """A companion server an integration brings along, such as Matter's matterjs-server: a container that runs only
-    while something that runs is bound to one of its endpoints. List it in the controller's ``services``.
+    """A companion server an integration provides, such as Matter's matterjs-server: a container that runs only while
+    something that runs is bound to one of its endpoints. The integration lists it next to its controller, which
+    `Need`s what it provides.
 
     ``compose`` is its Docker Compose service definition (image, environment, volumes, …); its strings may hold
     ``{data}``, ``{peripherals.<family>.url}``, ``{settings.<field>}``, ``{context.<field>}``,
@@ -83,15 +84,10 @@ class Service(Peripheral):
         self.name, self.compose, self.needs, self.templates = name, compose, needs, provides
         self.Settings, self.ports = settings, ports
         self.host: ServiceHost = _NoHost()  # the runtime's
-        self._peripherals = Peripherals()
 
     @property
     def provides(self) -> Sequence[Endpoint]:
         return self.host.provides(self)
-
-    @property
-    def peripherals(self) -> Peripherals:
-        return self._peripherals
 
     async def start(self):
         await self.host.up(self)

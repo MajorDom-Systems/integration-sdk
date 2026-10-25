@@ -84,6 +84,8 @@ class MemoryDisabledStore:
         (self.disabled.add if is_disabled else self.disabled.discard)(name)
 
 
+_GIVEN_UP = (PeripheralState.DISABLED, PeripheralState.FAILED)
+
 type Binding = tuple[Peripheral, Endpoint]  # who provides it, and what
 type _Key = dict[str, list[tuple[Peripheral, Endpoint, int]]]  # what tells bindings apart
 
@@ -250,21 +252,26 @@ class Runtime:
 
     def reach(self, endpoints: Iterable[Endpoint]) -> list[str]:
         """The families ``endpoints`` would serve, themselves or through the on-demand peripherals here they would run,
-        that something running anyway needs, or what it brings along (an integration, its containers): what a radio's
-        firmware is good for."""
+        that something needs: one that runs anyway, or one used that isn't on the way: what a radio's firmware is good
+        for."""
         families: set[str] = set()
-        reached = {e.family for e in endpoints}
+        reached, on_the_way = {e.family for e in endpoints}, set[str]()
         while reached != families:
             families = reached
+            on_the_way = {
+                name
+                for name, entry in self._entries.items()
+                if entry.peripheral.is_on_demand and _is_satisfied(entry.peripheral.needs, families)
+            }
             reached = families.union(
-                *(
-                    {e.family for e in _read(entry.peripheral, "provides")}
-                    for entry in self._entries.values()
-                    if entry.peripheral.is_on_demand and _satisfied(entry.peripheral.needs, families)
-                )
+                *({e.family for e in _offered(self._entries[name].peripheral)} for name in on_the_way)
             )
-        anyway = [entry.peripheral for entry in self._entries.values() if self._is_run_anyway(entry)]
-        return sorted(families & {need.family for peripheral in anyway for need in peripheral.needs})
+        users = [
+            entry.peripheral
+            for name, entry in self._entries.items()
+            if not entry.peripheral.is_on_demand or (name in self._wanted and name not in on_the_way)
+        ]
+        return sorted(families & {need.family for peripheral in users for need in peripheral.needs})
 
     # What the Hub (or you) changes
 
@@ -458,18 +465,12 @@ class Runtime:
                     self._start(entry)
         return is_changed or self._snapshot() != before
 
-    def _snapshot(self) -> list[tuple[str, tuple[Endpoint, ...], tuple[str, ...]]]:
-        return [
-            (
-                entry.name,
-                tuple(_read(entry.peripheral, "provides")),
-                tuple(p.name for p in _read(entry.peripheral, "peripherals")),
-            )
-            for entry in self._entries.values()
-        ]
+    def _snapshot(self) -> list[tuple[str, tuple[Endpoint | Peripheral, ...]]]:
+        return [(entry.name, tuple(_read(entry.peripheral))) for entry in self._entries.values()]
 
     def _collect(self) -> list[_Entry]:
-        """Every peripheral given and brought along, in binding order; the ones gone are returned."""
+        """Every peripheral given, and what the ones that run brought along, in binding order; the ones gone are
+        returned."""
         entries: dict[str, _Entry] = {}
         gone: list[_Entry] = []
 
@@ -484,8 +485,9 @@ class Runtime:
                     gone.append(entry)  # replaced by another of the same name
                 entry = self._adopt(peripheral, contributor)
             entries[peripheral.name] = entry
-            for child in _read(peripheral, "peripherals"):
-                walk(child, peripheral.name)
+            if entry.state == PeripheralState.RUNNING:
+                for child in _brought(peripheral):
+                    walk(child, peripheral.name)
 
         for peripheral in self.given:
             walk(peripheral, None)
@@ -517,32 +519,15 @@ class Runtime:
             self.state["settings"][peripheral.name] = dumped
             self._save()
 
-    def _is_run_anyway(self, entry: _Entry) -> bool:
-        """It, or what brought it along, runs whether something uses it or not."""
-        while entry.peripheral.is_on_demand:
-            if entry.contributor is None:
-                return False
-            entry = self._entries[entry.contributor]
-        return True
-
-    def _is_alive(self, entry: _Entry) -> bool:
-        """Neither it nor what brought it along is disabled or failed."""
-        while True:
-            if entry.state in (PeripheralState.DISABLED, PeripheralState.FAILED):
-                return False
-            if entry.contributor is None:
-                return True
-            entry = self._entries[entry.contributor]
-
     def _resolve(self):
         """The ones that should run: from the ones alive that run anyway, down through what they bind, binding in order
         with single-use endpoints taken; one whose required need finds nothing is left out, and it all binds anew."""
-        alive = {name for name, entry in self._entries.items() if self._is_alive(entry)}
-        provides = {name: _read(entry.peripheral, "provides") for name, entry in self._entries.items()}
+        alive = {name for name, entry in self._entries.items() if entry.state not in _GIVEN_UP}
+        provides = {name: _offered(entry.peripheral) for name, entry in self._entries.items()}
         left_out: set[str] = set()
         while True:
             among = alive - left_out
-            wanted = {name for name in among if self._is_run_anyway(self._entries[name])}
+            wanted = {name for name in among if not self._entries[name].peripheral.is_on_demand}
             while True:
                 bound, taken = self._bind(wanted, among, provides)
                 used = {p.name for b in bound.values() for bindings in b.values() for p, _ in bindings}
@@ -612,8 +597,9 @@ class Runtime:
         """Why a waiting one doesn't start now; empty when it can."""
         if entry.stopped_with is not None:
             return "stopped by itself: waits for its needs to change or a restart"
-        if (contributor := entry.contributor) is not None and not self._is_alive(self._entries[contributor]):
-            return f"comes with {contributor}, which is {self._entries[contributor].state}"
+        contributor = self._entries.get(entry.contributor or "")
+        if contributor is not None and contributor.state != PeripheralState.RUNNING:  # it goes with the next pass
+            return f"comes with {contributor.name}, which stopped"
         if entry.name not in self._wanted:
             required = {need.family for need in entry.peripheral.needs if need.is_required}
             reasons = [why for family, why in self._unbound.get(entry.name, {}).items() if family in required]
@@ -630,8 +616,7 @@ class Runtime:
         return entry.state == PeripheralState.RUNNING
 
     def _bind_view(self, entry: _Entry, bound: Mapping[str, list[Binding]]):
-        if isinstance(view := entry.peripheral.peripherals, Peripherals):
-            view.bind(_view(entry.peripheral, bound), restart=self.restart)
+        entry.peripheral.peripherals = Peripherals(_view(entry.peripheral, bound))
 
     def _start(self, entry: _Entry):
         entry.state, entry.reason = PeripheralState.STARTING, ""
@@ -825,13 +810,21 @@ def _failure(error: BaseException) -> str:
     return str(error) or type(error).__name__
 
 
-def _read(peripheral: Peripheral, name: str) -> list[Any]:
-    """A sequence ``peripheral`` holds; one that can't say holds nothing, and the others run on."""
+def _read(peripheral: Peripheral) -> list[Endpoint | Peripheral]:
+    """What ``peripheral`` provides; one that can't say provides nothing, and the others run on."""
     try:
-        return list(getattr(peripheral, name))
+        return list(peripheral.provides)
     except Exception as error:
-        log.error(f"{peripheral.name} failed to say what it {name}: {error}", exc_info=error)
+        log.error(f"{peripheral.name} failed to say what it provides: {error}", exc_info=error)
         return []
+
+
+def _offered(peripheral: Peripheral) -> list[Endpoint]:
+    return [item for item in _read(peripheral) if isinstance(item, Endpoint)]
+
+
+def _brought(peripheral: Peripheral) -> list[Peripheral]:
+    return [item for item in _read(peripheral) if not isinstance(item, Endpoint)]
 
 
 @contextlib.contextmanager
@@ -877,7 +870,7 @@ def _key(bound: Mapping[str, list[Binding]]) -> _Key:
     return {family: [(p, e, id(e.instance)) for p, e in bindings] for family, bindings in bound.items()}
 
 
-def _satisfied(needs: Sequence[Need], families: set[str]) -> bool:
+def _is_satisfied(needs: Sequence[Need], families: set[str]) -> bool:
     return all(need.family in families for need in needs if need.is_required)
 
 

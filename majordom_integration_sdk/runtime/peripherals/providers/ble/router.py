@@ -30,7 +30,7 @@ from majordom_integration_sdk.capabilities.ble import (
     PausableBLESource,
     ScanModeBLESource,
 )
-from majordom_integration_sdk.peripherals import Endpoint, Need, Peripheral, PeripheralChange, Peripherals
+from majordom_integration_sdk.peripherals import Endpoint, Need, Peripheral, PeripheralChange
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
@@ -76,7 +76,6 @@ class BLEService(Peripheral):
 
     def __init__(self, sources: Iterable[BLESource] = ()):
         """``sources``: radios to hear through besides the ones the runtime binds."""
-        self._peripherals = Peripherals()
         self._listeners: list[tuple[BLEDiscoveryListener, list[BLEMatcher]]] = []
         self._sources: dict[str, BLESource] = {s.name: s for s in sources}
         self._bound: dict[tuple[str, int], str] = {}  # bound endpoint (url, instance) -> the source it became
@@ -102,10 +101,6 @@ class BLEService(Peripheral):
     @property
     def provides(self) -> list[Endpoint]:
         return [self.endpoint]
-
-    @property
-    def peripherals(self) -> Peripherals:
-        return self._peripherals
 
     async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:
         """The runtime bound other radios to it: hear through the new ones, let go of the lost ones."""

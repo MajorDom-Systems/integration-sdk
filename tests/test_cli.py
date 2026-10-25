@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from majordom_integration_sdk import Endpoint, IntegrationError, Need
+from majordom_integration_sdk import Endpoint, IntegrationError, Need, Peripherals
 from majordom_integration_sdk.controller import AbstractController
 from majordom_integration_sdk.dev.cli import _CliControllerOutput, _CliSession, _print
 from majordom_integration_sdk.schemas.command import DeviceCommand
@@ -322,7 +322,7 @@ async def test_a_pinned_endpoint_binds_the_need_and_starts_the_integration(needs
 
 async def test_needs_without_a_runtime_list_what_was_given():
     controller = _ZigbeeController(build_test_platform(integration=INTEGRATION))
-    controller.peripherals.bind({"zigbee": Endpoint("zigbee", "ezsp", "/dev/ttyUSB0")})
+    controller.peripherals = Peripherals({"zigbee": Endpoint("zigbee", "ezsp", "/dev/ttyUSB0")})
     session = _CliSession(controller)
     assert session.needs()[0] == "zigbee/ezsp|znp  -> /dev/ttyUSB0  by you"
     with pytest.raises(RuntimeError, match="by hand"):
