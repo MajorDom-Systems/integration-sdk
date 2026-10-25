@@ -324,12 +324,15 @@ class Runtime:
         return peripheral.settings
 
     async def context_did_change(self, before: Context):
-        """The Hub-wide facts changed: every peripheral that runs hears it (`Peripheral.context_did_change`)."""
+        """The Hub-wide facts changed: every peripheral that runs hears it (`Peripheral.context_did_change`); one
+        still starting may have read the ones before, so it starts anew."""
 
         async def apply():
             for entry in list(self._entries.values()):
                 if entry.state == PeripheralState.RUNNING:
                     await self._ask(entry, entry.peripheral.context_did_change(before))
+                elif entry.state == PeripheralState.STARTING:
+                    await self._stop(entry, _waiting())
 
         await self._act(apply)
 

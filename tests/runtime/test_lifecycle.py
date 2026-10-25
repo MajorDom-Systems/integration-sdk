@@ -593,6 +593,27 @@ async def test_a_changed_context_is_handed_over_or_restarts_it(tmp_path):
     assert (handles.calls, restarts.calls) == (["start"], ["start", "stop", "start"])
 
 
+async def test_a_changed_context_starts_anew_one_still_starting(tmp_path):
+    gate = asyncio.Event()
+
+    class Slow(FakePeripheral):
+        async def start(self):
+            await super().start()
+            await gate.wait()
+
+    slow = Slow("slow")
+    runtime = Runtime(tmp_path / "data", [slow])
+    await runtime.start()
+    await asyncio.sleep(0)
+    assert state(runtime, slow) == S.STARTING
+
+    await runtime.context_did_change(Context(region="Europe"))  # it may have read the one before
+    gate.set()
+    await settle(runtime)
+    assert slow.calls == ["start", "stop", "start"] and state(runtime, slow) == S.RUNNING
+    await runtime.stop()
+
+
 # one that misbehaves stops nothing else
 
 
