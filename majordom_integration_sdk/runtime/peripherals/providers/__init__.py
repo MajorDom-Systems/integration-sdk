@@ -1,5 +1,5 @@
 """Peripherals the runtime runs in its own process and offers as shared endpoints with an ``instance``: the Bluetooth
-router (``ble/router``), DNS-SD (``mdns/dns-sd``, the ``discovery`` extra) and SSDP (``upnp/ssdp``)."""
+router (``ble/router``), DNS-SD (``mdns/zeroconf``, the ``discovery`` extra) and SSDP (``upnp/ssdp``)."""
 
 from __future__ import annotations
 

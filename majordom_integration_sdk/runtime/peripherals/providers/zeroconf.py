@@ -1,4 +1,4 @@
-"""The runtime's ``mdns/dns-sd``: one zeroconf browser shared by every integration that needs DNS-SD (the
+"""The runtime's ``mdns/zeroconf``: one zeroconf browser shared by every integration that needs DNS-SD (the
 ``discovery`` extra). See `majordom_integration_sdk.capabilities.zeroconf` for the contract."""
 
 import asyncio
@@ -25,12 +25,12 @@ _EVICT_GRACE_MS = 10_000  # ms — grace window after A/AAAA expiry before probi
 class ZeroconfDiscoveryService:
     """A `Zeroconf`."""
 
-    name = "dns-sd"
+    name = "zeroconf"
     needs: list[Need] = []
 
     @property
     def endpoint(self) -> Endpoint:
-        return Endpoint("mdns", "dns-sd", "dns-sd", shared=True, instance=self)
+        return Endpoint("mdns", "zeroconf", "zeroconf", shared=True, instance=self)
 
     async def peripheral_did_change(self, change: PeripheralChange) -> None:
         pass

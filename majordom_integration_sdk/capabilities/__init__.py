@@ -1,5 +1,5 @@
 """The contracts of the peripherals the runtime provides in-process, for integrations to use through their needs:
-``ble/router`` (`ble`, secured by `ble_security`), ``mdns/dns-sd`` (`zeroconf`) and ``upnp/ssdp`` (`ssdp`). Interfaces
+``ble/router`` (`ble`, secured by `ble_security`), ``mdns/zeroconf`` (`zeroconf`) and ``upnp/ssdp`` (`ssdp`). Interfaces
 only: the implementations live in `majordom_integration_sdk.runtime`."""
 
 from .ble import (

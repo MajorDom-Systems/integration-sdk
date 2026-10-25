@@ -90,7 +90,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter](ABC):
     needs: ClassVar[Sequence[Need]] = ()
     """What the integration requires from its environment: everything external, which something else must provide —
     radios (``Need("zigbee", ["ezsp"])``), the Bluetooth router (``Need("ble", ["router"])``), DNS-SD
-    (``Need("mdns", ["dns-sd"])``), SSDP (``Need("upnp", ["ssdp"])``) and the services it brings. Bound ones arrive in
+    (``Need("mdns", ["zeroconf"])``), SSDP (``Need("upnp", ["ssdp"])``) and the services it brings. Bound ones arrive in
     ``self.peripherals`` keyed by family; in library mode pass them yourself. Never need raw Bluetooth: the router
     holds every radio."""
 

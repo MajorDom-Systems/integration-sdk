@@ -1,6 +1,6 @@
-"""The ``mdns/dns-sd`` contract: browsing DNS-SD services over mDNS.
+"""The ``mdns/zeroconf`` contract: browsing DNS-SD services over mDNS.
 
-Integrations need it as ``Need("mdns", ["dns-sd"])`` and get the runtime's browser at
+Integrations need it as ``Need("mdns", ["zeroconf"])`` and get the runtime's browser at
 ``self.peripherals.instance("mdns")``: a `Zeroconf`.
 """
 
