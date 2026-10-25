@@ -23,7 +23,7 @@ class IntegrationError:
     # the "hub-" prefix is reserved for the errors the Hub reports on its behalf.
     id: str
     message: str  # plain language, with any call-to-action in the text
-    still_running: bool = True  # False: the integration stopped, and the Hub restarts it
+    is_still_running: bool = True  # False: the integration stopped, and the Hub restarts it
 
 
 class ControllerOutput(Protocol):
@@ -58,7 +58,7 @@ class ControllerOutput(Protocol):
         integration stops. Reporting an active ``id`` again replaces it, so it is fine to report on
         every failed attempt; several ids can be active at once.
 
-        ``still_running`` is ``False`` when the controller can no longer run and is now inactive
+        ``is_still_running`` is ``False`` when the controller can no longer run and is now inactive
         — the Hub reflects it as a failed integration and restarts it; the user is told it failed
         (and why, if actionable) without a technical dump.
         """
