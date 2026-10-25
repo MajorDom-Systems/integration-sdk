@@ -38,7 +38,8 @@ UNSEEN = "another program"  # one that locked a port: whether it let go shows on
 
 class Radio(Peripheral):
     """A radio, a USB stick or soldered on the board: it serves what its firmware does once a driver identified it, and
-    nothing while another program holds it or it is being flashed. Flashing and probing are the user's to ask for."""
+    nothing while another program holds it or it is being flashed. Flashing, probing and forgetting it are the user's
+    to ask for."""
 
     class Settings(BaseModel):
         firmware_channel: Literal["stable", "dev"] = Field(
@@ -55,9 +56,9 @@ class Radio(Peripheral):
         driver: UsbDriver | None = None,
         firmware: str | None = None,
         params: Mapping[str, Any] | None = None,  # the firmware's serial settings, where soldered hardware wires them
-        remember: Callable[[], Any] = lambda: None,  # keeps what it is once probed or flashed
+        scanner: UsbScanner | None = None,  # what found it plugged in, which keeps what it is
     ):
-        self.name, self.path, self.drivers, self.remember = name, path, drivers, remember
+        self.name, self.path, self.drivers, self.scanner = name, path, drivers, scanner
         self.driver, self.firmware, self.params = driver, firmware, params or {}
         self.node = os.path.realpath(path)  # a container keeps the node it was created with: follow a re-enumeration
         self.held_by: str | None = None  # another program that has it open: left alone until probed
@@ -97,7 +98,7 @@ class Radio(Peripheral):
         async with self._busy():
             self.held_by, self.is_claimed = None, True
             await self.recognise(is_asking_again=True)
-            self.remember()
+            self._remember()
 
     async def flash(self, firmware: str):
         """Switch it to ``firmware`` on its channel; whatever uses it lets go of it first and gets it back after."""
@@ -109,7 +110,21 @@ class Radio(Peripheral):
             finally:  # whether it took or not, what ran before may be gone
                 self.firmware, self.has_bluetooth = await _firmware(driver, self.path), False
                 await self.check_bluetooth()
-                self.remember()
+                self._remember()
+
+    async def forget(self):
+        """Forget what it is and that the user probed it: whatever uses it lets go of it, and it is looked at again as
+        a stick plugged in anew, or, soldered, identified again."""
+        async with self._busy():
+            self.driver, self.firmware, self.has_bluetooth, self.is_claimed, self._asked = None, None, False, False, []
+            if self.scanner is None:
+                await self.recognise()
+        if self.scanner:
+            await self.scanner.forget(self)
+
+    def _remember(self):
+        if self.scanner:
+            self.scanner.remember(self)
 
     @contextlib.asynccontextmanager
     async def _busy(self):
@@ -201,11 +216,11 @@ class UsbScanner(Peripheral):
                     await radio.recognise()
                 radios[name] = radio
             self._radios = [radios[name] for name in sorted(found)]
-        self._remember()
+        self.remember(*[radio for radio in self._radios if radio.driver or radio.is_claimed])
 
     def _radio(self, name: str, path: str) -> Radio:
         """A stick plugged in, claimed if the user probed it before."""
-        radio = Radio(name, path, self._drivers, remember=self._remember)
+        radio = Radio(name, path, self._drivers, scanner=self)
         radio.is_claimed = self._known.get(name, {}).get("is_claimed", False)
         return radio
 
@@ -215,13 +230,19 @@ class UsbScanner(Peripheral):
         if (driver := drivers.get(known.get("driver", ""))) and (firmware := known.get("firmware")):
             radio.driver, radio.firmware, radio.has_bluetooth = driver, firmware, known.get("has_bluetooth", False)
 
-    def _remember(self):
-        for radio in self._radios:
-            if radio.driver or radio.is_claimed:
-                driver = radio.driver.name if radio.driver else None
-                known = {"driver": driver, "firmware": radio.firmware, "has_bluetooth": radio.has_bluetooth}
-                self._known[radio.name] = known | {"is_claimed": radio.is_claimed}
+    def remember(self, *radios: Radio):
+        """Keep what ``radios`` are, and whether the user claimed them, across restarts."""
+        for radio in radios:
+            driver = radio.driver.name if radio.driver else None
+            known = {"driver": driver, "firmware": radio.firmware, "has_bluetooth": radio.has_bluetooth}
+            self._known[radio.name] = known | {"is_claimed": radio.is_claimed}
         write_json(self.data / "sticks.json", self._known)
+
+    async def forget(self, radio: Radio):
+        """Forget what ``radio`` is, and look at it again as a stick plugged in anew."""
+        self._known.pop(radio.name, None)
+        write_json(self.data / "sticks.json", self._known)
+        await self._rescan()
 
     async def _watch(self):
         seen = _nodes(_sticks())

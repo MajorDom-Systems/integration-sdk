@@ -1,6 +1,7 @@
 """Hardware as peripherals, over fakes of /dev and /sys: no real stick is opened."""
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -116,6 +117,36 @@ async def test_the_sticks_identified_and_probed_are_remembered_across_restarts(t
         "sky": ("zigbee-ncp", False),
     }
     assert integration.peripherals.endpoint("zigbee").url == "/dev/serial/by-id/arduino"
+
+
+async def test_a_forgotten_stick_is_looked_at_again_as_one_plugged_in_anew(tmp_path, sticks):
+    plug(sticks, "sky", "arduino")
+    driver = Driver(sky="zigbee-ncp", arduino="zigbee-ncp")
+    scanner = UsbScanner([driver])
+    runtime = await run(tmp_path, scanner)
+    sky, arduino = sorted(scanner.radios, key=lambda r: r.name, reverse=True)
+    await arduino.probe()
+    await settle(runtime)
+
+    await sky.forget()  # a known radio's USB id: identified again
+    await arduino.forget()  # one the user probed: left alone again until probed
+    await settle(runtime)
+    assert driver.opened == ["sky", "arduino", "sky"]
+    assert (sky.firmware, arduino.firmware, arduino.is_claimed, arduino.provides) == ("zigbee-ncp", None, False, [])
+    assert json.loads((scanner.data / "sticks.json").read_text()).keys() == {"sky"}
+
+
+async def test_a_forgotten_soldered_radio_is_identified_again(tmp_path):
+    (tmp_path / "ttyAMA3").touch()
+    driver = Driver(ttyAMA3="multipan-rcp")
+    board = FixedPeripherals(FixedRadio("mg26", str(tmp_path / "ttyAMA3"), "silabs", "zigbee-ncp"), drivers=[driver])
+    runtime = await run(tmp_path, board)
+    [radio] = board.provides
+    assert (radio.firmware, driver.opened) == ("zigbee-ncp", [])  # as the board says
+
+    await radio.forget()
+    await settle(runtime)
+    assert (radio.firmware, driver.opened) == ("multipan-rcp", ["ttyAMA3"])  # what it runs, asked
 
 
 async def test_a_stick_another_program_holds_is_left_alone_until_probed(tmp_path, sticks, held):
