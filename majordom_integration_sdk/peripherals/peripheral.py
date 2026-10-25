@@ -24,10 +24,6 @@ class PeripheralOutput(Protocol):
         """Its ``provides`` or the peripherals it brings along changed."""
         ...
 
-    async def peripheral_did_become_ready(self, peripheral: Peripheral):
-        """It serves now, so what needs it may start; only for one that isn't ``is_ready_on_start``."""
-        ...
-
     async def peripheral_did_stop(self, peripheral: Peripheral):
         """It stopped by itself, gracefully: it is stopped (``stop`` releases what it holds) and waits until one of its
         needs changes (goes and comes back, or moves) or the user restarts it."""
@@ -46,9 +42,6 @@ class _NoRuntime:
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
         pass
 
-    async def peripheral_did_become_ready(self, peripheral: Peripheral):
-        pass
-
     async def peripheral_did_stop(self, peripheral: Peripheral):
         pass
 
@@ -63,8 +56,8 @@ class Peripheral(Protocol):
 
     A runtime (`majordom_integration_sdk.runtime.Runtime`) runs every peripheral it is given by one rule: one that
     isn't disabled or failed runs while whatever brought it along does, while something that runs binds it if it
-    ``is_on_demand``, and once every required need is bound to a provider that runs and is ready. A required need that
-    can't be bound keeps it waiting, with the reason; one lost later stops it until it is back.
+    ``is_on_demand``, and once every required need is bound to a provider that runs. A required need that can't be bound
+    keeps it waiting, with the reason; one lost later stops it until it is back.
 
     Subclass it for the defaults. The runtime sets ``runtime``, and ``settings`` when the peripheral declares its
     options as a nested ``class Settings(BaseModel)``: annotate ``settings: Settings`` to type it.
@@ -73,7 +66,6 @@ class Peripheral(Protocol):
     name: str  # unique among the peripherals of a runtime: what it is known, persisted and disabled by
     needs: Sequence[Need] = ()
     is_on_demand: bool = False  # runs only while something that runs binds it: containers, in-process providers
-    is_ready_on_start: bool = True  # False: it serves only once it says so (`peripheral_did_become_ready`)
     Settings: Any = None
     settings: Any = None
     runtime: PeripheralOutput = _NoRuntime()  # what runs it
@@ -90,7 +82,8 @@ class Peripheral(Protocol):
         return ()
 
     async def start(self):
-        """Set up what it serves. Raising has the runtime try again later (`RETRY_DELAYS`), then give up on it."""
+        """Set up what it serves, and return once it serves: what needs it starts then. Raising, or taking longer than
+        the runtime's ``START_TIMEOUT``, has the runtime stop it, try again later (``RETRY_DELAYS``), then give up."""
         return
 
     async def stop(self):

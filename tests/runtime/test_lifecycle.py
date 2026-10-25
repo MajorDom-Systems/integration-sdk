@@ -34,7 +34,7 @@ def zigbee(**kwargs) -> FakePeripheral:
 async def test_a_peripheral_with_nothing_to_wait_for_runs_and_stops_with_the_runtime(tmp_path):
     host = FakePeripheral("host", provides=[Endpoint("ip", is_shared=True)])
     runtime = await run(tmp_path, host)
-    assert runtime.status(host) == PeripheralStatus(S.RUNNING, is_ready=True)
+    assert runtime.status(host) == PeripheralStatus(S.RUNNING)
 
     await runtime.stop()
     assert host.calls == ["start", "stop"]
@@ -527,27 +527,41 @@ async def test_one_on_demand_stops_once_what_needs_it_cant_run(tmp_path):
 # readiness
 
 
-async def test_what_needs_a_provider_starts_once_it_is_ready(tmp_path):
-    matter, server = matter_with_server(is_ready_on_start=False)
-    runtime = await run(tmp_path, matter)
-    assert runtime.status(server) == PeripheralStatus(S.RUNNING, is_ready=False)
+class Gated(FakePeripheral):
+    """Serves once ``gate`` opens: its start returns then."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.gate = asyncio.Event()
+
+    async def start(self):
+        await super().start()
+        await self.gate.wait()
+
+
+async def test_what_needs_a_provider_starts_once_its_start_returned(tmp_path):
+    server = Gated("matter-server", provides=[SERVER], is_on_demand=True)
+    matter = FakePeripheral("matter", [Need("matter")], peripherals=[server])
+    runtime = await run(tmp_path, matter, settled=False)
+    await until(runtime, lambda: state(runtime, server) == S.STARTING, settled=False)
     assert runtime.status(matter) == PeripheralStatus(S.WAITING, "waiting for matter-server")
 
-    await server.runtime.peripheral_did_become_ready(server)
+    server.gate.set()
     await settle(runtime)
     assert state(runtime, matter) == S.RUNNING
 
 
 async def test_a_running_peripheral_rides_out_its_provider_restarting(tmp_path):
-    matter, server = matter_with_server(is_ready_on_start=False)
+    server = Gated("matter-server", provides=[SERVER], is_on_demand=True)
+    server.gate.set()
+    matter = FakePeripheral("matter", [Need("matter")], peripherals=[server])
     runtime = await run(tmp_path, matter)
-    await server.runtime.peripheral_did_become_ready(server)
-    await settle(runtime)
 
+    server.gate.clear()
     await runtime.restart(server)
-    await settle(runtime)
-    assert runtime.status(server) == PeripheralStatus(S.RUNNING, is_ready=False)
+    assert state(runtime, server) == S.STARTING
     assert state(runtime, matter) == S.RUNNING and matter.calls == ["start"]
+    server.gate.set()
 
 
 # settings and context

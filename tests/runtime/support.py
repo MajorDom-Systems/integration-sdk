@@ -26,11 +26,13 @@ async def until(runtime: Runtime, condition: Callable[[], bool], timeout: float 
 STARTED: list[Runtime] = []  # stopped after each test
 
 
-async def run(path: Path, *peripherals: Peripheral, **kwargs) -> Runtime:
+async def run(path: Path, *peripherals: Peripheral, settled: bool = True, **kwargs) -> Runtime:
+    """A runtime of ``peripherals``, started; with ``settled``, once every start it set off returned."""
     runtime = Runtime(path / "data", peripherals, **kwargs)
     STARTED.append(runtime)
     await runtime.start()
-    await settle(runtime)
+    if settled:
+        await settle(runtime)
     return runtime
 
 

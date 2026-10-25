@@ -33,7 +33,7 @@ class Host(Peripheral):
 async def test_a_peripheral_needs_provides_and_brings_nothing_by_default():
     host = Host()
     assert (host.needs, host.provides, host.peripherals) == ((), [Endpoint("ip", is_shared=True)], ())
-    assert not host.is_on_demand and host.is_ready_on_start
+    assert not host.is_on_demand
     assert host.Settings is None and host.settings is None
     await host.start()
     await host.stop()
@@ -98,7 +98,7 @@ SERVER = Service("server", compose={}, provides=[Endpoint("matter", "matter-serv
 
 
 async def test_a_service_runs_on_demand_once_ready_and_hooks_in_doing_nothing():
-    assert SERVER.is_on_demand and not SERVER.is_ready_on_start
+    assert SERVER.is_on_demand
     assert SERVER.ports == {} and SERVER.Settings is None
     assert await SERVER.provision(Endpoint("matter", "matter-server", "ws://127.0.0.1:5580")) is None
     assert await SERVER.learn(Endpoint("matter", "matter-server", "ws://127.0.0.1:5580")) == {}

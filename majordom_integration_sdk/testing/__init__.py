@@ -99,13 +99,12 @@ class FakePeripheral(Peripheral):
         peripherals: Iterable[Peripheral] = (),
         *,
         is_on_demand: bool = False,
-        is_ready_on_start: bool = True,
         failures: int = 0,
         answer: bool | Exception = False,
         settings: type | None = None,
     ):
         self.name, self.needs, self.provided = name, list(needs), list(provides)
-        self.is_on_demand, self.is_ready_on_start = is_on_demand, is_ready_on_start
+        self.is_on_demand = is_on_demand
         self.failures, self.answer = failures, answer
         self.Settings = settings
         self._peripherals = Peripherals(peripherals)
@@ -155,15 +154,11 @@ class RecordingPeripheralOutput:
 
     def __init__(self):
         self.changed: list[Peripheral] = []
-        self.ready: list[Peripheral] = []
         self.stopped: list[Peripheral] = []
         self.failed: list[tuple[Peripheral, str]] = []
 
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
         self.changed.append(peripheral)
-
-    async def peripheral_did_become_ready(self, peripheral: Peripheral):
-        self.ready.append(peripheral)
 
     async def peripheral_did_stop(self, peripheral: Peripheral):
         self.stopped.append(peripheral)

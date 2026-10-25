@@ -50,7 +50,6 @@ class PeripheralState(StrEnum):
 class PeripheralStatus:
     state: PeripheralState
     reason: str = ""  # why it waits or failed, for the user
-    is_ready: bool = False  # it runs and serves: what needs it may start
 
 
 class RuntimeOutput(Protocol):
@@ -95,7 +94,6 @@ class _Entry:
     contributor: str | None  # the name of what brought it along
     state: PeripheralState
     reason: str = ""
-    is_ready: bool = False
     attempts: int = 0  # failures in a row
     running_since: float | None = None  # monotonic
     retry_at: float = 0.0  # monotonic: a waiting one starts no earlier
@@ -113,7 +111,7 @@ class _Entry:
 
     @property
     def status(self) -> PeripheralStatus:
-        return PeripheralStatus(self.state, self.reason, self.is_ready)
+        return PeripheralStatus(self.state, self.reason)
 
     @property
     def is_started(self) -> bool:
@@ -136,7 +134,7 @@ class Runtime:
     — goes to ``data``.
 
     A peripheral that isn't disabled or failed runs while what brought it along does, while something that runs binds
-    it if it ``is_on_demand``, and once every required need is bound to a provider that runs and is ready. Only a
+    it if it ``is_on_demand``, and once every required need is bound to a provider that runs: its start returned. Only a
     waiting one starts by itself: a stick plugged in again never revives a disabled or failed one. A start that raises
     is tried again after each of `RETRY_DELAYS`, then the peripheral is failed; a hook that raises restarts it the same
     way. Leaving the running state releases what it brought along: what it holds stops with it.
@@ -358,12 +356,6 @@ class Runtime:
     # PeripheralOutput
 
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
-        await self._settle()
-
-    async def peripheral_did_become_ready(self, peripheral: Peripheral):
-        entry = self._entries.get(peripheral.name)
-        if entry is not None and entry.peripheral is peripheral:  # not one gone meanwhile
-            entry.is_ready = entry.is_ready or entry.is_started
         await self._settle()
 
     async def peripheral_did_stop(self, peripheral: Peripheral):
@@ -635,14 +627,14 @@ class Runtime:
 
     def _is_serving(self, name: str) -> bool:
         entry = self._entries[name]
-        return entry.state == PeripheralState.RUNNING and entry.is_ready
+        return entry.state == PeripheralState.RUNNING
 
     def _bind_view(self, entry: _Entry, bound: Mapping[str, list[Binding]]):
         if isinstance(view := entry.peripheral.peripherals, Peripherals):
             view.bind(_view(entry.peripheral, bound), restart=self.restart)
 
     def _start(self, entry: _Entry):
-        entry.state, entry.reason, entry.is_ready = PeripheralState.STARTING, "", False
+        entry.state, entry.reason = PeripheralState.STARTING, ""
         entry.bindings, entry.told_failure, entry.is_stopping_itself = self._bound[entry.name], "", False
         self._bind_view(entry, entry.bindings)
         entry.task = self._spawn(self._run_start(entry))
@@ -669,7 +661,6 @@ class Runtime:
                 await self._stop_itself(entry)
             else:
                 entry.state, entry.running_since = PeripheralState.RUNNING, monotonic()
-                entry.is_ready = entry.is_ready or peripheral.is_ready_on_start
         await self.refresh()
 
     async def _stop_itself(self, entry: _Entry):
@@ -706,7 +697,7 @@ class Runtime:
                 await _within(STOP_TIMEOUT, entry.peripheral.stop(), f"didn't stop within {STOP_TIMEOUT} s")
             except Exception as error:
                 log.error(f"{entry.name} failed to stop cleanly: {error}", exc_info=error)
-        entry.state, entry.reason, entry.is_ready, entry.bindings = status.state, status.reason, False, {}
+        entry.state, entry.reason, entry.bindings = status.state, status.reason, {}
 
     async def _deliver(self, entry: _Entry, bound: dict[str, list[Binding]]):
         """Tell one that runs what moved; restart it unless it handles every change."""

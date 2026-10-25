@@ -260,8 +260,8 @@ class Router(Service):
 async def test_what_needs_a_service_waits_for_its_setup_then_hears_what_it_learned(tmp_path):
     router, output = Router(), RecordingRuntimeOutput()
     thread = FakePeripheral("thread", [Need("thread")], peripherals=[router])
-    runtime = await run(tmp_path, host(), thread, output=output, is_docker_enabled=False)
-    assert runtime.status(router) == PeripheralStatus(PeripheralState.RUNNING, is_ready=False)
+    runtime = await run(tmp_path, host(), thread, output=output, is_docker_enabled=False, settled=False)
+    await until(runtime, lambda: state(runtime, router) == PeripheralState.STARTING, settled=False)
     assert runtime.status(thread) == PeripheralStatus(PeripheralState.WAITING, "waiting for router")
 
     await runtime.refresh()  # something else changed meanwhile: its setup goes on
@@ -347,12 +347,22 @@ async def test_a_failed_compose_up_is_tried_again(tmp_path, docker):
 async def test_a_container_is_ready_once_compose_runs_it_and_its_ports_answer(tmp_path, docker):
     docker.is_answering = False
     app, server = matter()
-    runtime = await run(tmp_path, host(), app)
-    assert runtime.status(server) == PeripheralStatus(PeripheralState.RUNNING, is_ready=False)
+    runtime = await run(tmp_path, host(), app, settled=False)
+    await until(runtime, lambda: state(runtime, server) == PeripheralState.STARTING, settled=False)
     assert runtime.status(app).reason == "waiting for matterjs-server"
 
     docker.is_answering = True
     await until(runtime, lambda: state(runtime, app) == PeripheralState.RUNNING)
+
+
+async def test_a_container_that_never_answers_fails_its_start(tmp_path, docker, monkeypatch):
+    monkeypatch.setattr("majordom_integration_sdk.runtime.runtime.START_TIMEOUT", 0.05)
+    docker.is_answering = False
+    app, server = matter()
+    runtime = await run(tmp_path, host(), app)
+    await until(runtime, lambda: state(runtime, server) == PeripheralState.FAILED)
+    assert runtime.status(server) == PeripheralStatus(PeripheralState.FAILED, "didn't start within 0.05 s")
+    assert runtime.status(app).reason == "need matter/matter-server-ws: matterjs-server is failed"
 
 
 async def test_restarting_a_service_recreates_only_its_container(tmp_path, docker):
@@ -364,7 +374,7 @@ async def test_restarting_a_service_recreates_only_its_container(tmp_path, docke
     before = compose(tmp_path)
 
     await app.peripherals.restart(server)
-    await until(runtime, lambda: runtime.status(server).is_ready)
+    await until(runtime, lambda: state(runtime, server) == PeripheralState.RUNNING)
     assert compose(tmp_path) == before
     assert [call[-1] for call in docker.calls][-2:] == ["--remove-orphans"] * 2  # without it, then with it again
     assert (app.calls, integration.calls) == (["start"], ["start"])

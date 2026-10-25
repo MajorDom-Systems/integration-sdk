@@ -22,7 +22,10 @@ class ServiceHost(Protocol):
         """Its ``provides`` rendered: the host ports it got, the params it renders."""
         ...
 
-    async def up(self, service: Service): ...
+    async def up(self, service: Service):
+        """Run its container; return once it serves."""
+        ...
+
     async def down(self, service: Service): ...
 
     def is_current(self, service: Service) -> bool:
@@ -61,12 +64,12 @@ class Service(Peripheral):
     ``compose`` and in the ``provides`` URLs. Integrations never read a port: they connect through
     ``self.peripherals.endpoint(<family>).url``.
 
-    It is ready once its container runs, its ports answer, `provision` finished and `is_healthy` says so. Subclass it
-    to hook in: `provision` sets up what it runs, `learn` reads `Context` facts from it, `is_healthy` checks more.
+    Its start returns once its container runs, its ports answer, `provision` finished and `is_healthy` says so.
+    Subclass it to hook in: `provision` sets up what it runs, `learn` reads `Context` facts from it, `is_healthy`
+    checks more.
     """
 
     is_on_demand = True
-    is_ready_on_start = False
 
     def __init__(
         self,

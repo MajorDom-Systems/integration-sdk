@@ -80,7 +80,7 @@ async def test_an_integration_runs_once_the_server_it_brings_along_is_ready(tmp_
     runtime = await run(tmp_path, HostNetwork(), echo, is_docker_enabled=False)
 
     assert runtime.peripherals == [runtime.peripherals[0], echo, echo.server]
-    assert runtime.status(echo) == PeripheralStatus(PeripheralState.RUNNING, is_ready=True)
+    assert runtime.status(echo) == PeripheralStatus(PeripheralState.RUNNING)
     assert echo.started_with == [("ws://127.0.0.1:5600", False)]  # its needs bound, its settings given, before start
     assert runtime.users(echo.server) == ["Echo"]
 
