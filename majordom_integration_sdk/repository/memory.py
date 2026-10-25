@@ -7,7 +7,7 @@ when you need it to survive a restart.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from uuid import UUID
 
@@ -28,7 +28,7 @@ class DeviceRepositoryMemory:
         self._store: dict[UUID, Record] = store if store is not None else {}
 
     @asynccontextmanager
-    async def session(self) -> AsyncIterator[DeviceRepositoryMemory]:
+    async def session(self) -> AsyncGenerator[DeviceRepositoryMemory]:
         """One unit of work: what ``Platform.make_device_repository`` returns for its integration."""
         yield self
 

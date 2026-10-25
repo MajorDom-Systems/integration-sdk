@@ -143,6 +143,7 @@ async def test_elsewhere_the_os_pairs_on_its_own(adapter_client, monkeypatch):
 
     monkeypatch.setattr(module.sys, "platform", "darwin")
     connection = await LocalAdapter().connect("AA:BB:CC:DD:EE:FF", lambda: None)
+    assert isinstance(connection, PairableBLEConnection)
 
     await connection.pair()
     adapter_client.pair.assert_awaited_once()

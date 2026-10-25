@@ -57,8 +57,8 @@ def device_path(adapter: str, address: str) -> str:
 async def pair_through_agent(adapter: str, address: str):
     """Pairs the connected device ``address`` on ``adapter`` (hci0, …); raises `ConnectionError` with BlueZ's error."""
     # bleak's BlueZ backend brings dbus-fast, on Linux only
-    from dbus_fast import BusType, Message, MessageType  # ty: ignore[unresolved-import]
-    from dbus_fast.aio import MessageBus  # ty: ignore[unresolved-import]
+    from dbus_fast import BusType, Message, MessageType
+    from dbus_fast.aio import MessageBus
 
     path, agent = device_path(adapter, address), f"{AGENT_PATH}{next(_agents)}"
 

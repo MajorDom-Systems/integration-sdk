@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import UUID
@@ -50,7 +50,7 @@ class SqliteDeviceRepository:
         return conn
 
     @asynccontextmanager
-    async def session(self) -> AsyncIterator[SqliteDeviceRepository]:
+    async def session(self) -> AsyncGenerator[SqliteDeviceRepository]:
         """One unit of work: what ``Platform.make_device_repository`` returns for its integration."""
         # A fresh connection per unit of work; sharing one across concurrent tasks is unsafe.
         self._conn = self._connect()

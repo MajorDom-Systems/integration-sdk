@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator, Callable, Iterable
+from collections.abc import AsyncGenerator, Callable, Iterable
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import TYPE_CHECKING
@@ -167,7 +167,7 @@ class BLEService(Peripheral):
     @contextlib.asynccontextmanager
     async def exclusive(
         self, address: str, *, owner: str, timeout: float = 30, wait: float = 1, is_pairing_needed: bool = False
-    ) -> AsyncIterator[BLELease]:
+    ) -> AsyncGenerator[BLELease]:
         """Leases the source hearing ``address`` best to ``owner`` (e.g. while pairing it): that source stops
         scanning and others' connects avoid it; the rest keep going. A leased source is waited for ``wait``
         seconds before the next best is tried, round after round, until ``timeout`` raises `BLEBusyError`.

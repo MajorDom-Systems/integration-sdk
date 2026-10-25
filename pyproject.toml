@@ -73,6 +73,10 @@ requires-poetry = ">=2.0"
 packages = [{ include = "majordom_integration_sdk" }]
 include = [{ path = "majordom_integration_sdk/runtime/peripherals/services/images", format = ["sdist", "wheel"] }]
 
+# The BlueZ agent's dbus-fast comes with bleak on Linux only
+[tool.ty.analysis]
+allowed-unresolved-imports = ["dbus_fast.**"]
+
 # schemas/ and the providers (BLE, DNS-SD, SSDP) are lifted verbatim from the Hub, which type-checks them under
 # mypy (they carry mypy-style `# type: ignore` comments ty doesn't read). Exempt just those
 # rules for just those paths — all SDK-native code stays fully checked. Re-home in the Hub.

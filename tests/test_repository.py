@@ -22,7 +22,7 @@ class _PairingData(Base):
 
 
 class _MyDevice(Device):
-    integration_data: _PairingData
+    integration_data: _PairingData  # ty: ignore[invalid-mutable-override]  (typed reads narrow it on purpose)
 
 
 def make_my_device(device_id=None, token: str = "secret", integration: str = "example") -> _MyDevice:
