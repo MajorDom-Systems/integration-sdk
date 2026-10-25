@@ -1,5 +1,5 @@
 """The runtime's ``mdns/dns-sd``: one zeroconf browser shared by every integration that needs DNS-SD (the
-``discovery`` extra). See `majordom_integration_sdk.capabilities.dns_sd` for the contract."""
+``discovery`` extra). See `majordom_integration_sdk.capabilities.zeroconf` for the contract."""
 
 import asyncio
 import logging
@@ -11,7 +11,7 @@ from zeroconf._dns import DNSPointer
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
 from zeroconf.const import _CLASS_IN, _TYPE_A, _TYPE_AAAA, _TYPE_PTR
 
-from majordom_integration_sdk.capabilities.dns_sd import ZeroconfDiscoveryInfo, ZeroconfDiscoveryListener
+from majordom_integration_sdk.capabilities.zeroconf import ZeroconfDiscoveryInfo, ZeroconfDiscoveryListener
 from majordom_integration_sdk.peripherals import Endpoint, Need, PeripheralChange
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ _EVICT_GRACE_MS = 10_000  # ms — grace window after A/AAAA expiry before probi
 
 
 class ZeroconfDiscoveryService:
-    """A `DNSSD`."""
+    """A `Zeroconf`."""
 
     name = "dns-sd"
     needs: list[Need] = []

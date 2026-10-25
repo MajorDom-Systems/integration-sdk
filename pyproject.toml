@@ -142,7 +142,7 @@ docstring-code-format = true
 # rules; abstract_controller.py keeps the Hub's long-form docstrings. Exempt only the
 # house-style rules for these paths — SDK-native code stays fully linted.
 "majordom_integration_sdk/schemas/*" = ["E501", "UP042"]
-"majordom_integration_sdk/runtime/peripherals/providers/{dns_sd,ssdp}.py" = ["E501", "SIM102", "SIM105"]
+"majordom_integration_sdk/runtime/peripherals/providers/{zeroconf,ssdp}.py" = ["E501", "SIM102", "SIM105"]
 "majordom_integration_sdk/controller/abstract_controller.py" = ["E501"]
 
 [tool.poe.tasks.install]

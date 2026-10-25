@@ -1,5 +1,5 @@
 """The contracts of the peripherals the runtime provides in-process, for integrations to use through their needs:
-``ble/router`` (`ble`, secured by `ble_security`), ``mdns/dns-sd`` (`dns_sd`) and ``upnp/ssdp`` (`ssdp`). Interfaces
+``ble/router`` (`ble`, secured by `ble_security`), ``mdns/dns-sd`` (`zeroconf`) and ``upnp/ssdp`` (`ssdp`). Interfaces
 only: the implementations live in `majordom_integration_sdk.runtime`."""
 
 from .ble import (
@@ -20,8 +20,8 @@ from .ble import (
     ScanModeBLESource,
 )
 from .ble_security import LESecureConnections, SecureChannel, Unsecured
-from .dns_sd import DNSSD, ZeroconfDiscoveryInfo, ZeroconfDiscoveryListener
 from .ssdp import SSDP, SSDPDiscoveryInfo, SSDPDiscoveryListener
+from .zeroconf import Zeroconf, ZeroconfDiscoveryInfo, ZeroconfDiscoveryListener
 
 __all__ = [
     "BLEBusyError",
@@ -42,7 +42,7 @@ __all__ = [
     "LESecureConnections",
     "SecureChannel",
     "Unsecured",
-    "DNSSD",
+    "Zeroconf",
     "ZeroconfDiscoveryInfo",
     "ZeroconfDiscoveryListener",
     "SSDP",

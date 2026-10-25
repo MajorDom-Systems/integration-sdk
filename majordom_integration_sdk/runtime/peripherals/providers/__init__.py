@@ -33,7 +33,7 @@ def builtin_providers() -> list[Provider]:
 
     providers: list[Provider] = [BLEService(), SSDPDiscoveryService()]
     try:
-        from majordom_integration_sdk.runtime.peripherals.providers.dns_sd import ZeroconfDiscoveryService
+        from majordom_integration_sdk.runtime.peripherals.providers.zeroconf import ZeroconfDiscoveryService
     except ImportError:
         log.warning('No DNS-SD without zeroconf: pip install "majordom-integration-sdk[discovery]"')
     else:

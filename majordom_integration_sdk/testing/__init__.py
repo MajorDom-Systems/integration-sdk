@@ -6,7 +6,7 @@ instead of reinventing them, so every integration is exercised through the same 
 - :class:`RecordingControllerOutput` — a spy implementing every ``ControllerOutput``
   callback, capturing what a controller reports back to the Hub.
 - Offline doubles of every capability (no radios/sockets touched): :class:`FakeBLESource` for the
-  Bluetooth router to hear through, :class:`FakeBLERouter`, :class:`FakeDNSSD` (the ``discovery``
+  Bluetooth router to hear through, :class:`FakeBLERouter`, :class:`FakeZeroconf` (the ``discovery``
   extra) and :class:`FakeSSDP`. Each offers itself as ``.endpoint``, to pass in the controller's
   peripherals: ``Controller(platform, {"ble": router.endpoint})``. :class:`FakeOffers` takes
   what an integration offers, lending its Bluetooth sources to a router as the runtime would.
@@ -128,10 +128,10 @@ class FakeOffers:
 
 
 def __getattr__(name: str):
-    if name == "FakeDNSSD":  # the discovery extra (zeroconf): only for the suites that use it
-        from majordom_integration_sdk.runtime.peripherals.providers.dns_sd import ZeroconfDiscoveryService
+    if name == "FakeZeroconf":  # the discovery extra (zeroconf): only for the suites that use it
+        from majordom_integration_sdk.runtime.peripherals.providers.zeroconf import ZeroconfDiscoveryService
 
-        class FakeDNSSD(ZeroconfDiscoveryService):
+        class FakeZeroconf(ZeroconfDiscoveryService):
             """Real registration bookkeeping, but ``start``/``stop`` touch no network."""
 
             async def start(self):
@@ -140,8 +140,8 @@ def __getattr__(name: str):
             async def stop(self):
                 pass
 
-        globals()[name] = FakeDNSSD
-        return FakeDNSSD
+        globals()[name] = FakeZeroconf
+        return FakeZeroconf
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -217,7 +217,7 @@ __all__ = [
     "RecordingControllerOutput",
     "FakeBLESource",
     "FakeBLERouter",
-    "FakeDNSSD",
+    "FakeZeroconf",
     "FakeSSDP",
     "FakeOffers",
     "build_test_platform",

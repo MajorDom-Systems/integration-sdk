@@ -1,7 +1,7 @@
 """The ``mdns/dns-sd`` contract: browsing DNS-SD services over mDNS.
 
 Integrations need it as ``Need("mdns", ["dns-sd"])`` and get the runtime's browser at
-``self.peripherals.instance("mdns")``: a `DNSSD`.
+``self.peripherals.instance("mdns")``: a `Zeroconf`.
 """
 
 from __future__ import annotations
@@ -69,16 +69,16 @@ class ZeroconfDiscoveryInfo:
 
 
 class ZeroconfDiscoveryListener(Protocol):
-    async def zeroconf_did_discover_service(self, zeroconf: DNSSD, info: ZeroconfDiscoveryInfo): ...
-    async def zeroconf_did_update_service(self, zeroconf: DNSSD, info: ZeroconfDiscoveryInfo): ...
-    async def zeroconf_did_remove_service(self, zeroconf: DNSSD, type_: str, name: str):
+    async def zeroconf_did_discover_service(self, zeroconf: Zeroconf, info: ZeroconfDiscoveryInfo): ...
+    async def zeroconf_did_update_service(self, zeroconf: Zeroconf, info: ZeroconfDiscoveryInfo): ...
+    async def zeroconf_did_remove_service(self, zeroconf: Zeroconf, type_: str, name: str):
         """Fired on mDNS goodbye packets (TTL=0) or when a silent departure is confirmed:
         A/AAAA records expired (~120s TTL) and a follow-up async_request got no response.
         For faster detection, implement liveness checks at the pairing/connection layer."""
         ...
 
 
-class DNSSD(Protocol):
+class Zeroconf(Protocol):
     def register(self, listener: ZeroconfDiscoveryListener, services: set[str]) -> Callable[[], None]:
         """Calls ``listener`` about the services of the given types (``"_hap._tcp.local."``) as they come, change
         and go. Returns a cancel function — call it on stop to deregister."""
