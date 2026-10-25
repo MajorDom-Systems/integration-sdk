@@ -486,8 +486,8 @@ class ScanModeFakeBLESource(FakeBLESource):
         super().__init__(name)
         self.modes: list[bool] = []
 
-    async def set_scan_mode(self, active: bool):
-        self.modes.append(active)
+    async def set_scan_mode(self, is_active: bool):
+        self.modes.append(is_active)
 
 
 async def test_a_pairing_window_switches_every_source_that_can_to_active_scanning():

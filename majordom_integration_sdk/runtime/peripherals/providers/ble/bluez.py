@@ -105,15 +105,15 @@ class LocalAdapter:
         self._options = {"bluez": {"adapter": adapter}} if adapter else {}
         self._scanner: BleakScanner | None = None
         self._devices: dict[str, BLEDevice] = {}  # address -> last seen; connecting by it skips a scan
-        self.passive = False  # set: a passive scan of every advertiser, the listeners' matchers choose
-        self._passive_refused = False
+        self.is_passive = False  # set: a passive scan of every advertiser, the listeners' matchers choose
+        self._is_passive_refused = False
         self._on_advertisement: OnAdvertisement | None = None
         self._scan_lock = asyncio.Lock()  # a connect holds it: no scan starts until it ends
 
-    async def set_scan_mode(self, active: bool):
-        if self.passive == (not active):
+    async def set_scan_mode(self, is_active: bool):
+        if self.is_passive == (not is_active):
             return
-        self.passive = not active
+        self.is_passive = not is_active
         if self._scanner and self._on_advertisement:  # scanning: again, in the new mode
             await self.stop()
             await self.start(self._on_advertisement)
@@ -131,7 +131,7 @@ class LocalAdapter:
         # BlueZ refuses a passive scan without --experimental (Raspberry Pi OS's default): then it scans actively. With
         # it, a Pi 5 (BlueZ 5.82, no offload) passes adverts only through patterns on the flags (2026-10-14), as in HA.
         async with self._scan_lock:
-            if self.passive and not self._passive_refused:
+            if self.is_passive and not self._is_passive_refused:
                 bluez = {**self._options.get("bluez", {}), "or_patterns": _EVERY_ADVERTISER}
                 try:  # macOS refuses a passive scan already when the scanner is made
                     self._scanner = BleakScanner(detection_callback=on_detection, scanning_mode="passive", bluez=bluez)
@@ -139,8 +139,8 @@ class LocalAdapter:
                 except Exception as e:
                     # BlueZ's advertisement monitor is missing (an old or non-experimental bluetoothd)
                     logger.warning(f"BLE {self.name} can't scan passively, scanning actively: {e}")
-                    self._passive_refused = True
-            self.passive = False
+                    self._is_passive_refused = True
+            self.is_passive = False
             self._scanner = BleakScanner(detection_callback=on_detection, **self._options)
             await self._scanner.start()
 
@@ -189,8 +189,8 @@ class _BleakConnection:
     async def read(self, handle: int) -> bytes:
         return bytes(await self._client.read_gatt_char(handle))
 
-    async def write(self, handle: int, data: bytes, response: bool = True):
-        await self._client.write_gatt_char(handle, data, response=response)
+    async def write(self, handle: int, data: bytes, is_response_needed: bool = True):
+        await self._client.write_gatt_char(handle, data, response=is_response_needed)
 
     async def start_notify(self, handle: int, callback: Callable[[bytes], None]):
         await self._client.start_notify(handle, lambda _, data: callback(bytes(data)))

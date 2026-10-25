@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class SecureChannel(Protocol):
-    is_pairing_needed: bool  # lease a source that can pair: `BLERouter.exclusive(..., pairing=...)`
+    is_pairing_needed: bool  # lease a source that can pair: `BLERouter.exclusive(..., is_pairing_needed=...)`
 
     def secure(self, connection: BLEConnection) -> contextlib.AbstractAsyncContextManager[BLEConnection]:
         """The connection to write credentials through, secured; raises `BLEPairingError` (fail closed)."""
