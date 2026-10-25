@@ -145,6 +145,7 @@ class UsbScanner(Peripheral):
         self.drivers = list(drivers)
         self._peripherals = Peripherals()
         self._tasks: set[asyncio.Task] = set()  # watching the sticks, and asking new drivers about them
+        self._scanning = asyncio.Lock()  # one scan at a time: two would open a stick at once
 
     @property
     def peripherals(self) -> Peripherals:
@@ -179,18 +180,19 @@ class UsbScanner(Peripheral):
 
     async def _scan(self):
         """Follow the sticks plugged in, and identify the new ones it may open."""
-        radios = {radio.name: radio for radio in self.radios}
-        found = _sticks()
-        for name, path in found.items():
-            radio = radios.get(name) or Radio(name, path, self._drivers)
-            radio.node = os.path.realpath(path)
-            is_trusted = radio.is_claimed or _usb_id(path) in RADIO_USB_IDS
-            if not radio.is_claimed and not radio.is_busy:
-                radio.held_by = _holder(path, is_opening_allowed=is_trusted and radio.driver is None)
-            if is_trusted and radio.driver is None and not radio.held_by and not radio.is_busy:
-                await radio.identify()
-            radios[name] = radio
-        self.peripherals[:] = [radios[name] for name in sorted(found)]
+        async with self._scanning:
+            radios = {radio.name: radio for radio in self.radios}
+            found = _sticks()
+            for name, path in found.items():
+                radio = radios.get(name) or Radio(name, path, self._drivers)
+                radio.node = os.path.realpath(path)
+                is_trusted = radio.is_claimed or _usb_id(path) in RADIO_USB_IDS
+                if not radio.is_claimed and not radio.is_busy:
+                    radio.held_by = _holder(path, is_opening_allowed=is_trusted and radio.driver is None)
+                if is_trusted and radio.driver is None and not radio.held_by and not radio.is_busy:
+                    await radio.identify()
+                radios[name] = radio
+            self.peripherals[:] = [radios[name] for name in sorted(found)]
 
     async def _watch(self):
         seen = _nodes(_sticks())

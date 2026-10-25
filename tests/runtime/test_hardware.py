@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from support import run, settle, state, until
 
-from majordom_integration_sdk import Endpoint, Need, UsbDriver
+from majordom_integration_sdk import Endpoint, Need, PeripheralChange, UsbDriver
 from majordom_integration_sdk.runtime import (
     BluetoothAdapters,
     FixedPeripherals,
@@ -163,6 +163,29 @@ async def test_a_driver_an_integration_brings_along_recognises_what_the_others_d
     assert integration.peripherals.endpoint("zigbee") == Endpoint("zigbee", "deconz", "/dev/serial/by-id/conbee")
     assert zigpy.opened == ["conbee"]
     assert runtime.providers(scanner) == {"usb-driver": "zigpy"}
+
+
+async def test_one_rescan_at_a_time_opens_a_stick_once(tmp_path, sticks):
+    opening: list[str] = []
+    at_once: list[int] = []
+
+    class Slow(Driver):
+        async def identify(self, path: str) -> str | None:
+            opening.append(path)
+            at_once.append(len(opening))
+            await asyncio.sleep(0.02)
+            opening.remove(path)
+            return await super().identify(path)
+
+    plug(sticks, "conbee")
+    scanner, slow = UsbScanner([Driver()]), Slow("zigpy", conbee="zigbee-ncp")
+    runtime = await run(tmp_path, scanner)
+    scanner.drivers.append(slow)  # as if an integration's driver got bound
+    change = PeripheralChange("usb-driver", None, None)
+    await asyncio.gather(scanner.needed_peripheral_did_change(change), scanner.needed_peripheral_did_change(change))
+    await until(runtime, lambda: scanner.radios[0].firmware == "zigbee-ncp")
+    await asyncio.sleep(0.05)
+    assert at_once == [1]
 
 
 async def test_a_probe_that_never_answers_gives_up(tmp_path, sticks, monkeypatch):
