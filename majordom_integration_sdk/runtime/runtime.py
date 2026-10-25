@@ -15,6 +15,7 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
+from majordom_integration_sdk.controller.abstract_controller import AbstractController
 from majordom_integration_sdk.controller.platform import Context
 from majordom_integration_sdk.peripherals import (
     Bound,
@@ -63,9 +64,14 @@ class RuntimeOutput(Protocol):
         the runtime is given, then tell it (`Runtime.context_did_change`)."""
         ...
 
+    def peripheral_did_disappear(self, peripheral: Peripheral):
+        """It is no longer run here: what brought it along let go of it (a stick unplugged), or it was removed."""
+        ...
+
 
 class DisabledStore(Protocol):
-    """Where the user's disabling of a peripheral is kept, by name: the Hub's enable/disable store."""
+    """Where the user's disabling of a peripheral is kept, by its name here (`Runtime.name`): the Hub's enable/disable
+    store."""
 
     def is_disabled(self, name: str) -> bool: ...
     def set_disabled(self, name: str, is_disabled: bool): ...
@@ -86,13 +92,14 @@ class MemoryDisabledStore:
 
 _GIVEN_UP = (PeripheralState.DISABLED, PeripheralState.FAILED)
 
-type Binding = tuple[Peripheral, Endpoint]  # who provides it, and what
-type _Key = dict[str, list[tuple[Peripheral, Endpoint, int]]]  # what tells bindings apart
+type Binding = tuple[_Entry, Endpoint]  # who provides it, and what
+type _Key = dict[str, list[tuple[_Entry, Endpoint, int]]]  # what tells bindings apart
 
 
 @dataclass(eq=False)
 class _Entry:
     peripheral: Peripheral
+    name: str  # what it is known by here
     contributor: str | None  # the name of what brought it along
     state: PeripheralState
     reason: str = ""
@@ -106,10 +113,6 @@ class _Entry:
     is_stopping_itself: bool = False  # told while starting
     task: asyncio.Task | None = None  # its start
     reported: PeripheralStatus | None = None
-
-    @property
-    def name(self) -> str:
-        return self.peripheral.name
 
     @property
     def status(self) -> PeripheralStatus:
@@ -159,6 +162,9 @@ class Runtime:
         self.state |= {key: saved[key] for key in saved.keys() & self.state.keys()}  # older keys start fresh
         self.compose = Compose(data, self.state["ports"], self._save, context, self._learned, is_docker_enabled)
         self._entries: dict[str, _Entry] = {}  # in binding order
+        self._clashes: list[_Entry] = []  # failed: another took their name
+        self._gone: list[_Entry] = []  # to report
+        self._failed: dict[str, str] = {}  # name -> why, for the session: one brought along anew stays failed
         self._wanted: set[str] = set()  # the ones that should run
         self._bound: dict[str, dict[str, list[Binding]]] = {}
         self._unbound: dict[str, dict[str, str]] = {}  # name -> family -> why its need isn't bound
@@ -201,33 +207,39 @@ class Runtime:
 
     @property
     def peripherals(self) -> list[Peripheral]:
-        """Every peripheral it runs, in binding order: what it was given and what those brought along."""
-        return [entry.peripheral for entry in self._entries.values()]
+        """Every peripheral it runs, in binding order: what it was given and what those brought along; then the ones
+        that failed as another took their name."""
+        return [entry.peripheral for entry in [*self._entries.values(), *self._clashes]]
 
     def peripheral(self, name: str) -> Peripheral:
         return self._entries[name].peripheral
+
+    def name(self, peripheral: Peripheral) -> str:
+        """What it is known, disabled and persisted by here: its ``name``, a controller's slug, and for one brought
+        along the name of what brought it, then its own: ``usb/<stick>``, ``esphome/<node>``."""
+        return self._entry(peripheral).name
 
     def status(self, peripheral: Peripheral) -> PeripheralStatus:
         return self._entry(peripheral).status
 
     def bound(self, peripheral: Peripheral) -> dict[str, Bound]:
         """What each need is bound to, by family: an `Endpoint`, a list of them for an ``is_many`` need."""
-        return _view(peripheral, self._bound.get(peripheral.name, {}))
+        return _view(peripheral, self._bound.get(self.name(peripheral), {}))
 
     def providers(self, peripheral: Peripheral) -> dict[str, str]:
         """Who serves each bound need, by family; several, comma-separated, for an ``is_many`` need."""
-        bound = self._bound.get(peripheral.name, {})
+        bound = self._bound.get(self.name(peripheral), {})
         return {family: ", ".join(p.name for p, _ in bindings) for family, bindings in bound.items()}
 
     def unbound(self, peripheral: Peripheral) -> dict[str, str]:
         """Why each need isn't bound, by family: for the user, with what to do when there is something, e.g.
         'need ble/bluez: every provider taken by ble-router — use Need("ble", ["router"])'."""
-        return dict(self._unbound.get(peripheral.name, {}))
+        return dict(self._unbound.get(self.name(peripheral), {}))
 
     def users(self, peripheral: Peripheral) -> list[str]:
         """Every peripheral that runs on it, directly or through others: a radio's integrations and their containers."""
         users: list[str] = []
-        providers = {peripheral.name}
+        providers = {self.name(peripheral)}
         while True:
             more = [
                 name
@@ -242,7 +254,7 @@ class Runtime:
     def uses(self, peripheral: Peripheral) -> list[str]:
         """Every peripheral it runs on, directly or through others: an integration's containers and radios."""
         used: list[str] = []
-        owners = [peripheral.name]
+        owners = [self.name(peripheral)]
         while owners:
             bound = self._bound.get(owners.pop(0), {})
             more = [p.name for b in bound.values() for p, _ in b if p.name not in used]
@@ -276,31 +288,32 @@ class Runtime:
     # What the Hub (or you) changes
 
     async def enable(self, peripheral: Peripheral):
-        self.disabled.set_disabled(peripheral.name, False)
         entry = self._entry(peripheral)
+        self.disabled.set_disabled(entry.name, False)
 
         async def apply():
             if entry.state == PeripheralState.DISABLED:
                 entry.state = PeripheralState.WAITING
-                _revive(entry)
+                self._revive(entry)
 
         await self._act(apply)
 
     async def disable(self, peripheral: Peripheral):
         """Stop it, and what it brought along, until enabled again; kept across restarts."""
-        self.disabled.set_disabled(peripheral.name, True)
-        await self._act(lambda: self._stop(self._entry(peripheral), PeripheralStatus(PeripheralState.DISABLED)))
+        entry = self._entry(peripheral)
+        self.disabled.set_disabled(entry.name, True)
+        await self._act(lambda: self._stop(entry, PeripheralStatus(PeripheralState.DISABLED)))
 
     async def restart(self, peripheral: Peripheral):
         """Stop it if it runs and start it again, a failed one or one that stopped by itself too: its retries start
         over. Called from inside a peripheral's own start, stop or hook, it happens once that call returns."""
         entry = self._entry(peripheral)
         if entry.state == PeripheralState.DISABLED:
-            raise ValueError(f"{peripheral.name} is disabled: enable it")
+            raise ValueError(f"{entry.name} is disabled: enable it")
 
         async def apply():
             await self._stop(entry, _waiting())
-            _revive(entry)
+            self._revive(entry)
 
         await self._act(apply)
 
@@ -309,16 +322,16 @@ class Runtime:
         one or one that stopped by itself tries again."""
         entry = self._entry(peripheral)
         if (model := peripheral.Settings) is None:
-            raise KeyError(f"{peripheral.name} has no settings")
+            raise KeyError(f"{entry.name} has no settings")
         before = peripheral.settings
-        peripheral.settings = model.model_validate(self.state["settings"].get(peripheral.name, {}) | dict(values))
-        self.state["settings"][peripheral.name] = peripheral.settings.model_dump(mode="json")
+        peripheral.settings = model.model_validate(self.state["settings"].get(entry.name, {}) | dict(values))
+        self.state["settings"][entry.name] = peripheral.settings.model_dump(mode="json")
         self._save()
 
         async def apply():
             if entry.state in (PeripheralState.FAILED, PeripheralState.WAITING):
                 entry.state = PeripheralState.WAITING
-                _revive(entry)
+                self._revive(entry)
             elif entry.state == PeripheralState.RUNNING:
                 await self._ask(entry, peripheral.settings_did_change(before))
             elif entry.state == PeripheralState.STARTING:  # it may have read the ones before: start it anew
@@ -400,8 +413,7 @@ class Runtime:
         return entry
 
     def _find(self, peripheral: Peripheral) -> _Entry | None:
-        entry = self._entries.get(peripheral.name)
-        return entry if entry is not None and entry.peripheral is peripheral else None
+        return next((e for e in [*self._entries.values(), *self._clashes] if e.peripheral is peripheral), None)
 
     async def _act(self, change: Callable[[], Awaitable[Any]]):
         """Make a change and settle; from inside a call the runtime waits on, once that returns."""
@@ -442,9 +454,10 @@ class Runtime:
         can. True when something changed that the next round may bind differently."""
         before = self._snapshot()
         is_changed = False
-        for entry in self._collect():  # gone: what brought it along let go of it
+        for entry in self._collect():  # gone: what brought it along let go of it, or it was replaced
             is_changed = True
             await self._stop(entry, _waiting())
+            self._gone.append(entry)
         self._resolve()
         for entry in _users_first([e for e in self._entries.values() if e.is_started and e.name not in self._wanted]):
             is_changed = True
@@ -472,51 +485,62 @@ class Runtime:
         """Every peripheral given, and what the ones that run brought along, in binding order; the ones gone are
         returned."""
         entries: dict[str, _Entry] = {}
+        clashes: list[_Entry] = []
         gone: list[_Entry] = []
+        known = {id(entry.peripheral): entry for entry in [*self._entries.values(), *self._clashes]}
 
         def walk(peripheral: Peripheral, contributor: str | None):
-            if (seen := entries.get(peripheral.name)) is not None:
+            own = peripheral.slug() if isinstance(peripheral, AbstractController) else peripheral.name
+            name = f"{contributor}/{own}" if contributor else own
+            if (seen := entries.get(name)) is not None:
                 if seen.peripheral is not peripheral:
-                    log.error(f"Two peripherals are named {peripheral.name}: the second is left out")
+                    clashes.append(known.get(id(peripheral)) or self._clash(peripheral, name, contributor))
                 return
-            entry = self._entries.get(peripheral.name)
+            entry = self._entries.get(name)
             if entry is None or entry.peripheral is not peripheral:
                 if entry is not None:
                     gone.append(entry)  # replaced by another of the same name
-                entry = self._adopt(peripheral, contributor)
-            entries[peripheral.name] = entry
+                entry = self._adopt(peripheral, name, contributor)
+            entries[name] = entry
             if entry.state == PeripheralState.RUNNING:
                 for child in _brought(peripheral):
-                    walk(child, peripheral.name)
+                    walk(child, name)
 
         for peripheral in self.given:
             walk(peripheral, None)
         gone += [entry for name, entry in self._entries.items() if name not in entries]
-        self._entries = entries
+        self._gone += [clash for clash in self._clashes if all(clash is not c for c in clashes)]
+        self._entries, self._clashes = entries, clashes
         return gone
 
-    def _adopt(self, peripheral: Peripheral, contributor: str | None) -> _Entry:
+    def _adopt(self, peripheral: Peripheral, name: str, contributor: str | None) -> _Entry:
         peripheral.runtime = self
         if isinstance(peripheral, Service):
             peripheral.host = self.compose
-        failure = ""
+        failure = self._failed.get(name, "")
         try:
-            self._load_settings(peripheral)
+            self._load_settings(peripheral, name)
         except ValidationError as error:
             failure = "Invalid settings: " + "; ".join(
                 f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors()
             )
-        if self.disabled.is_disabled(peripheral.name):
-            return _Entry(peripheral, contributor, PeripheralState.DISABLED)
-        return _Entry(peripheral, contributor, PeripheralState.FAILED if failure else PeripheralState.WAITING, failure)
+        if self.disabled.is_disabled(name):
+            return _Entry(peripheral, name, contributor, PeripheralState.DISABLED)
+        state = PeripheralState.FAILED if failure else PeripheralState.WAITING
+        return _Entry(peripheral, name, contributor, state, failure)
 
-    def _load_settings(self, peripheral: Peripheral):
+    def _clash(self, peripheral: Peripheral, name: str, contributor: str | None) -> _Entry:
+        log.error(f"Two peripherals are named {name}: the second fails")
+        failure = f"another peripheral is named {name}"
+        return _Entry(peripheral, name, contributor, PeripheralState.FAILED, failure)
+
+    def _load_settings(self, peripheral: Peripheral, name: str):
         if (model := peripheral.Settings) is None:
             return
-        stored = self.state["settings"].get(peripheral.name, {})
+        stored = self.state["settings"].get(name, {})
         peripheral.settings = model.model_validate(stored)
         if (dumped := peripheral.settings.model_dump(mode="json")) != stored:  # freeze generated defaults (e.g. keys)
-            self.state["settings"][peripheral.name] = dumped
+            self.state["settings"][name] = dumped
             self._save()
 
     def _resolve(self):
@@ -575,7 +599,7 @@ class Runtime:
     ) -> list[Binding]:
         """What could serve ``need`` of ``owner``, best first: reserved for it, then the user's pin, then in order."""
         candidates = [
-            (self._entries[name].peripheral, endpoint)
+            (self._entries[name], endpoint)
             for name in self._entries
             if name in among and name != owner
             for endpoint in provides[name]
@@ -586,7 +610,7 @@ class Runtime:
         return sorted(candidates, key=lambda c: (reserved.get(c[1].family) != c[1].url, c[0].name != pin))
 
     def _is_free(
-        self, provider: Peripheral, endpoint: Endpoint, owner: str, taken: Mapping[tuple[str, str, str], str]
+        self, provider: _Entry, endpoint: Endpoint, owner: str, taken: Mapping[tuple[str, str, str], str]
     ) -> bool:
         """Whether ``owner`` may bind ``endpoint``: no one took it, and it isn't reserved for another."""
         reserved = self.state["reserved"].items()
@@ -659,6 +683,7 @@ class Runtime:
         entry.attempts += 1
         if entry.attempts > len(RETRY_DELAYS):
             entry.state, entry.reason, entry.attempts = PeripheralState.FAILED, reason, 0
+            self._failed[entry.name] = reason
             return
         delay = RETRY_DELAYS[entry.attempts - 1]
         entry.state, entry.retry_at = PeripheralState.WAITING, monotonic() + delay
@@ -709,8 +734,18 @@ class Runtime:
             self._fail(entry, failure)
         return False
 
+    def _revive(self, entry: _Entry):
+        """The user's say: its failures in a row, a retry it waits for and its stopping by itself are forgotten."""
+        entry.attempts, entry.retry_at, entry.stopped_with = 0, 0.0, None
+        self._failed.pop(entry.name, None)
+
     def _report(self):
-        for entry in self._entries.values():
+        gone, self._gone = self._gone, []
+        for entry in gone:
+            if self.output and entry.reported is not None:
+                with _logged(f"Reporting {entry.name} gone"):
+                    self.output.peripheral_did_disappear(entry.peripheral)
+        for entry in [*self._entries.values(), *self._clashes]:
             if entry.reported != (status := entry.status):
                 entry.reported = status
                 if self.output:
@@ -848,7 +883,7 @@ def _users_first(entries: list[_Entry]) -> list[_Entry]:
 
 
 def _is_using(user: _Entry, provider: _Entry) -> bool:
-    return any(p is provider.peripheral for bindings in user.bindings.values() for p, _ in bindings)
+    return any(p is provider for bindings in user.bindings.values() for p, _ in bindings)
 
 
 def _waiting(reason: str = "") -> PeripheralStatus:
@@ -858,11 +893,6 @@ def _waiting(reason: str = "") -> PeripheralStatus:
 def _view(peripheral: Peripheral, bound: Mapping[str, list[Binding]]) -> dict[str, Bound]:
     many = {need.family for need in peripheral.needs if need.is_many}
     return {family: [e for _, e in b] if family in many else b[0][1] for family, b in bound.items()}
-
-
-def _revive(entry: _Entry):
-    """The user's say: its failures in a row, a retry it waits for and its stopping by itself are forgotten."""
-    entry.attempts, entry.retry_at, entry.stopped_with = 0, 0.0, None
 
 
 def _key(bound: Mapping[str, list[Binding]]) -> _Key:

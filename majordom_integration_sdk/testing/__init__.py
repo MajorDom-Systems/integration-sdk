@@ -162,17 +162,22 @@ class RecordingPeripheralOutput:
 
 
 class RecordingRuntimeOutput:
-    """Captures what a runtime reports to the Hub: every status in order, the last one by name, what was learned."""
+    """Captures what a runtime reports to the Hub: every status in order, the last one by name, what was learned, the
+    ones gone."""
 
     def __init__(self):
         self.statuses: list[tuple[str, PeripheralStatus]] = []
         self.learned: list[tuple[str, Mapping[str, Any]]] = []
+        self.disappeared: list[Peripheral] = []
 
     def peripheral_did_change_status(self, peripheral: Peripheral, status: PeripheralStatus):
         self.statuses.append((peripheral.name, status))
 
     def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
         self.learned.append((peripheral.name, facts))
+
+    def peripheral_did_disappear(self, peripheral: Peripheral):
+        self.disappeared.append(peripheral)
 
     def last(self, name: str) -> PeripheralStatus | None:
         return next((status for n, status in reversed(self.statuses) if n == name), None)

@@ -79,7 +79,7 @@ async def test_an_integration_runs_once_the_server_it_provides_serves(tmp_path):
 
     assert runtime.status(echo) == PeripheralStatus(PeripheralState.RUNNING)
     assert echo.started_with == [("ws://127.0.0.1:5600", False)]  # its needs bound, its settings given, before start
-    assert runtime.users(server) == ["Echo"]
+    assert runtime.users(server) == ["echo"] and runtime.name(echo) == "echo"  # known by its slug
 
 
 async def test_an_integration_and_its_server_keep_their_settings(tmp_path):

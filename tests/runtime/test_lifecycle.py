@@ -457,6 +457,53 @@ async def test_what_it_brought_along_while_running_goes_when_it_stops(tmp_path):
     assert router.peripherals.endpoints("ble") == []
 
 
+async def test_what_it_brings_along_is_known_under_its_name(tmp_path):
+    proxy = FakePeripheral("aa")
+    esphome = FakePeripheral("esphome", provides=[proxy])
+    runtime = await run(tmp_path, esphome)
+    assert runtime.name(proxy) == "esphome/aa" and runtime.peripheral("esphome/aa") is proxy
+
+
+async def test_the_owner_hears_when_one_goes(tmp_path):
+    output, radio = RecordingRuntimeOutput(), FakePeripheral("radio")
+    scanner = FakePeripheral("usb", provides=[radio])
+    runtime = await run(tmp_path, scanner, output=output)
+
+    scanner.provided.clear()  # unplugged
+    await changed(runtime, scanner)
+    assert output.disappeared == [radio]
+    assert radio not in runtime.peripherals
+
+
+async def test_one_that_failed_stays_failed_when_brought_along_anew(tmp_path):
+    esphome = FakePeripheral("esphome", provides=[FakePeripheral("aa", failures=10)])
+    runtime = await run(tmp_path, esphome)
+    await until(runtime, lambda: state(runtime, runtime.peripheral("esphome/aa")) == S.FAILED)
+
+    again = FakePeripheral("aa")  # the node connected again
+    esphome.provided[:] = [again]
+    await changed(runtime, esphome)
+    assert runtime.status(again) == PeripheralStatus(S.FAILED, "aa broke")
+
+    await runtime.restart(again)
+    await settle(runtime)
+    assert state(runtime, again) == S.RUNNING
+
+
+async def test_a_second_one_of_a_name_fails_saying_why(tmp_path):
+    first = FakePeripheral("mqtt", provides=[Endpoint("mqtt", "a", "x", is_shared=True)], is_on_demand=True)
+    second = FakePeripheral("mqtt", provides=[Endpoint("mqtt", "b", "y", is_shared=True)], is_on_demand=True)
+    one, two = FakePeripheral("one", [Need("mqtt", ["a"])]), FakePeripheral("two", [Need("mqtt", ["b"])])
+    runtime = await run(tmp_path, first, one, second, two)
+
+    assert runtime.status(second) == PeripheralStatus(S.FAILED, "another peripheral is named mqtt")
+    assert second in runtime.peripherals
+    assert (state(runtime, one), runtime.status(two)) == (
+        S.RUNNING,
+        PeripheralStatus(S.WAITING, "need mqtt/b: nothing offers it"),
+    )
+
+
 async def test_what_uses_a_provider_stops_before_it(tmp_path):
     stopped: list[str] = []
 

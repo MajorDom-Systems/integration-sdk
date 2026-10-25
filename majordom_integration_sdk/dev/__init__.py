@@ -120,6 +120,9 @@ class LoggingRuntimeOutput:
     def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
         logger.info("%s learned %s", peripheral.name, ", ".join(facts))
 
+    def peripheral_did_disappear(self, peripheral: Peripheral):
+        logger.info("%s is gone", peripheral.name)
+
 
 def build_runtime(
     controller: AbstractController,
