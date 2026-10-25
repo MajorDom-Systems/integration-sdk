@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -107,8 +108,9 @@ class Peripheral(Protocol):
     that runs binds it if it ``is_on_demand``, and once every required need is bound to a provider that runs. A
     required need that can't be bound keeps it waiting, with the reason; one lost later stops it until it is back.
 
-    Subclass it for the defaults. The runtime sets ``runtime``, ``peripherals``, and ``settings`` when the peripheral
-    declares its options as a nested ``class Settings(BaseModel)``: annotate ``settings: Settings`` to type it.
+    Subclass it for the defaults. The runtime sets ``runtime``, ``peripherals``, ``data``, and ``settings`` when the
+    peripheral declares its options as a nested ``class Settings(BaseModel)``: annotate ``settings: Settings`` to type
+    it.
     """
 
     name: str  # unique among the peripherals of a runtime: what it is known, persisted and disabled by
@@ -118,6 +120,7 @@ class Peripheral(Protocol):
     settings: Any = None
     runtime: PeripheralOutput = _NoRuntime()  # what runs it
     peripherals: Peripherals = Peripherals()  # what its needs are bound to
+    data: Path  # a folder of its own, created once it writes there: what it keeps across restarts
 
     @property
     def provides(self) -> Sequence[Endpoint | Peripheral]:

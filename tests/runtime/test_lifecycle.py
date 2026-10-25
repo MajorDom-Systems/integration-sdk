@@ -464,6 +464,14 @@ async def test_what_it_brings_along_is_known_under_its_name(tmp_path):
     assert runtime.name(proxy) == "esphome/aa" and runtime.peripheral("esphome/aa") is proxy
 
 
+async def test_each_one_keeps_its_data_in_a_folder_of_its_own(tmp_path):
+    proxy = FakePeripheral("aa")
+    esphome = FakePeripheral("esphome", provides=[proxy])
+    await run(tmp_path, esphome)
+    assert esphome.data == tmp_path / "data" / "peripherals" / "esphome"
+    assert proxy.data == tmp_path / "data" / "peripherals" / "esphome" / "aa"
+
+
 async def test_the_owner_hears_when_one_goes(tmp_path):
     output, radio = RecordingRuntimeOutput(), FakePeripheral("radio")
     scanner = FakePeripheral("usb", provides=[radio])

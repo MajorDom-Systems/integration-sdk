@@ -523,7 +523,7 @@ class Runtime:
         return gone
 
     def _adopt(self, peripheral: Peripheral, name: str, contributor: str | None) -> _Entry:
-        peripheral.runtime = self
+        peripheral.runtime, peripheral.data = self, self.data / "peripherals" / name
         if isinstance(peripheral, Service):
             peripheral.host = self.compose
         failure = self._failed.get(name, "")

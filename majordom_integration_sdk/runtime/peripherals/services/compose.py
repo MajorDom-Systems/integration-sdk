@@ -27,10 +27,10 @@ READY_POLL = 1  # seconds between checks of whether a container is up, its setup
 
 
 class Compose:
-    """Runs the containers of the services that run as one ``majordom`` project in ``data/compose.json``, their data
-    in ``data/services/<name>``. Each gets the host ports it prefers when free, kept in ``ports`` across restarts. A
-    service is up once compose reports it running, its ports answer, its `Service.provision` finished and it is
-    healthy. Without Docker it only writes the compose file, and a service is up once set up: you run the
+    """Runs the containers of the services that run as one ``majordom`` project in ``data/compose.json``, each with
+    its own data folder as ``{data}``. Each gets the host ports it prefers when free, kept in ``ports`` across
+    restarts. A service is up once compose reports it running, its ports answer, its `Service.provision` finished and
+    it is healthy. Without Docker it only writes the compose file, and a service is up once set up: you run the
     containers."""
 
     def __init__(
@@ -89,7 +89,7 @@ class Compose:
     def _values(self, service: Service) -> dict[str, Any]:
         """What its compose and the params it provides render with."""
         return {
-            "data": self.data / "services" / service.name,
+            "data": service.data,
             "peripherals": _Peripherals(service.peripherals.bound),
             "settings": service.settings,
             "context": self.context(),
@@ -131,8 +131,8 @@ class Compose:
 
     async def _apply_in_turn(self):
         async with self._lock:
-            for name in self._running:
-                (self.data / "services" / name).mkdir(parents=True, exist_ok=True)
+            for service in self._running.values():
+                service.data.mkdir(parents=True, exist_ok=True)
             compose = json.dumps({"name": "majordom", "services": dict(self._rendered)}, indent=2)
             if compose == self._applied:
                 return

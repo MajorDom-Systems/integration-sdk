@@ -99,6 +99,13 @@ async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp
     assert compose(tmp_path)["otbr"]["environment"]["OT_RCP_DEVICE"] == rcp_url
 
 
+async def test_a_container_keeps_its_data_in_its_peripherals_folder(tmp_path):
+    otbr, matter = builtin.otbr(), FakePeripheral("matter", [Need("thread", ["otbr-rest"])])
+    await run(tmp_path, host(), stick("rcp", RCP), otbr, matter, is_docker_enabled=False)
+    assert compose(tmp_path)["otbr"]["volumes"][0] == f"{tmp_path}/data/peripherals/otbr:/data"
+    assert otbr.data.is_dir()
+
+
 async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
     integration, (app, server) = zigbee(), matter()
     peripherals = (host(), builtin.silabs_multiprotocol(), builtin.otbr(), integration, server, app)
