@@ -317,6 +317,28 @@ async def test_what_it_brought_along_while_running_goes_when_it_lets_go(tmp_path
     assert router.peripherals.endpoints("ble") == []
 
 
+async def test_what_uses_a_provider_stops_before_it(tmp_path):
+    stopped: list[str] = []
+
+    class Logged(FakePeripheral):
+        async def stop(self):
+            stopped.append(self.name)
+
+    server = Logged("matter-server", provides=[SERVER], is_on_demand=True)
+    bridge = Logged("bridge", [Need("matter")], [Endpoint("bridge", is_shared=True)], is_on_demand=True)
+    app = Logged("app", [Need("bridge")])
+    runtime = await run(tmp_path, app, bridge, server)  # listed users first
+
+    await runtime.disable(app)
+    assert stopped == ["app", "bridge", "matter-server"]
+
+    await runtime.enable(app)
+    await settle(runtime)
+    stopped.clear()
+    await runtime.stop()
+    assert stopped == ["app", "bridge", "matter-server"]
+
+
 async def test_a_peripheral_restarts_what_it_brought_along_and_nothing_else(tmp_path):
     matter, server = matter_with_server()
     runtime = await run(tmp_path, matter)

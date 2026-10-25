@@ -170,9 +170,8 @@ class Runtime:
         if self._timer:
             self._timer.cancel()
         async with self._locked():
-            for entry in reversed(self._entries.values()):
-                if entry.is_started:
-                    await self._stop(entry, _waiting())
+            for entry in _users_first([entry for entry in self._entries.values() if entry.is_started]):
+                await self._stop(entry, _waiting())
         for task in self._tasks:
             task.cancel()
 
@@ -414,10 +413,9 @@ class Runtime:
             is_changed = True
             await self._stop(entry, _waiting())
         self._resolve()
-        for entry in reversed(self._entries.values()):  # what uses something stops before it
-            if entry.is_started and entry.name not in self._wanted:
-                is_changed = True
-                await self._stop(entry, _waiting())
+        for entry in _users_first([e for e in self._entries.values() if e.is_started and e.name not in self._wanted]):
+            is_changed = True
+            await self._stop(entry, _waiting())
         for entry in list(self._entries.values()):
             bound = self._bound.get(entry.name, {})
             if entry.state == PeripheralState.RUNNING and _key(bound) != _key(entry.bindings):
@@ -751,6 +749,21 @@ class _Reasons:
         """What to need instead when what took the endpoint offers the same family itself: the router for raw BLE."""
         endpoint = next((e for e in self.provides.get(taker, []) if e.family == family), None)
         return f' — use Need("{family}", ["{endpoint.dialect}"])' if endpoint else ""
+
+
+def _users_first(entries: list[_Entry]) -> list[_Entry]:
+    """``entries`` in the order to stop them: each after what it was started with is bound to it, else last given
+    first."""
+    left, ordered = entries[::-1], []
+    while left:
+        entry = next((e for e in left if not any(_is_using(user, e) for user in left)), left[0])
+        left.remove(entry)
+        ordered.append(entry)
+    return ordered
+
+
+def _is_using(user: _Entry, provider: _Entry) -> bool:
+    return any(p is provider.peripheral for bindings in user.bindings.values() for p, _ in bindings)
 
 
 def _waiting(reason: str = "") -> PeripheralStatus:
