@@ -66,8 +66,8 @@ class Service(Peripheral):
     ``self.peripherals.endpoint(<family>).url``.
 
     Its start returns once its container runs, its ports answer, `provision` finished and `is_healthy` says so.
-    Subclass it to hook in: `provision` sets up what it runs, `learn` reads `Context` facts from it, `is_healthy`
-    checks more.
+    Subclass it to hook in: `provision` sets up what it runs, `is_healthy` checks more; a ``start`` of your own may tell
+    what it learned once it serves (``self.runtime.peripheral_did_learn``).
     """
 
     is_on_demand = True
@@ -102,10 +102,6 @@ class Service(Peripheral):
         """Set up one of its endpoints once it answers, e.g. form a network. Called each time its container is
         (re)created, cancelled when it stops: keep it idempotent."""
         return
-
-    async def learn(self, endpoint: Endpoint) -> Mapping[str, Any]:
-        """`Context` fields to read from one of its endpoints once ready: a border router's Thread network."""
-        return {}
 
     async def is_healthy(self) -> bool:
         """A check of its own on top of its ports answering; asked until it says yes."""

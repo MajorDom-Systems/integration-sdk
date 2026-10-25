@@ -21,8 +21,18 @@ class PeripheralOutput(Protocol):
     inside ``start``, ``stop`` or a hook it returns at once: the runtime acts when that call returns.
     """
 
+    @property
+    def context(self) -> Context:
+        """The Hub-wide facts as they are now: region, Wi-Fi, the Thread network."""
+        ...
+
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
         """Its ``provides`` or the peripherals it brings along changed."""
+        ...
+
+    async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+        """`Context` fields it read from what it runs or talks to, e.g. a border router's Thread network: the context
+        takes them, and every peripheral that runs hears it changed."""
         ...
 
     async def peripheral_did_stop(self, peripheral: Peripheral):
@@ -40,7 +50,16 @@ class PeripheralOutput(Protocol):
 class _NoRuntime:
     """Nothing runs the peripheral: library mode, a test."""
 
+    @property
+    def context(self) -> Context:
+        from majordom_integration_sdk.controller.platform import Context  # the controller package needs this one
+
+        return Context()
+
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
+        pass
+
+    async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
         pass
 
     async def peripheral_did_stop(self, peripheral: Peripheral):

@@ -1,13 +1,14 @@
 import asyncio
 import json
 import threading
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingTCPServer
 from typing import Any
 
 import pytest
 
-from majordom_integration_sdk import Endpoint
+from majordom_integration_sdk import Endpoint, Service
 from majordom_integration_sdk.runtime.peripherals.services import builtin as services
 from majordom_integration_sdk.runtime.peripherals.services.builtin import (
     ThreadNetwork,
@@ -16,6 +17,7 @@ from majordom_integration_sdk.runtime.peripherals.services.builtin import (
     otbr,
     silabs_multiprotocol,
 )
+from majordom_integration_sdk.testing import RecordingPeripheralOutput
 
 
 @pytest.fixture
@@ -90,8 +92,30 @@ async def test_only_a_border_router_that_doesnt_form_itself_is_provisioned(borde
     assert len(state["puts"]) == 2
 
 
-async def test_border_routers_tell_their_thread_network(border_router):
+class Answering:
+    """Runs nothing: the border router at ``url`` answers already."""
+
+    def __init__(self, url: str):
+        self.url = url
+
+    def provides(self, service: Service) -> list[Endpoint]:
+        return [replace(endpoint, url=self.url) for endpoint in service.templates]
+
+    async def up(self, service: Service):
+        pass
+
+    async def down(self, service: Service):
+        pass
+
+    def is_current(self, service: Service) -> bool:
+        return True
+
+
+@pytest.mark.parametrize("router", [otbr, silabs_multiprotocol])
+async def test_a_border_router_tells_its_thread_network_once_it_serves(border_router, router):
     url, state = border_router
     state["dataset"] = "0e08existing"
-    assert await otbr().learn(Endpoint("thread", "otbr-rest", url)) == {"thread_dataset": "0e08existing"}
-    assert await silabs_multiprotocol().learn(Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999")) == {}
+    service, output = router(), RecordingPeripheralOutput()
+    service.host, service.runtime = Answering(url), output
+    await asyncio.wait_for(service.start(), 3)
+    assert output.learned == [(service, {"thread_dataset": "0e08existing"})]

@@ -81,11 +81,10 @@ def test_endpoint_params_say_how_to_talk_to_it():
 SERVER = Service("server", compose={}, provides=[Endpoint("matter", "matter-server", "ws://127.0.0.1:{ports.api}")])
 
 
-async def test_a_service_runs_on_demand_once_ready_and_hooks_in_doing_nothing():
+async def test_a_service_runs_on_demand_and_hooks_in_doing_nothing():
     assert SERVER.is_on_demand
     assert SERVER.ports == {} and SERVER.Settings is None
     assert await SERVER.provision(Endpoint("matter", "matter-server", "ws://127.0.0.1:5580")) is None
-    assert await SERVER.learn(Endpoint("matter", "matter-server", "ws://127.0.0.1:5580")) == {}
     assert await SERVER.is_healthy()
 
 

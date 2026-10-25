@@ -155,12 +155,12 @@ class Runtime:
         disabled: DisabledStore | None = None,
         is_docker_enabled: bool = True,
     ):
-        self.data, self.given, self.context, self.output = data, list(peripherals), context, output
+        self.data, self.given, self._context, self.output = data, list(peripherals), context, output
         self.disabled = disabled or MemoryDisabledStore()
         self.state: dict[str, Any] = {"settings": {}, "pins": {}, "reserved": {}, "ports": {}}
         saved = read_json(data / "state.json")
         self.state |= {key: saved[key] for key in saved.keys() & self.state.keys()}  # older keys start fresh
-        self.compose = Compose(data, self.state["ports"], self._save, context, self._learned, is_docker_enabled)
+        self.compose = Compose(data, self.state["ports"], self._save, context, is_docker_enabled)
         self._entries: dict[str, _Entry] = {}  # in binding order
         self._clashes: list[_Entry] = []  # failed: another took their name
         self._gone: list[_Entry] = []  # to report
@@ -375,8 +375,17 @@ class Runtime:
 
     # PeripheralOutput
 
+    @property
+    def context(self) -> Context:
+        return self._context()
+
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
         await self._settle()
+
+    async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+        if self.output and self._find(peripheral) is not None:
+            with _logged(f"Reporting what {peripheral.name} learned"):
+                self.output.peripheral_did_learn(peripheral, facts)
 
     async def peripheral_did_stop(self, peripheral: Peripheral):
         if (entry := self._find(peripheral)) is None:
@@ -761,11 +770,6 @@ class Runtime:
         if retries and self._is_running:
             delay = min(retries) - now
             self._timer = asyncio.get_running_loop().call_later(delay, lambda: self._spawn(self.refresh()))
-
-    def _learned(self, peripheral: Peripheral, facts: Mapping[str, Any]):
-        if self.output:
-            with _logged(f"Reporting what {peripheral.name} learned"):
-                self.output.peripheral_did_learn(peripheral, facts)
 
     def _save(self):
         write_json(self.data / "state.json", self.state)

@@ -28,7 +28,7 @@ from uuid import UUID
 
 from majordom_integration_sdk.capabilities.ble import BLEConnection, OnAdvertisement
 from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
-from majordom_integration_sdk.controller.platform import Platform
+from majordom_integration_sdk.controller.platform import Context, Platform
 from majordom_integration_sdk.peripherals import Endpoint, Need, Peripheral, PeripheralChange
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
@@ -144,15 +144,21 @@ class FakePeripheral(Peripheral):
 
 
 class RecordingPeripheralOutput:
-    """Captures what peripherals report to whatever runs them: set it as a peripheral's ``runtime``."""
+    """Captures what peripherals report to whatever runs them: set it as a peripheral's ``runtime``. It hands over
+    ``context``, set it as a test needs."""
 
     def __init__(self):
+        self.context = Context()
         self.changed: list[Peripheral] = []
+        self.learned: list[tuple[Peripheral, Mapping[str, Any]]] = []
         self.stopped: list[Peripheral] = []
         self.failed: list[tuple[Peripheral, str]] = []
 
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
         self.changed.append(peripheral)
+
+    async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+        self.learned.append((peripheral, facts))
 
     async def peripheral_did_stop(self, peripheral: Peripheral):
         self.stopped.append(peripheral)

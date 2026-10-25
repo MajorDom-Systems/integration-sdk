@@ -6,9 +6,7 @@ import asyncio
 import contextlib
 import json
 import urllib.request
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -31,10 +29,12 @@ FORM_PATIENCE = 15  # seconds a border router answers without a network before o
 
 
 class _BorderRouter(Service):
-    """Its Thread network reaches integrations as ``context.thread_dataset``; its container forms it."""
+    """Its Thread network reaches integrations as ``context.thread_dataset``: it tells it once it serves."""
 
-    async def learn(self, endpoint: Endpoint) -> Mapping[str, Any]:
-        return {"thread_dataset": await active_dataset(endpoint.url)} if endpoint.dialect == "otbr-rest" else {}
+    async def start(self):
+        await super().start()
+        rest = next(endpoint for endpoint in self.provides if endpoint.dialect == "otbr-rest")
+        await self.runtime.peripheral_did_learn(self, {"thread_dataset": await active_dataset(rest.url)})
 
 
 class _FormingBorderRouter(_BorderRouter):

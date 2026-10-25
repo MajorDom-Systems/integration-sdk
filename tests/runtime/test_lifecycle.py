@@ -659,6 +659,16 @@ async def test_a_changed_context_starts_anew_one_still_starting(tmp_path):
     await runtime.stop()
 
 
+async def test_any_peripheral_reads_the_context_and_tells_what_it_learned(tmp_path):
+    output, region = RecordingRuntimeOutput(), Context(region="Europe")
+    router = FakePeripheral("my-border-router")  # one of the user's own
+    await run(tmp_path, router, output=output, context=lambda: region)
+    assert router.runtime.context == region
+
+    await router.runtime.peripheral_did_learn(router, {"thread_dataset": "0e08"})
+    assert output.learned == [("my-border-router", {"thread_dataset": "0e08"})]
+
+
 # one that misbehaves stops nothing else
 
 

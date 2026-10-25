@@ -30,8 +30,8 @@ class Compose:
     """Runs the containers of the services that run as one ``majordom`` project in ``data/compose.json``, their data
     in ``data/services/<name>``. Each gets the host ports it prefers when free, kept in ``ports`` across restarts. A
     service is up once compose reports it running, its ports answer, its `Service.provision` finished and it is
-    healthy; then what it learns goes to ``learned``. Without Docker it only writes the compose file, and a service is
-    up once set up: you run the containers."""
+    healthy. Without Docker it only writes the compose file, and a service is up once set up: you run the
+    containers."""
 
     def __init__(
         self,
@@ -39,16 +39,14 @@ class Compose:
         ports: dict[str, dict[str, int]],
         save: Callable[[], Any],
         context: Callable[[], Context],
-        learned: Callable[[Service, Mapping[str, Any]], Any],
         is_docker_enabled: bool = True,
     ):
-        self.data, self.ports, self.save, self.context, self.learned = data, ports, save, context, learned
+        self.data, self.ports, self.save, self.context = data, ports, save, context
         self.is_docker_enabled = is_docker_enabled
         self._running: dict[str, Service] = {}
         self._tentative: dict[str, dict[str, int]] = {}  # the ports a service that doesn't run would get
         self._rendered: dict[str, Mapping[str, Any]] = {}  # what each one runs with, rendered when it was created
         self._applied = ""  # the compose file docker last took
-        self._tasks: dict[str, asyncio.Task] = {}  # each one learning, by name
         self._lock = asyncio.Lock()
 
     # ServiceHost
@@ -74,11 +72,8 @@ class Compose:
         for endpoint in service.provides:
             await _until(partial(_provision, service, endpoint), f"{service.name} failed to set up {endpoint.url}")
         await _until(service.is_healthy, f"{service.name} isn't healthy")
-        self._tasks[service.name] = asyncio.create_task(self._learn(service), name=f"{service.name}.learn")
 
     async def down(self, service: Service):
-        if task := self._tasks.pop(service.name, None):
-            task.cancel()
         if self._running.pop(service.name, None):
             self._rendered.pop(service.name, None)
             try:
@@ -154,16 +149,6 @@ class Compose:
                 if process.returncode:
                     raise RuntimeError(f"docker compose {args[0]} failed:\n{output[-3000:]}")
             self._applied = compose  # only what actually runs: a failure is tried again
-
-    async def _learn(self, service: Service):
-        facts: dict[str, Any] = {}
-        for endpoint in service.provides:
-            try:
-                facts |= await service.learn(endpoint)
-            except Exception as error:
-                log.error(f"{service.name} failed to learn from {endpoint.url}: {error}")
-        if facts:
-            self.learned(service, facts)
 
     async def _is_up(self, service: Service) -> bool:
         if not self.is_docker_enabled:
