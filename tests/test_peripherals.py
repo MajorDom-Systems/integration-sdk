@@ -37,7 +37,7 @@ async def test_a_peripheral_needs_provides_and_brings_nothing_by_default():
     assert host.Settings is None and host.settings is None
     await host.start()
     await host.stop()
-    await host.output.peripheral_did_change_provided(host)  # nothing runs it: told no one
+    await host.runtime.peripheral_did_change_provided(host)  # nothing runs it: told no one
     assert await host.needed_peripheral_did_change(PeripheralChange("ip", None, None)) is False  # restart it
     assert await host.settings_did_change(None) is False
     assert await host.context_did_change(Context()) is True  # the context concerns few

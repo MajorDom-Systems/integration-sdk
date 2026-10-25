@@ -23,7 +23,6 @@ class IntegrationError:
     # the "hub-" prefix is reserved for the errors the Hub reports on its behalf.
     id: str
     message: str  # plain language, with any call-to-action in the text
-    is_still_running: bool = True  # False: it stopped and can't go on: failed until the user restarts it
 
 
 class ControllerOutput(Protocol):
@@ -46,7 +45,7 @@ class ControllerOutput(Protocol):
         """Report device-domain events (e.g. DeviceParameterChange) observed by the controller."""
         ...
 
-    async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError) -> None:
+    async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError):
         """A user-facing problem the integration hit — surfaced to the user, not the developer.
 
         Use this for things the user should know about or can act on (a wrong setup, an unplugged
@@ -58,13 +57,12 @@ class ControllerOutput(Protocol):
         integration stops. Reporting an active ``id`` again replaces it, so it is fine to report on
         every failed attempt; several ids can be active at once.
 
-        ``is_still_running`` is ``False`` when the controller can no longer run and is now inactive
-        — the Hub has the runtime stop it as failed (`PeripheralOutput.peripheral_did_fail`) until the
-        user restarts it; the user is told it failed (and why, if actionable) without a technical dump.
+        A controller that can't go on tells the runtime instead (``self.runtime.peripheral_did_fail``), with the reason
+        for the user.
         """
         ...
 
-    async def controller_did_resolve_error(self, controller: AbstractController, error_id: str) -> None:
+    async def controller_did_resolve_error(self, controller: AbstractController, error_id: str):
         """The problem reported with ``error_id`` is gone. Resolving an id that isn't active does nothing."""
         ...
 

@@ -111,12 +111,12 @@ class Radio(Peripheral):
     @contextlib.asynccontextmanager
     async def _busy(self):
         self.is_busy = True
-        await self.output.peripheral_did_change_provided(self)  # returns once what used it let go of it
+        await self.runtime.peripheral_did_change_provided(self)  # returns once what used it let go of it
         try:
             yield
         finally:
             self.is_busy = False
-            await self.output.peripheral_did_change_provided(self)
+            await self.runtime.peripheral_did_change_provided(self)
 
     async def check_bluetooth(self):
         """Whether a multi-PAN firmware serves Bluetooth too: the driver says where it knows, else it is asked."""
@@ -210,7 +210,7 @@ class UsbScanner(Peripheral):
     async def _rescan(self):
         try:
             await self._scan()
-            await self.output.peripheral_did_change_provided(self)
+            await self.runtime.peripheral_did_change_provided(self)
         except Exception:
             log.exception("Following the USB sticks failed")
 

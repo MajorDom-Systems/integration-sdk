@@ -66,11 +66,10 @@ class LoggingControllerOutput(ControllerOutput):
         for event in events:
             logger.info("event %s: %r", type(event).__name__, event)
 
-    async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError) -> None:
-        state = "still running" if error.is_still_running else "STOPPED — integration inactive"
-        logger.error("integration error %s (%s): %s", error.id, state, error.message)
+    async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError):
+        logger.error("integration error %s: %s", error.id, error.message)
 
-    async def controller_did_resolve_error(self, controller: AbstractController, error_id: str) -> None:
+    async def controller_did_resolve_error(self, controller: AbstractController, error_id: str):
         logger.info("integration error %s resolved", error_id)
 
     async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):

@@ -301,20 +301,66 @@ async def test_disabled_is_kept_and_never_revived_by_a_replug(tmp_path):
     assert not store.is_disabled("zigbee")
 
 
-# self-stop
+# self-stop and crashes
+
+STOPPED = "stopped by itself: waits for its needs to change or a restart"
 
 
-async def test_one_that_stops_by_itself_is_failed_until_restarted(tmp_path):
-    integration = FakePeripheral("zigbee")
-    runtime = await run(tmp_path, integration)
+async def test_one_that_stops_by_itself_waits_for_its_needs_to_change(tmp_path):
+    stick, integration = radio(ZIGBEE), zigbee()
+    runtime = await run(tmp_path, stick, integration)
 
-    await integration.output.peripheral_did_fail(integration, "Lost the connection to the Zigbee radio.")
-    assert runtime.status(integration) == PeripheralStatus(S.FAILED, "Lost the connection to the Zigbee radio.")
+    await integration.runtime.peripheral_did_stop(integration)
+    assert runtime.status(integration) == PeripheralStatus(S.WAITING, STOPPED)
     assert integration.calls == ["start", "stop"]
+    await runtime.refresh()
+    assert runtime.status(integration) == PeripheralStatus(S.WAITING, STOPPED)
+
+    stick.provided = []  # replugged
+    await changed(runtime, stick)
+    stick.provided = [ZIGBEE]
+    await changed(runtime, stick)
+    assert state(runtime, integration) == S.RUNNING
+
+
+async def test_one_that_stopped_by_itself_starts_once_restarted(tmp_path):
+    integration = FakePeripheral("hue")
+    runtime = await run(tmp_path, integration)
+    await integration.runtime.peripheral_did_stop(integration)
 
     await runtime.restart(integration)
     await settle(runtime)
     assert state(runtime, integration) == S.RUNNING
+
+
+async def test_one_that_crashes_is_started_again_then_given_up(tmp_path):
+    integration = FakePeripheral("zigbee")
+    runtime = await run(tmp_path, integration)
+    for _ in range(len(module.RETRY_DELAYS) + 1):
+        await until(runtime, lambda: state(runtime, integration) == S.RUNNING)
+        await integration.runtime.peripheral_did_fail(integration, "Lost the connection to the Zigbee radio.")
+    assert runtime.status(integration) == PeripheralStatus(S.FAILED, "Lost the connection to the Zigbee radio.")
+
+    await runtime.restart(integration)
+    await settle(runtime)
+    assert state(runtime, integration) == S.RUNNING
+
+
+async def test_a_failure_told_from_inside_its_start_fails_that_start(tmp_path):
+    class GivesUp(FakePeripheral):
+        async def start(self):
+            await super().start()
+            if len(self.calls) == 1:
+                await self.runtime.peripheral_did_fail(self, "Wrong credentials: re-enter them.")
+                raise RuntimeError("can't go on")
+
+    hue = GivesUp("hue")
+    runtime = await run(tmp_path, hue)
+    assert runtime.status(hue) == PeripheralStatus(
+        S.WAITING, "Wrong credentials: re-enter them.; trying again in 0.01 s"
+    )
+    await until(runtime, lambda: state(runtime, hue) == S.RUNNING)
+    assert hue.calls == ["start", "stop", "start"]
 
 
 # calls from what a peripheral runs in the background, and from the runtime's own output
@@ -331,7 +377,7 @@ async def test_a_call_from_a_task_a_start_spawned_returns_once_acted_on(tmp_path
         async def flash_later(self):
             await asyncio.sleep(0.01)
             self.provided = []  # busy: being flashed
-            await self.output.peripheral_did_change_provided(self)
+            await self.runtime.peripheral_did_change_provided(self)
             seen.append(state(runtime, integration))
 
     stick, integration = Stick("stick", provides=[ZIGBEE]), zigbee()
@@ -362,6 +408,9 @@ async def test_a_call_scheduled_by_a_status_callback_returns_once_acted_on(tmp_p
     assert seen == [S.DISABLED]
 
 
+# what a peripheral brings along: the cascade
+
+
 def matter_with_server(**server) -> tuple[FakePeripheral, FakePeripheral]:
     server_ = FakePeripheral("matter-server", provides=[SERVER], is_on_demand=True, **server)
     return FakePeripheral("matter", [Need("matter")], peripherals=[server_]), server_
@@ -386,7 +435,9 @@ async def test_what_a_failed_one_brought_along_stops_with_it(tmp_path):
     matter, server = matter_with_server()
     runtime = await run(tmp_path, matter)
 
-    await matter.output.peripheral_did_fail(matter, "gave up")
+    for _ in range(len(module.RETRY_DELAYS) + 1):
+        await until(runtime, lambda: state(runtime, matter) == S.RUNNING)
+        await matter.runtime.peripheral_did_fail(matter, "gave up")
     assert runtime.status(server) == PeripheralStatus(S.WAITING, "comes with matter, which is failed")
 
 
@@ -482,7 +533,7 @@ async def test_what_needs_a_provider_starts_once_it_is_ready(tmp_path):
     assert runtime.status(server) == PeripheralStatus(S.RUNNING, is_ready=False)
     assert runtime.status(matter) == PeripheralStatus(S.WAITING, "waiting for matter-server")
 
-    await server.output.peripheral_did_become_ready(server)
+    await server.runtime.peripheral_did_become_ready(server)
     await settle(runtime)
     assert state(runtime, matter) == S.RUNNING
 
@@ -490,7 +541,7 @@ async def test_what_needs_a_provider_starts_once_it_is_ready(tmp_path):
 async def test_a_running_peripheral_rides_out_its_provider_restarting(tmp_path):
     matter, server = matter_with_server(is_ready_on_start=False)
     runtime = await run(tmp_path, matter)
-    await server.output.peripheral_did_become_ready(server)
+    await server.runtime.peripheral_did_become_ready(server)
     await settle(runtime)
 
     await runtime.restart(server)

@@ -210,11 +210,11 @@ async def test_output_delegate_prints_reported_and_resolved_errors(capsys):
     output = _CliControllerOutput(deps.make_device_repository)
     controller = FakeController(deps)
 
-    await output.controller_did_encounter_error(controller, IntegrationError("stick-unplugged", "Re-plug it", False))
+    await output.controller_did_encounter_error(controller, IntegrationError("stick-unplugged", "Re-plug it"))
     await output.controller_did_resolve_error(controller, "stick-unplugged")
 
     out = capsys.readouterr().out
-    assert "stick-unplugged: Re-plug it  (stopped)" in out and out.rstrip().endswith("stick-unplugged")
+    assert "stick-unplugged: Re-plug it" in out and out.rstrip().endswith("stick-unplugged")
 
 
 def test_prompt_safe_print_is_a_noop_safe_call(capsys):

@@ -31,7 +31,7 @@ def test_output_keeps_the_active_errors_by_id():
         IntegrationError("server-unreachable", "Server lost"),
         IntegrationError("server-unreachable", "Still lost"),
     )
-    unplugged = IntegrationError("stick-unplugged", "Re-plug the stick", is_still_running=False)
+    unplugged = IntegrationError("stick-unplugged", "Re-plug the stick")
 
     async def report():
         for error in (lost, unplugged, again):

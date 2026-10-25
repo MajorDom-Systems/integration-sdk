@@ -86,6 +86,7 @@ class MemoryDisabledStore:
 
 
 type Binding = tuple[Peripheral, Endpoint]  # who provides it, and what
+type _Key = dict[str, list[tuple[Peripheral, Endpoint, int]]]  # what tells bindings apart
 
 
 @dataclass(eq=False)
@@ -100,6 +101,9 @@ class _Entry:
     retry_at: float = 0.0  # monotonic: a waiting one starts no earlier
     failure: str = ""  # why, and when it is tried again
     bindings: dict[str, list[Binding]] = field(default_factory=dict)  # what it was started or last told with
+    stopped_with: _Key | None = None  # what it was bound to when it stopped by itself: it waits for a change
+    told_failure: str = ""  # while starting
+    is_stopping_itself: bool = False  # told while starting
     task: asyncio.Task | None = None  # its start
     reported: PeripheralStatus | None = None
 
@@ -273,7 +277,8 @@ class Runtime:
 
         async def apply():
             if entry.state == PeripheralState.DISABLED:
-                entry.state, entry.attempts, entry.retry_at = PeripheralState.WAITING, 0, 0.0
+                entry.state = PeripheralState.WAITING
+                _revive(entry)
 
         await self._act(apply)
 
@@ -283,21 +288,21 @@ class Runtime:
         await self._act(lambda: self._stop(self._entry(peripheral), PeripheralStatus(PeripheralState.DISABLED)))
 
     async def restart(self, peripheral: Peripheral):
-        """Stop it if it runs and start it again, a failed one too: its retries start over. Called from inside a
-        peripheral's own start, stop or hook, it happens once that call returns."""
+        """Stop it if it runs and start it again, a failed one or one that stopped by itself too: its retries start
+        over. Called from inside a peripheral's own start, stop or hook, it happens once that call returns."""
         entry = self._entry(peripheral)
         if entry.state == PeripheralState.DISABLED:
             raise ValueError(f"{peripheral.name} is disabled: enable it")
 
         async def apply():
             await self._stop(entry, _waiting())
-            entry.attempts, entry.retry_at = 0, 0.0
+            _revive(entry)
 
         await self._act(apply)
 
     async def update_settings(self, peripheral: Peripheral, values: Mapping[str, Any]) -> Any:
         """Validate and keep new values of its ``Settings``; one that runs hears it (`settings_did_change`), a failed
-        one tries again."""
+        one or one that stopped by itself tries again."""
         entry = self._entry(peripheral)
         if (model := peripheral.Settings) is None:
             raise KeyError(f"{peripheral.name} has no settings")
@@ -307,8 +312,9 @@ class Runtime:
         self._save()
 
         async def apply():
-            if entry.state == PeripheralState.FAILED:
-                entry.state, entry.attempts = PeripheralState.WAITING, 0
+            if entry.state in (PeripheralState.FAILED, PeripheralState.WAITING):
+                entry.state = PeripheralState.WAITING
+                _revive(entry)
             elif entry.state == PeripheralState.RUNNING:
                 await self._ask(entry, peripheral.settings_did_change(before))
             elif entry.state == PeripheralState.STARTING:  # it may have read the ones before: start it anew
@@ -358,23 +364,43 @@ class Runtime:
             entry.is_ready = entry.is_ready or entry.is_started
         await self._settle()
 
-    async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
-        entry = self._entry(peripheral)
+    async def peripheral_did_stop(self, peripheral: Peripheral):
+        if (entry := self._find(peripheral)) is None:
+            return
+        if entry.state == PeripheralState.STARTING:
+            entry.is_stopping_itself = True
+            return
 
         async def apply():
-            if entry.is_started:
-                await self._stop(entry, PeripheralStatus(PeripheralState.FAILED, reason))
-                entry.attempts = 0
+            if entry.state == PeripheralState.RUNNING:
+                await self._stop_itself(entry)
+
+        await self._act(apply)
+
+    async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
+        if (entry := self._find(peripheral)) is None:
+            return
+        if entry.state == PeripheralState.STARTING:
+            entry.told_failure = entry.told_failure or reason
+            return
+
+        async def apply():
+            if entry.state == PeripheralState.RUNNING:
+                await self._stop(entry, _waiting())
+                self._fail(entry, reason)
 
         await self._act(apply)
 
     # Internals
 
     def _entry(self, peripheral: Peripheral) -> _Entry:
-        entry = self._entries.get(peripheral.name)
-        if entry is None or entry.peripheral is not peripheral:
+        if (entry := self._find(peripheral)) is None:
             raise LookupError(f"{peripheral.name} isn't run here")
         return entry
+
+    def _find(self, peripheral: Peripheral) -> _Entry | None:
+        entry = self._entries.get(peripheral.name)
+        return entry if entry is not None and entry.peripheral is peripheral else None
 
     async def _act(self, change: Callable[[], Awaitable[Any]]):
         """Make a change and settle; from inside a call the runtime waits on, once that returns."""
@@ -429,6 +455,8 @@ class Runtime:
                 await self._deliver(entry, bound)
             elif entry.state in (PeripheralState.WAITING, PeripheralState.FAILED, PeripheralState.DISABLED):
                 self._bind_view(entry, bound)
+                if entry.stopped_with is not None and _key(bound) != entry.stopped_with:
+                    entry.stopped_with = None
         for entry in self._entries.values():
             if entry.state == PeripheralState.WAITING:
                 entry.reason = self._why_waiting(entry)
@@ -472,7 +500,7 @@ class Runtime:
         return gone
 
     def _adopt(self, peripheral: Peripheral, contributor: str | None) -> _Entry:
-        peripheral.output = self
+        peripheral.runtime = self
         if isinstance(peripheral, Service):
             peripheral.host = self.compose
         failure = ""
@@ -588,6 +616,8 @@ class Runtime:
 
     def _why_waiting(self, entry: _Entry) -> str:
         """Why a waiting one doesn't start now; empty when it can."""
+        if entry.stopped_with is not None:
+            return "stopped by itself: waits for its needs to change or a restart"
         if (contributor := entry.contributor) is not None and not self._is_alive(self._entries[contributor]):
             return f"comes with {contributor}, which is {self._entries[contributor].state}"
         if entry.name not in self._wanted:
@@ -611,7 +641,7 @@ class Runtime:
 
     def _start(self, entry: _Entry):
         entry.state, entry.reason, entry.is_ready = PeripheralState.STARTING, "", False
-        entry.bindings = self._bound[entry.name]
+        entry.bindings, entry.told_failure, entry.is_stopping_itself = self._bound[entry.name], "", False
         self._bind_view(entry, entry.bindings)
         entry.task = self._spawn(self._run_start(entry))
 
@@ -630,14 +660,22 @@ class Runtime:
             if entry.task is not asyncio.current_task():  # stopped, though it went on
                 return
             entry.task = None
-            if failure:
+            if failure := entry.told_failure or failure:
                 await self._stop(entry, _waiting())  # it releases what it took before it failed
                 self._fail(entry, failure)
+            elif entry.is_stopping_itself:
+                await self._stop_itself(entry)
             else:
                 entry.state, entry.running_since = PeripheralState.RUNNING, monotonic()
                 entry.is_ready = entry.is_ready or peripheral.is_ready_on_start
         await self.refresh()
 
+    async def _stop_itself(self, entry: _Entry):
+        stopped_with = _key(entry.bindings)
+        await self._stop(entry, _waiting())
+        entry.stopped_with = stopped_with
+
+    # TODO: stop reason as an enum + per-reason restart policies
     def _fail(self, entry: _Entry, reason: str):
         """Count a failure: wait to try again, or give up once the retries are spent."""
         entry.attempts += 1
@@ -837,7 +875,12 @@ def _view(peripheral: Peripheral, bound: Mapping[str, list[Binding]]) -> dict[st
     return {family: [e for _, e in b] if family in many else b[0][1] for family, b in bound.items()}
 
 
-def _key(bound: Mapping[str, list[Binding]]) -> dict[str, list[tuple[Peripheral, Endpoint, Any]]]:
+def _revive(entry: _Entry):
+    """The user's say: its failures in a row, a retry it waits for and its stopping by itself are forgotten."""
+    entry.attempts, entry.retry_at, entry.stopped_with = 0, 0.0, None
+
+
+def _key(bound: Mapping[str, list[Binding]]) -> _Key:
     """What tells two bindings apart: the provider, the endpoint and the very instance it carries."""
     return {family: [(p, e, id(e.instance)) for p, e in bindings] for family, bindings in bound.items()}
 

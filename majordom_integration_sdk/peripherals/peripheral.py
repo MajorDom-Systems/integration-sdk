@@ -13,11 +13,11 @@ if TYPE_CHECKING:
 
 
 class PeripheralOutput(Protocol):
-    """Where a peripheral reports what changed on its own (a stick plugged in, a node connected), delegate style like
-    `ControllerOutput`; the runtime injects itself as `Peripheral.output`.
+    """What a peripheral tells whatever runs it, as its ``runtime``, delegate style like `ControllerOutput`: what
+    changed on its own (a stick plugged in, a node connected), and that it stopped.
 
     Awaiting a call returns once the runtime acted on it, e.g. stopped what used a radio about to be flashed. From
-    inside ``start``, ``stop`` or a hook it returns at once: the runtime reads the change when that call returns.
+    inside ``start``, ``stop`` or a hook it returns at once: the runtime acts when that call returns.
     """
 
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
@@ -28,18 +28,28 @@ class PeripheralOutput(Protocol):
         """It serves now, so what needs it may start; only for one that isn't ``is_ready_on_start``."""
         ...
 
+    async def peripheral_did_stop(self, peripheral: Peripheral):
+        """It stopped by itself, gracefully: it is stopped (``stop`` releases what it holds) and waits until one of its
+        needs changes (goes and comes back, or moves) or the user restarts it."""
+        ...
+
     async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
-        """It stopped by itself and can't go on: it is stopped as failed until the user restarts it."""
+        """It can't go on, ``reason`` saying why to the user: it is stopped and started again after each of the
+        runtime's retry delays, then failed until the user restarts it. Told from inside ``start``, that start
+        fails."""
         ...
 
 
-class _NoOutput:
+class _NoRuntime:
     """Nothing runs the peripheral: library mode, a test."""
 
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
         pass
 
     async def peripheral_did_become_ready(self, peripheral: Peripheral):
+        pass
+
+    async def peripheral_did_stop(self, peripheral: Peripheral):
         pass
 
     async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
@@ -56,8 +66,8 @@ class Peripheral(Protocol):
     ``is_on_demand``, and once every required need is bound to a provider that runs and is ready. A required need that
     can't be bound keeps it waiting, with the reason; one lost later stops it until it is back.
 
-    Subclass it for the defaults. The runtime sets ``output``, and ``settings`` when the peripheral declares its options
-    as a nested ``class Settings(BaseModel)``: annotate ``settings: Settings`` to type it.
+    Subclass it for the defaults. The runtime sets ``runtime``, and ``settings`` when the peripheral declares its
+    options as a nested ``class Settings(BaseModel)``: annotate ``settings: Settings`` to type it.
     """
 
     name: str  # unique among the peripherals of a runtime: what it is known, persisted and disabled by
@@ -66,7 +76,7 @@ class Peripheral(Protocol):
     is_ready_on_start: bool = True  # False: it serves only once it says so (`peripheral_did_become_ready`)
     Settings: Any = None
     settings: Any = None
-    output: PeripheralOutput = _NoOutput()
+    runtime: PeripheralOutput = _NoRuntime()  # what runs it
 
     @property
     def provides(self) -> Sequence[Endpoint]:
@@ -109,7 +119,7 @@ type Restart = Callable[[Peripheral], Awaitable[None]]
 
 
 class Peripherals(list[Peripheral]):
-    """A peripheral's own peripherals: the ones it brings along, as a list (change it, then tell `Peripheral.output`),
+    """A peripheral's own peripherals: the ones it brings along, as a list (change it, then tell `Peripheral.runtime`),
     and the endpoints its needs are bound to by family: an `Endpoint`, or a list of them for an ``is_many`` need.
 
     A runtime fills in the bound needs before ``start`` and whenever they change; in library mode `bind` them yourself.

@@ -150,7 +150,7 @@ class Compose:
         for endpoint in service.provides:
             await _until(partial(_provision, service, endpoint), f"{service.name} failed to set up {endpoint.url}")
         await _until(service.is_healthy, f"{service.name} isn't healthy")
-        await service.output.peripheral_did_become_ready(service)
+        await service.runtime.peripheral_did_become_ready(service)
         facts: dict[str, Any] = {}
         for endpoint in service.provides:
             try:

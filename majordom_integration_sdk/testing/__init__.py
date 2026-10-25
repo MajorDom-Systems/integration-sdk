@@ -74,11 +74,11 @@ class RecordingControllerOutput(ControllerOutput):
     async def controller_did_receive_events(self, controller: _Controller, events: Iterable[Event]):
         self.events.extend(events)
 
-    async def controller_did_encounter_error(self, controller: _Controller, error: IntegrationError) -> None:
+    async def controller_did_encounter_error(self, controller: _Controller, error: IntegrationError):
         self.errors[error.id] = error
         self.error_log.append(error)
 
-    async def controller_did_resolve_error(self, controller: _Controller, error_id: str) -> None:
+    async def controller_did_resolve_error(self, controller: _Controller, error_id: str):
         self.errors.pop(error_id, None)
         self.error_log.append(error_id)
 
@@ -89,7 +89,7 @@ class RecordingControllerOutput(ControllerOutput):
 class FakePeripheral(Peripheral):
     """A peripheral that records how it is run (``calls``: "start", "stop") and the changes it hears. Its first
     ``failures`` starts raise; ``answer`` is what its hooks return, or an exception they raise. Change ``provided`` or
-    ``peripherals``, then tell ``output``, as a real one does when a stick is plugged in."""
+    ``peripherals``, then tell ``runtime``, as a real one does when a stick is plugged in."""
 
     def __init__(
         self,
@@ -151,11 +151,12 @@ class FakePeripheral(Peripheral):
 
 
 class RecordingPeripheralOutput:
-    """Captures what peripherals report to whatever runs them: set it as a peripheral's ``output``."""
+    """Captures what peripherals report to whatever runs them: set it as a peripheral's ``runtime``."""
 
     def __init__(self):
         self.changed: list[Peripheral] = []
         self.ready: list[Peripheral] = []
+        self.stopped: list[Peripheral] = []
         self.failed: list[tuple[Peripheral, str]] = []
 
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
@@ -163,6 +164,9 @@ class RecordingPeripheralOutput:
 
     async def peripheral_did_become_ready(self, peripheral: Peripheral):
         self.ready.append(peripheral)
+
+    async def peripheral_did_stop(self, peripheral: Peripheral):
+        self.stopped.append(peripheral)
 
     async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
         self.failed.append((peripheral, reason))
