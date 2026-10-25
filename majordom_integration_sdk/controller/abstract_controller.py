@@ -123,9 +123,10 @@ class AbstractController[TDevice: Device, TParameter: Parameter](Peripheral, ABC
     async def context_did_change(self, before: Context) -> bool:
         """Hub-wide facts changed (region, Wi-Fi, Thread network); ``platform.context`` holds the new ones.
 
-        Return True when applied in place; False (the default) restarts the integration.
+        Return True (the default) when they don't concern it or were applied in place; False restarts the
+        integration. One that reads them only when it acts (pairing a device) needs no override.
         """
-        return False
+        return True
 
     # TODO: review if these two are needed, test the implementation
 

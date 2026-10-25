@@ -150,7 +150,7 @@ async def test_a_controller_is_a_peripheral_with_its_settings_and_its_peripheral
     assert controller.peripherals.endpoint("example").url == "ws://x"
     assert not controller.is_on_demand and controller.provides == ()
     assert await controller.needed_peripheral_did_change(PeripheralChange("example", None, None)) is False
-    assert await controller.context_did_change(Context()) is False  # restarted, unless it handles it
+    assert await controller.context_did_change(Context()) is True  # the context concerns few: it reads it when it does
 
 
 def test_a_controller_without_settings_has_none():

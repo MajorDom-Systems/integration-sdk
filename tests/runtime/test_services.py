@@ -171,17 +171,19 @@ async def test_a_service_setting_recreates_only_that_service(tmp_path):
 
 
 async def test_the_context_renders_and_a_change_recreates_only_what_renders_it(tmp_path):
-    region = Context(region="Europe")
+    region, containers = Context(region="Europe"), FakeCompose()
     app, server = matter(REGION="{context.region}")
     plain = Service("plain", {"image": "plain"}, [Need("ip")], [Endpoint("plain")])
-    user = FakePeripheral("user", [Need("plain")])
-    runtime = await run(tmp_path, FakeCompose(), host(), server, app, plain, user, context=lambda: region)
+    user = FakePeripheral("user", [Need("plain")], answer=True)
+    runtime = await run(tmp_path, containers, host(), server, app, plain, user, context=lambda: region)
     assert compose(tmp_path)["matterjs-server"]["environment"]["REGION"] == "Europe"
+    applied = len(containers.calls)
 
     before, region = region, Context(region="USA")
     await runtime.context_did_change(before)
     await settle(runtime)
     assert compose(tmp_path)["matterjs-server"]["environment"]["REGION"] == "USA"
+    assert len([call for call in containers.calls[applied:] if "-f" in call]) == 2  # without it, then with it again
     assert runtime.status(server).state == PeripheralState.RUNNING
     assert app.changes == user.changes == [("context", before)]  # the integrations hear it too
 

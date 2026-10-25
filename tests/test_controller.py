@@ -103,7 +103,7 @@ async def test_the_pairing_window_opens_without_credentials():
     await controller.start_pairing_window(5)
 
 
-async def test_changed_settings_and_context_ask_for_a_restart_unless_handled():
+async def test_changed_settings_restart_it_unless_handled_and_the_context_doesnt():
     controller = _MinimalController(build_test_platform(integration="minimal"))
     assert await controller.settings_did_change(None) is False
-    assert await controller.context_did_change(Context()) is False
+    assert await controller.context_did_change(Context()) is True
