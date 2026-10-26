@@ -98,6 +98,21 @@ async def test_a_device_is_removed_once_no_radio_hears_it(radios):
     assert ble.devices() == []
 
 
+async def test_a_device_whose_radio_is_leased_stays_until_the_lease_ends(radios):
+    ble, near, far = radios
+    listener = Listener()
+    ble.register(listener, {MATTER})
+    near.advertise("AA", service_uuids=[str(MATTER)])
+    await settle()
+    ble._removal_grace_sec = 0
+
+    async with ble.exclusive("AA", owner="esphome"):  # its radio silenced while the user presses the button
+        await ble.perform_scan()
+        assert listener.removed == [] and len(ble.devices()) == 1
+    await ble.perform_scan()
+    assert [i.device.address for i in listener.removed] == ["AA"]
+
+
 async def test_cancelled_listeners_hear_nothing(radios):
     ble, near, _ = radios
     listener = Listener()

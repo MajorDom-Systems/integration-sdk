@@ -81,6 +81,7 @@ class BLEService(Peripheral):
         self._bound: dict[tuple[str, int], str] = {}  # bound endpoint (url, instance) -> the source it became
         self._is_running: bool = False
         self._leases: dict[str, asyncio.Lock] = {}  # source -> held while it is leased
+        self._leased: dict[str, str] = {}  # source -> the address it is leased for: kept while its radio is silenced
         self._removal_grace_sec: float = 11.0  # seconds unheard by every source before did_remove is fired
         self._eviction_interval_sec: float = 10.0
         self._silence_sec: float = 60.0  # a source unheard this long is restarted
@@ -171,8 +172,10 @@ class BLEService(Peripheral):
         """Leases the source hearing ``address`` best to ``owner`` (e.g. while pairing it): that source stops
         scanning and others' connects avoid it; the rest keep going. A leased source is waited for ``wait``
         seconds before the next best is tried, round after round, until ``timeout`` raises `BLEBusyError`.
-        With ``is_pairing_needed``, only sources that can pair are leased (`BLEPairingError` when none hears it)."""
+        With ``is_pairing_needed``, only sources that can pair are leased (`BLEPairingError` when none hears it).
+        The device stays tracked until the lease ends, though no radio may hear it meanwhile."""
         name = await self._acquire(address, owner, timeout, wait, is_pairing_needed)
+        self._leased[name] = address
         try:
             source = self._sources[name]
             with contextlib.suppress(Exception):
@@ -250,6 +253,7 @@ class BLEService(Peripheral):
             if self._is_running and name in self._sources:
                 await self._resume_source(name)
         finally:
+            self._leased.pop(name, None)
             self._leases[name].release()
             logger.info(f"BLE source {name} released by {owner}")
 
@@ -362,7 +366,7 @@ class BLEService(Peripheral):
 
     async def _evict_stale(self):
         for address, tracked in list(self._tracked.items()):
-            if tracked.sources(self._removal_grace_sec):
+            if tracked.sources(self._removal_grace_sec) or address in self._leased.values():
                 continue
             del self._tracked[address]
             adv_data = tracked.info.advertisement
