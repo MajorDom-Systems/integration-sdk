@@ -713,6 +713,37 @@ async def test_a_running_peripheral_rides_out_its_provider_restarting(tmp_path):
     server.gate.set()
 
 
+@pytest.mark.parametrize("ends", ["restart", "disable"])
+async def test_what_runs_on_an_in_process_provider_stops_first_and_starts_once_it_runs_again(tmp_path, ends):
+    order: list[str] = []
+
+    class Ordered(Gated):
+        async def start(self):
+            order.append(f"{self.name} start")
+            await super().start()
+
+        async def stop(self):
+            order.append(f"{self.name} stop")
+
+    zeroconf, homekit = Ordered("zeroconf", is_on_demand=True), Ordered("homekit", [Need("mdns")])
+    zeroconf.provided = [Endpoint("mdns", "zeroconf", "zeroconf", is_shared=True, instance=zeroconf)]  # its browser
+    zeroconf.gate.set()
+    homekit.gate.set()
+    runtime = await run(tmp_path, zeroconf, homekit)
+
+    order.clear()
+    zeroconf.gate.clear()
+    await getattr(runtime, ends)(zeroconf)
+    assert order[:2] == ["homekit stop", "zeroconf stop"]  # what it registered goes with the one that ran
+
+    if ends == "disable":
+        await runtime.enable(zeroconf)
+    assert runtime.status(homekit) == PeripheralStatus(S.WAITING, K.NEEDS_STARTING, "waiting for zeroconf")
+    zeroconf.gate.set()
+    await settle(runtime)
+    assert order[2:] == ["zeroconf start", "homekit start"] and state(runtime, homekit) == S.RUNNING
+
+
 async def test_an_optional_need_is_handed_over_once_its_provider_runs(tmp_path):
     border = Gated("otbr", provides=[THREAD], is_on_demand=True)
     matter = FakePeripheral("matter", [Need("thread", is_required=False)], answer=True)

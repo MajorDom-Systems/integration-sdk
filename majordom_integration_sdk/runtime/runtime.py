@@ -161,7 +161,8 @@ class Runtime:
     starts by itself: a stick plugged in again never revives a disabled or failed one. A start that raises or takes too
     long, a crash it tells (``peripheral_did_fail``) and a hook that raises are tried again after each of
     `RETRY_DELAYS`, then it is failed; one that stops by itself (``peripheral_did_stop``) waits for its needs to
-    change. What it brought along goes when it stops.
+    change. What it brought along goes when it stops. A provider restarting is a blip for what runs on it, but for one
+    bound to the very object it runs in process (a zeroconf browser): that one stops first and starts again after.
     """
 
     def __init__(
@@ -768,9 +769,14 @@ class Runtime:
         entry.detail = entry.failure = f"{reason}; trying again in {delay} s"
 
     async def _stop(self, entry: _Entry, status: PeripheralStatus):
-        """Stop it if it runs or starts, and leave it in ``status``."""
+        """Stop it if it runs or starts, and leave it in ``status``. What runs on the very object it provides (a
+        required need bound to an endpoint with its ``instance``) stops first: what it registered there goes with it,
+        so it starts again only once it runs anew."""
         if entry.state == PeripheralState.DISABLED and status.state != PeripheralState.DISABLED:
             return  # only enabling ends it
+        if entry.is_started:
+            for user in _users_first([user for user in self._entries.values() if _runs_inside(user, entry)]):
+                await self._stop(user, _waiting())
         is_started = entry.is_started
         if task := entry.task:
             entry.task = None
@@ -964,6 +970,18 @@ def _users_first(entries: list[_Entry]) -> list[_Entry]:
 
 def _is_using(user: _Entry, provider: _Entry) -> bool:
     return any(p is provider for bindings in user.bindings.values() for p, _ in bindings)
+
+
+def _runs_inside(user: _Entry, provider: _Entry) -> bool:
+    """Whether ``user`` runs with a required need bound to the in-process object ``provider`` runs: a zeroconf browser,
+    whose restart it can't ride out as it does a server's."""
+    required = {need.family for need in user.peripheral.needs if need.is_required}
+    return user.is_started and any(
+        p is provider and endpoint.instance is not None
+        for family, bindings in user.bindings.items()
+        if family in required
+        for p, endpoint in bindings
+    )
 
 
 def _waiting(kind: StatusKind | None = None, detail: str = "") -> PeripheralStatus:

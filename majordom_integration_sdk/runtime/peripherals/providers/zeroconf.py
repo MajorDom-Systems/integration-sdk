@@ -67,6 +67,8 @@ class ZeroconfDiscoveryService(Peripheral):
         browser, adapter = self._make_browser(services, listener)
 
         def cancel():
+            if adapter not in self._adapters:  # it stopped since, cancelling it already
+                return
             adapter.cancel_all_pending()
             self._browsers.discard(browser)
             self._adapters.remove(adapter)
