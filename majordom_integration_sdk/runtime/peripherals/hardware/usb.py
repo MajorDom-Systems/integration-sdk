@@ -58,6 +58,7 @@ class Radio(Peripheral["Radio.Settings"]):
     ):
         self.name, self.path, self.drivers, self.scanner = name, path, drivers, scanner
         self.driver, self.firmware, self.params = driver, firmware, params or {}
+        self.given = driver, firmware  # what the board says a soldered one runs: kept once forgotten if no driver tells
         self.found: dict[str, Any] = {}  # the serial settings its driver found it at, under the board's ``params``
         self.node = os.path.realpath(path)  # a container keeps the node it was created with: follow a re-enumeration
         self.held_by: str | None = None  # another program that has it open: left alone until probed
@@ -114,12 +115,15 @@ class Radio(Peripheral["Radio.Settings"]):
 
     async def forget(self):
         """Forget what it is and that the user probed it: whatever uses it lets go of it, and it is looked at again as
-        a stick plugged in anew, or, soldered, identified again."""
+        a stick plugged in anew, or, soldered, identified again: as the board says when no driver tells."""
         async with self._busy():
             self.driver, self.firmware, self.found, self.has_bluetooth = None, None, {}, False
             self.is_claimed, self._asked = False, []
             if self.scanner is None:
                 await self.recognise()
+                if self.driver is None and self.given[1]:
+                    self.driver, self.firmware = self.given
+                    await self.check_bluetooth()
         if self.scanner:
             await self.scanner.forget(self)
 

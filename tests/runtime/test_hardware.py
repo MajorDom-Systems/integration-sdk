@@ -165,6 +165,20 @@ async def test_a_forgotten_soldered_radio_is_identified_again(tmp_path):
     assert (radio.firmware, driver.opened) == ("multipan-rcp", ["ttyAMA3"])  # what it runs, asked
 
 
+async def test_a_forgotten_soldered_radio_no_driver_tells_serves_what_the_board_says(tmp_path):
+    (tmp_path / "ttyAMA3").touch()
+    driver = Driver()  # it can't read it at the firmware's own serial settings
+    wired = FixedRadio("mg26", str(tmp_path / "ttyAMA3"), "silabs", "multipan-rcp", {"flow_control": False})
+    board, multipan = FixedPeripherals(wired, drivers=[driver]), FakePeripheral("multipan", [Need("multipan")])
+    runtime = await run(tmp_path, board, multipan)
+    [radio] = board.provides
+
+    await radio.forget()
+    await settle(runtime)
+    assert (radio.firmware, driver.opened) == ("multipan-rcp", ["ttyAMA3"])
+    assert state(runtime, multipan) == PeripheralState.RUNNING
+
+
 async def test_a_stick_another_program_holds_is_left_alone_until_probed(tmp_path, sticks, held):
     plug(sticks, "sky")
     held["sky"] = "zigbee2mqtt"
