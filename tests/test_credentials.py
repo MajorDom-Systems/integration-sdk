@@ -4,7 +4,9 @@ import warnings
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel
 
+from majordom_integration_sdk.schemas.credentials import WifiCredentials
 from majordom_integration_sdk.schemas.device import (
     CredentialsOption,
     CredentialsType,
@@ -122,3 +124,14 @@ def test_button_is_a_confirmation_without_a_value():
 def test_a_discovery_can_offer_button_or_qr():
     discovery = _discovery([CredentialsType.button, CredentialsType.qr])
     assert [o.type for o in discovery.expected_credentials_options] == [CredentialsType.button, CredentialsType.qr]
+
+
+def test_a_wifi_password_is_written_never_read_back():
+    # settings holding a network (the Hub's saved ones) never return its password: their schema says so
+    class Saved(BaseModel):
+        wifi: list[WifiCredentials] = []
+
+    schema = Saved.model_json_schema()
+    assert schema["$defs"]["WifiCredentials"]["properties"]["password"]["writeOnly"] is True
+    assert "writeOnly" not in schema["$defs"]["WifiCredentials"]["properties"]["ssid"]
+    assert WifiCredentials("home") == WifiCredentials("home", "")

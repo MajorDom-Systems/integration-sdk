@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Annotated
+
+from pydantic import Field
 
 from .base import Base
 
@@ -77,4 +80,5 @@ class ProvidedCredentials(Base):
 @dataclass(frozen=True)
 class WifiCredentials:
     ssid: str
-    password: str = ""
+    # the user writes it, nothing reads it back: settings holding a network never return it
+    password: Annotated[str, Field(json_schema_extra={"writeOnly": True})] = ""
