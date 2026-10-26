@@ -126,6 +126,8 @@ class Radio(Peripheral["Radio.Settings"]):
         """Forget what it is and that the user probed it: whatever uses it lets go of it, and it is looked at again as
         a stick plugged in anew, or, soldered, identified again: as the board says when no driver tells."""
         async with self._busy():
+            if self.scanner:  # first: a scan going on would take it back from there
+                self.scanner.forget(self)
             self.driver, self.firmware, self.found, self.has_bluetooth = None, None, {}, False
             self.is_claimed, self._asked = False, []
             if self.scanner is None:
@@ -134,7 +136,7 @@ class Radio(Peripheral["Radio.Settings"]):
                     self.driver, self.firmware = self.given
                     await self.check_bluetooth()
         if self.scanner:
-            await self.scanner.forget(self)
+            await self.scanner.rescan()
 
     def _remember(self):
         if self.scanner:
@@ -204,7 +206,7 @@ class UsbScanner(Peripheral):
     async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:
         """A driver was bound, e.g. one an integration provides: it may know the sticks no other driver did. Asked in
         the background, as a probe may take long."""
-        self._spawn(self._rescan())
+        self._spawn(self.rescan())
         return True
 
     def _spawn(self, coroutine: Coroutine[Any, Any, Any]):
@@ -264,11 +266,11 @@ class UsbScanner(Peripheral):
             self._known[radio.name] = known | {"is_claimed": radio.is_claimed}
         write_json(self.platform.documents_folder(self) / "sticks.json", self._known)
 
-    async def forget(self, radio: Radio):
-        """Forget what ``radio`` is, and look at it again as a stick plugged in anew."""
+    def forget(self, radio: Radio):
+        """Forget what ``radio`` is, and that the user claimed it: the next scan looks at it as a stick plugged in
+        anew."""
         self._known.pop(radio.name, None)
         write_json(self.platform.documents_folder(self) / "sticks.json", self._known)
-        await self._rescan()
 
     async def _watch(self):
         seen = _nodes(_sticks())
@@ -281,9 +283,10 @@ class UsbScanner(Peripheral):
             is_moved = found != {radio.name: radio.node for radio in self.radios}
             is_let_go = any(r.held_by not in (None, UNSEEN) and not _holder(r.path) for r in self.radios)
             if is_moved or is_let_go:
-                await self._rescan()
+                await self.rescan()
 
-    async def _rescan(self):
+    async def rescan(self):
+        """Follow the sticks plugged in now, identifying the new ones it may open."""
         try:
             await self._scan()
             await self.output.peripheral_did_change_provided(self)

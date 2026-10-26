@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from support import run, settle, state, until
 
-from majordom_integration_sdk import Endpoint, Need, PeripheralChange, UsbDriver
+from majordom_integration_sdk import Endpoint, Need, Peripheral, PeripheralChange, UsbDriver
 from majordom_integration_sdk.runtime import (
     BluetoothAdapters,
     FixedPeripherals,
@@ -24,7 +24,7 @@ from majordom_integration_sdk.runtime import (
 )
 from majordom_integration_sdk.runtime.peripherals.hardware import host, usb
 from majordom_integration_sdk.runtime.peripherals.providers.ble import cpc_hci
-from majordom_integration_sdk.testing import FakePeripheral
+from majordom_integration_sdk.testing import FakePeripheral, RecordingPeripheralOutput
 
 NCP = {"baud": 115200, "flow_control": True}  # the firmware's serial settings
 SKYCONNECT = "usb-Nabu_Casa_SkyConnect_v1.0_1-if00"
@@ -153,6 +153,41 @@ async def test_a_forgotten_stick_is_looked_at_again_as_one_plugged_in_anew(tmp_p
     assert json.loads((scanner.platform.documents_folder(scanner) / "sticks.json").read_text()).keys() == {"sky"}
 
 
+async def test_a_scan_in_flight_never_undoes_a_forget(tmp_path, sticks):
+    gate = asyncio.Event()
+
+    class Slow(Driver):
+        async def identify(self, path: str) -> str | tuple[str, Mapping[str, Any]] | None:
+            if Path(path).name == "a":
+                await gate.wait()  # bellows resetting a stick
+            return await super().identify(path)
+
+    plug(sticks, "b")
+    driver = Slow(a="zigbee-ncp", b="zigbee-ncp")
+    scanner = UsbScanner([driver])
+    runtime = await run(tmp_path, scanner)
+    [b] = scanner.radios
+    sticks.clear()
+    plug(sticks, "a", "b")  # listed first: a scan now waits on its probe
+    scanning = asyncio.create_task(scanner.rescan())
+    await asyncio.sleep(0.01)
+    shared, told = b.output, []
+
+    class Output(RecordingPeripheralOutput):
+        async def peripheral_did_change_provided(self, peripheral: Peripheral):
+            told.append(peripheral)
+            if len(told) == 2:  # leaving its forget, cleared
+                gate.set()
+                await asyncio.sleep(0.01)  # the runtime takes a moment: the scan goes on meanwhile
+            await shared.peripheral_did_change_provided(peripheral)
+
+    b.output = Output()
+    await b.forget()
+    await scanning
+    await settle(runtime)
+    assert driver.opened == ["b", "a", "b"]  # looked at again, as one plugged in anew
+
+
 async def test_a_forgotten_soldered_radio_is_identified_again(tmp_path):
     (tmp_path / "ttyAMA3").touch()
     driver = Driver(ttyAMA3="multipan-rcp")
@@ -216,7 +251,7 @@ async def test_a_stick_held_out_of_sight_isnt_looked_at_again_and_again(tmp_path
     async def rescan():
         rescans.append(scanner.radios[0].held_by)
 
-    monkeypatch.setattr(scanner, "_rescan", rescan)
+    monkeypatch.setattr(scanner, "rescan", rescan)
     await run(tmp_path, scanner)
     assert scanner.radios[0].held_by == "another program"
     await asyncio.sleep(0.1)  # ten looks
