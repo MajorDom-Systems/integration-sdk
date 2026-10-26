@@ -100,6 +100,20 @@ class Compose(Peripheral):
     def is_current(self, service: Service) -> bool:
         return service.name not in self._running or self._rendered.get(service.name) == self._render(service)
 
+    async def wipe(self, service: Service):
+        """Empty the documents folder of ``service``, which doesn't run: through Docker, in its own image (pulled
+        already, with the tools in it), as its container wrote there as root, which the hub's user can't remove (the
+        Thread network, zigbeed's state). RuntimeError while it runs, or when Docker can't."""
+        if service.name in self._running:
+            raise RuntimeError(f"{service.name} runs: its container would write on")
+        folder = service.platform.documents_folder(service)
+        if not (image := service.compose.get("image")) or not any(folder.iterdir()):
+            return  # no container of its own, or nothing to remove
+        await self._docker(
+            *("run", "--rm", "--pull", "never", "--network", "none", "--userns", "host", "--user", "0"),
+            *("--entrypoint", "find", "-v", f"{folder}:/d", image, "/d", "-mindepth", "1", "-delete"),
+        )
+
     # Internals
 
     def _values(self, service: Service) -> dict[str, Any]:

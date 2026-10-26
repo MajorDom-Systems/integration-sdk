@@ -149,6 +149,28 @@ async def test_the_folders_a_container_binds_from_its_data_are_created_before_do
     assert sorted(path.name for path in data.iterdir()) == ["thread", "zigbee"]
 
 
+async def test_a_wipe_empties_a_service_s_data_through_docker_in_its_own_image(tmp_path):
+    # its container wrote there as root, which the hub's user can't remove (a factory reset): the Thread network
+    containers, otbr, matter = FakeCompose(), builtin.otbr(), FakePeripheral("matter", [Need("thread", ["otbr-rest"])])
+    runtime = await run(tmp_path, containers, host(), stick("rcp", RCP), otbr, matter)
+    data = otbr.platform.documents_folder(otbr)
+    (data / "0_a5c.data").write_text("dataset")
+    with pytest.raises(RuntimeError, match="runs"):
+        await containers.wipe(otbr)  # its container would write on
+
+    await runtime.stop()
+    applied = len(containers.calls)
+    await containers.wipe(otbr)
+    assert containers.calls[applied:] == [
+        ("run", "--rm", "--pull", "never", "--network", "none", "--userns", "host", "--user", "0", "--entrypoint")
+        + ("find", "-v", f"{data}:/d", otbr.compose["image"], "/d", "-mindepth", "1", "-delete")
+    ]
+
+    (data / "0_a5c.data").unlink()
+    await containers.wipe(otbr)
+    assert len(containers.calls) == applied + 1  # nothing to remove: no container run
+
+
 async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
     integration, (app, server) = zigbee(), matter()
     peripherals = (host(), builtin.silabs_multiprotocol(), builtin.otbr(), integration, server, app)
