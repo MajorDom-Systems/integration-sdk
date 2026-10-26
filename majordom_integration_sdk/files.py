@@ -1,4 +1,5 @@
-"""What the runtime and its peripherals keep on disk: JSON, written whole or not at all."""
+"""What the SDK and integrations keep on disk themselves: JSON, written whole or not at all, for its owner alone.
+The runtime keeps its state here, Compose its containers; an integration its own files (``documents_folder``)."""
 
 from __future__ import annotations
 
@@ -28,7 +29,8 @@ def read_json(path: Path) -> dict[str, Any]:
 
 def write_json(path: Path, value: Any):
     """Write ``value`` whole or not at all: a crash midway leaves the file as it was. Only its owner reads it: the
-    settings and the rendered containers hold secrets (Z-Wave's network keys)."""
+    settings and the rendered containers hold secrets (Z-Wave's network keys), an integration's own files too (the keys
+    ESPHome set on its nodes)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     written = path.with_name(f"{path.name}.tmp")
     written.touch(mode=0o600)

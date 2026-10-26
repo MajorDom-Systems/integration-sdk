@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from majordom_integration_sdk.files import read_json, write_json
 from majordom_integration_sdk.peripherals import (
     USB_DRIVER,
     Endpoint,
@@ -24,7 +25,6 @@ from majordom_integration_sdk.peripherals import (
     PeripheralChange,
     UsbDriver,
 )
-from majordom_integration_sdk.runtime.files import read_json, write_json
 from majordom_integration_sdk.runtime.peripherals.hardware.drivers import RADIO_USB_IDS, default_usb_drivers
 from majordom_integration_sdk.runtime.peripherals.providers.ble import cpc_hci
 

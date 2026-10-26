@@ -17,8 +17,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from majordom_integration_sdk.files import read_json, write_json
 from majordom_integration_sdk.peripherals import Bound, Endpoint, Peripheral, Service
-from majordom_integration_sdk.runtime.files import read_json, write_json
 
 log = logging.getLogger(__name__)
 

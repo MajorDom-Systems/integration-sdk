@@ -12,6 +12,7 @@ Public submodules:
 - ``majordom_integration_sdk.dev``           — standalone runner for developing an integration without the Hub
 - ``majordom_integration_sdk.runtime``       — runs peripherals and binds their needs (the ``runtime`` extra)
 - ``majordom_integration_sdk.errors``        — errors an integration raises for the Hub to act on
+- ``majordom_integration_sdk.files``         — ``read_json`` / ``write_json``: files kept whole, for their owner alone
 
 The names an integration author reaches for most are re-exported here for convenience, e.g.
 ``from majordom_integration_sdk import AbstractController, Device``.
