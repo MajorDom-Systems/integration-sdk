@@ -144,7 +144,7 @@ class BLEService(Peripheral):
         """Listen with one more radio, e.g. a proxy that came online."""
         await self.remove_source(source.name)
         self._sources[source.name] = source
-        if self._is_running and not self._is_leased(source.name):
+        if self._is_running and self._may_start(source.name):
             await self._start_source(source.name)
 
     async def remove_source(self, name: str):
@@ -226,6 +226,10 @@ class BLEService(Peripheral):
     def _is_leased(self, name: str) -> bool:
         return name in self._leases and self._leases[name].locked()
 
+    def _may_start(self, name: str) -> bool:
+        """A leased source starts only when it can pause (`_start_source` pauses it): the lease connects through it."""
+        return not self._is_leased(name) or isinstance(self._sources[name], PausableBLESource)
+
     async def _acquire(
         self, address: str, owner: str, timeout: float, wait: float, is_pairing_needed: bool = False
     ) -> str:
@@ -273,7 +277,7 @@ class BLEService(Peripheral):
 
     async def _start_sources(self):
         # a lease can outlive a stop: its source starts too when it can pause, so the lease connects through it
-        names = [n for n, s in self._sources.items() if not self._is_leased(n) or isinstance(s, PausableBLESource)]
+        names = [name for name in self._sources if self._may_start(name)]
         await asyncio.gather(*(self._start_source(name) for name in names))
 
     def _scans_passively(self) -> bool:
