@@ -142,6 +142,13 @@ async def test_a_container_keeps_its_data_in_its_documents_folder(tmp_path):
     assert (tmp_path / "data" / "peripherals" / "otbr").is_dir()
 
 
+async def test_the_folders_a_container_binds_from_its_data_are_created_before_docker_would_as_root(tmp_path):
+    # a factory reset then removes what the container wrote in them through Docker, and the folders as the hub's user
+    await run(tmp_path, FakeCompose(), host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol(), zigbee())
+    data = tmp_path / "data" / "peripherals" / "silabs-multiprotocol"
+    assert sorted(path.name for path in data.iterdir()) == ["thread", "zigbee"]
+
+
 async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
     integration, (app, server) = zigbee(), matter()
     peripherals = (host(), builtin.silabs_multiprotocol(), builtin.otbr(), integration, server, app)

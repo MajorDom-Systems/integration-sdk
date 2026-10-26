@@ -29,7 +29,8 @@ READY_POLL = 1  # seconds between checks of whether a container is up, its setup
 class Compose(Peripheral):
     """Docker Compose as the container host every `Service` needs (``container/compose``): the containers of the
     services that run, as one ``majordom`` project in ``compose.json`` of its documents folder, each service with its
-    own documents folder as ``{data}`` (created when it renders, before Docker would create it as root). Each gets the
+    own documents folder as ``{data}`` (created when it renders, the folders under it the service binds when it is
+    created: Docker would create them as root). Each gets the
     host ports it prefers when free, kept across restarts. A service's start returns once compose reports its container
     running, its ports answer, its `Service.provision` finished and it is healthy. It runs while a service does; while
     Docker isn't reachable its start fails, and the services wait, saying so.
@@ -77,6 +78,7 @@ class Compose(Peripheral):
         await self._keep_ports(service)
         self._running[service.name] = service
         self._rendered[service.name] = self._render(service)
+        _make_bound_folders(self._rendered[service.name], service.platform.documents_folder(service))
         try:
             await self._apply()
         except Exception:
@@ -193,6 +195,14 @@ async def _until(check: Callable[[], Awaitable[bool]], failure: str):
 async def _provision(service: Service, endpoint: Endpoint) -> bool:
     await service.provision(endpoint)
     return True
+
+
+def _make_bound_folders(compose: Mapping[str, Any], data: Path):
+    """Create the folders under ``data`` that ``compose`` binds, as the hub's user: Docker would create them as root."""
+    for volume in compose.get("volumes", []):
+        source = Path(volume.get("source", "") if isinstance(volume, Mapping) else volume.split(":")[0])
+        if source.is_relative_to(data):
+            source.mkdir(parents=True, exist_ok=True)
 
 
 def _is_listening(port: int) -> bool:
