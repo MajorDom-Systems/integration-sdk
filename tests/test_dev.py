@@ -139,8 +139,9 @@ async def test_build_platform_sqlite_persists_to_file(tmp_path):
 
 def test_without_the_runtime_extra_the_runner_says_what_to_install(tmp_path, monkeypatch):
     monkeypatch.setattr(dev.importlib.util, "find_spec", lambda name: None)
+    platform = build_platform(storage_root=tmp_path)
     with pytest.raises(ImportError, match=r"majordom-integration-sdk\[runtime"):
-        build_runtime([_RecordingController(build_platform(storage_root=tmp_path))], tmp_path)
+        build_runtime([_RecordingController(platform)], tmp_path, platform=platform)
 
 
 async def test_the_runner_starts_the_controller_once_its_needs_are_bound(tmp_path, router):

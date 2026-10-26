@@ -6,6 +6,7 @@ from pathlib import Path
 
 from majordom_integration_sdk import Peripheral
 from majordom_integration_sdk.runtime import PeripheralState, Runtime
+from majordom_integration_sdk.testing import build_test_platform
 
 
 async def settle(runtime: Runtime):
@@ -27,7 +28,9 @@ STARTED: list[Runtime] = []  # stopped after each test
 
 
 async def run(path: Path, *peripherals: Peripheral, settled: bool = True, **kwargs) -> Runtime:
-    """A runtime of ``peripherals``, started; with ``settled``, once every start it set off returned."""
+    """A runtime of ``peripherals``, started; with ``settled``, once every start it set off returned. Its platform
+    keeps the documents under ``data/peripherals`` unless given."""
+    kwargs.setdefault("platform", build_test_platform(path / "data" / "peripherals"))
     runtime = Runtime(path / "data", peripherals, **kwargs)
     STARTED.append(runtime)
     await runtime.start()

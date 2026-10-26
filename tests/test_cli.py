@@ -285,6 +285,7 @@ async def needs_session(tmp_path):
         [controller],
         tmp_path / "runtime",
         runtime_peripherals=[adapter, FakeCompose(), silabs_multiprotocol(), FakeBLERouter(), matter],
+        platform=controller.platform,
     )
     runner = Runner(controller, runtime)
     await runner.start()

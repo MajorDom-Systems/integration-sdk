@@ -15,7 +15,7 @@ from majordom_integration_sdk.runtime import MemoryDisabledStore, PeripheralStat
 from majordom_integration_sdk.runtime import PeripheralState as S
 from majordom_integration_sdk.runtime import StatusKind as K
 from majordom_integration_sdk.runtime import runtime as module
-from majordom_integration_sdk.testing import FakePeripheral, RecordingRuntimeOutput
+from majordom_integration_sdk.testing import FakePeripheral, RecordingRuntimeOutput, build_test_platform
 
 ZIGBEE = Endpoint("zigbee", "ezsp", "/dev/ttyUSB0")
 MOVED = Endpoint("zigbee", "ezsp", "/dev/ttyUSB1")
@@ -46,7 +46,7 @@ async def test_a_peripheral_with_nothing_to_wait_for_runs_and_stops_with_the_run
 
 async def test_what_it_runs_is_known_before_it_starts(tmp_path):
     host, hue = FakePeripheral("host"), FakePeripheral("hue")
-    runtime = Runtime(tmp_path / "data", [host])
+    runtime = Runtime(tmp_path / "data", [host], platform=build_test_platform(tmp_path))
     await runtime.add(hue)  # library mode: given one by one
     assert runtime.peripherals == [host, hue] and runtime.status(hue) == PeripheralStatus(S.WAITING)
     assert hue.calls == [] and hue.platform is runtime.platform
@@ -259,7 +259,7 @@ async def test_a_start_that_ignores_being_stopped_is_left_behind(tmp_path, monke
                 await asyncio.sleep(0.05)  # goes on regardless
 
     stubborn = Stubborn("stubborn")
-    runtime = Runtime(tmp_path / "data", [stubborn])
+    runtime = Runtime(tmp_path / "data", [stubborn], platform=build_test_platform(tmp_path))
     await runtime.start()
     await started.wait()
     await asyncio.wait_for(runtime.disable(stubborn), 1)
@@ -1155,7 +1155,7 @@ async def test_a_read_only_setting_is_never_kept(tmp_path):
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "state.json").write_text(json.dumps({"settings": {"zigbee": {"channel": 15}}}))
     integration = FakePeripheral("zigbee", settings=Network)
-    runtime = Runtime(tmp_path / "data", [integration])
+    runtime = Runtime(tmp_path / "data", [integration], platform=build_test_platform(tmp_path))
     assert integration.settings == Network() and runtime.state["settings"] == {"zigbee": {"permit_join": False}}
 
     await runtime.start()

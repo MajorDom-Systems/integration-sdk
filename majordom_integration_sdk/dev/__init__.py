@@ -75,7 +75,7 @@ def build_runtime(
     *,
     runtime_peripherals: Sequence[Peripheral] | None = None,
     pinned: Sequence[Endpoint] = (),
-    platform: Platform | None = None,
+    platform: Platform,
     controller_output: ControllerOutput | None = None,
 ) -> Runtime:
     """The runtime for one integration, as under the Hub: the endpoints you pin first, then ``runtime_peripherals``

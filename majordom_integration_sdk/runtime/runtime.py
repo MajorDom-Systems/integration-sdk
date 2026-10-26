@@ -145,17 +145,19 @@ class Runtime:
     """Runs every peripheral it is given, and what those bring along, by one rule (see `Peripheral`); binds their
     needs, and hears what each tells through the ``output`` they share::
 
-        runtime = Runtime(data, [Pinned(*mine), FixedPeripherals(*soldered), *default_peripherals(), *integrations])
+        runtime = Runtime(
+            data, [Pinned(*mine), FixedPeripherals(*soldered), *default_peripherals(), *integrations], platform=platform
+        )
         await runtime.start()
 
     ``peripherals`` bind in the order given, what each brings along right after it: one given first wins a single-use
     endpoint (the Bluetooth router takes every adapter before the containers) and serves a need first: `Pinned`,
     then the hardware, the defaults and the integrations. ``platform`` is the host every peripheral runs on, its
-    ``self.platform``: the facts peripherals read and containers render, a documents folder per peripheral (by default
-    under ``data/peripherals``) and the device repository; `update_platform` replaces it. ``controller_output`` (the
-    Hub's) hears what controllers report through their ``output``, logged by default. ``output`` hears every change of
-    status, what is learned and what is gone; ``disabled`` keeps what the user disabled (in memory by default). Its own
-    state, the settings, goes to ``data``.
+    ``self.platform``: the facts peripherals read and containers render, a documents folder per peripheral and the
+    device repository; `update_platform` replaces it. ``controller_output`` (the Hub's) hears what controllers report
+    through their ``output``, logged by default. ``output`` hears every change of status, what is learned and what is
+    gone; ``disabled`` keeps what the user disabled (in memory by default). Its own state, the settings, goes to
+    ``data``.
 
     A peripheral that isn't disabled or failed runs while something that runs binds it if it ``is_on_demand``, while
     what brought it along runs, and once every required need is bound to a provider that runs. Only a waiting one
@@ -172,7 +174,7 @@ class Runtime:
         data: Path,
         peripherals: Sequence[Peripheral] = (),
         *,
-        platform: Platform | None = None,
+        platform: Platform,
         controller_output: ControllerOutput | None = None,
         output: RuntimeOutput | None = None,
         disabled: DisabledStore | None = None,
@@ -180,7 +182,7 @@ class Runtime:
     ):
         self.data, self.given, self.output = data, list(peripherals), output
         self._retry_delays = retry_delays  # None: RETRY_DELAYS, read when it fails (a test may patch it)
-        self.platform = platform or Platform(documents_root=data / "peripherals")
+        self.platform = platform
         self._shared_output = HostOutput(self, controller_output or LoggingControllerOutput())
         self.disabled = disabled or MemoryDisabledStore()
         self.state: dict[str, Any] = {"settings": {}}
