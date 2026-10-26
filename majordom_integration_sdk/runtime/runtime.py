@@ -194,6 +194,7 @@ class Runtime:
         self._tasks: set[asyncio.Task] = set()
         self._timer: asyncio.TimerHandle | None = None
         self._is_running = False
+        self._collect()  # known, with their status and settings, before it starts
 
     # Lifecycle
 
@@ -212,8 +213,9 @@ class Runtime:
             task.cancel()
 
     async def refresh(self):
-        """Collect, bind and run everything anew now."""
+        """Collect, bind and run everything anew now; before it starts, only collect."""
         if not self._is_running:
+            self._collect()  # none of them ran: none to stop or report gone
             return
         async with self._locked():
             for _ in range(_PASSES):

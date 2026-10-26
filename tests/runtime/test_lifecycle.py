@@ -44,6 +44,17 @@ async def test_a_peripheral_with_nothing_to_wait_for_runs_and_stops_with_the_run
     assert host.calls == ["start", "stop"]
 
 
+async def test_what_it_runs_is_known_before_it_starts(tmp_path):
+    host, hue = FakePeripheral("host"), FakePeripheral("hue")
+    runtime = Runtime(tmp_path / "data", [host])
+    await runtime.add(hue)  # library mode: given one by one
+    assert runtime.peripherals == [host, hue] and runtime.status(hue) == PeripheralStatus(S.WAITING)
+    assert hue.calls == [] and hue.platform is runtime.platform
+
+    await runtime.remove(host)
+    assert runtime.peripherals == [hue] and host.calls == []
+
+
 async def test_boot_without_a_required_need_waits_and_says_why(tmp_path):
     output = RecordingRuntimeOutput()
     integration = zigbee()
