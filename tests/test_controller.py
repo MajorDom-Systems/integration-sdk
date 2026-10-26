@@ -1,12 +1,13 @@
 """A minimal concrete controller exercises the framework end to end with test doubles."""
 
+import inspect
 from uuid import UUID
 
 import pytest
 from factories import make_device_state
 
 from majordom_integration_sdk import NoSettings
-from majordom_integration_sdk.controller import AbstractController
+from majordom_integration_sdk.controller import AbstractController, ControllerOutput, LoggingControllerOutput
 from majordom_integration_sdk.repository import DeviceRepositoryMemory
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
@@ -119,3 +120,11 @@ async def test_a_test_platform_holds_the_facts_given_and_its_store_every_device(
     assert (platform.region, platform.wifi, platform.thread_dataset) == ("Europe", None, "0e08")
     async with DeviceRepositoryMemory(store=store).session() as everything:
         assert [device.integration for device in await everything.get_all()] == ["example-protocol"]
+
+
+def test_the_output_annotations_evaluate():
+    """A host reads them, e.g. the Hub's null output: each names the controller it hears from."""
+    for output in (ControllerOutput, LoggingControllerOutput):
+        for name, method in inspect.getmembers(output, inspect.isfunction):
+            if name.startswith("controller_did_"):
+                assert inspect.get_annotations(method, eval_str=True)["controller"] is AbstractController, name

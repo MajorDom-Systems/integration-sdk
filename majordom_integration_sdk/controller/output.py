@@ -5,15 +5,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 from uuid import UUID
 
 from majordom_integration_sdk.schemas.device import Discovery
 from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
-
-if TYPE_CHECKING:
-    from majordom_integration_sdk.controller.abstract_controller import AbstractController
 
 logger = logging.getLogger(__name__)
 
@@ -123,3 +120,7 @@ class LoggingControllerOutput(ControllerOutput):
 
     async def controller_did_change_provided(self, controller: AbstractController):
         logger.info(f"{controller.key} changed what it provides")
+
+
+# Last, once the names the controller takes from here exist: the annotations above then evaluate
+from majordom_integration_sdk.controller.abstract_controller import AbstractController  # noqa: E402
