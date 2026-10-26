@@ -160,6 +160,17 @@ async def test_a_multiprotocol_router_moves_the_network_it_joins_to_zigbees_chan
     assert "000300000f" in pending and "0208dead00beef00cafe" in pending and "3308" in pending and "3404" in pending
 
 
+async def test_a_change_pending_on_another_network_moves_nothing_of_the_one_it_joins(border_router):
+    url, state = border_router
+    restored = dataset("0123456789abcdef", channel=15)
+    state["dataset"] = state["pending"] = restored  # a move of the network it restored, left pending
+    service = serving(silabs_multiprotocol(), url, thread_dataset=dataset("dead00beef00cafe", channel=20))
+    await asyncio.wait_for(service.start(), 3)
+
+    assert "000300000f" in dict(state["puts"])[PENDING]  # the hub's network moved to Zigbee's channel all the same
+    assert learned(service) == [(service, {"thread_dataset": state["dataset"]})]
+
+
 async def test_a_channel_move_that_cant_land_fails_the_start(border_router, monkeypatch):
     url, state = border_router
     monkeypatch.setattr(services, "FORM_PATIENCE", 0.1)

@@ -153,8 +153,12 @@ def _call(url: str, method: str, path: str, body: str | None = None, kind: str =
 
 
 def _datasets(url: str) -> tuple[str, str]:
-    """The active and the pending dataset of the border router at ``url`` as hex TLVs, empty when it has none."""
-    return _call(url, "GET", "/node/dataset/active"), _call(url, "GET", "/node/dataset/pending")
+    """The active and the pending dataset of the border router at ``url`` as hex TLVs, empty when it has none; one
+    pending for another network (the one it had before it joined) is none: it moves nothing of this one."""
+    active, pending = _call(url, "GET", "/node/dataset/active"), _call(url, "GET", "/node/dataset/pending")
+    if pending and _tlvs(pending).get(_EXTENDED_PAN_ID) != _tlvs(active).get(_EXTENDED_PAN_ID):
+        pending = ""
+    return active, pending
 
 
 async def active_dataset(url: str) -> str:
