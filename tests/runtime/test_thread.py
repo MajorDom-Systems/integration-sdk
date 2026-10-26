@@ -15,6 +15,8 @@ from majordom_integration_sdk.runtime.peripherals.services import builtin as ser
 from majordom_integration_sdk.runtime.peripherals.services.builtin import (
     active_dataset,
     join_network,
+    move_channel,
+    network_channel,
     otbr,
     silabs_multiprotocol,
 )
@@ -182,6 +184,28 @@ def test_a_move_is_stamped_after_the_network_it_moves_with_the_clock_behind(monk
     moved = services._tlvs(services._moved(f"0e08{stamped}000300000f0208dead00beef00cafe", 20))
     assert int.from_bytes(moved[services._ACTIVE_TIMESTAMP]) >> 16 == 2_000_000_001  # newer: the devices take it
     assert moved[services._PENDING_TIMESTAMP] == moved[services._ACTIVE_TIMESTAMP]
+
+
+async def test_the_channel_is_the_one_its_network_is_on_or_moving_to(border_router):
+    url, state = border_router
+    reading = asyncio.create_task(network_channel(url))
+    await asyncio.sleep(0.05)
+    assert not reading.done()  # no network yet
+
+    state["dataset"] = dataset("dead00beef00cafe", channel=20)
+    assert await asyncio.wait_for(reading, 3) == 20
+    state["pending"] = dataset("dead00beef00cafe", channel=15)
+    assert await network_channel(url) == 15
+
+
+async def test_a_channel_move_is_tried_again_until_the_border_router_takes_it(border_router):
+    url, state = border_router
+    state["dataset"], state["refused"] = dataset("dead00beef00cafe", channel=20), PENDING  # not attached yet
+    moving = asyncio.create_task(move_channel(url, 15))
+    await asyncio.sleep(0.05)
+    state["refused"] = None
+    await asyncio.wait_for(moving, 3)
+    assert [path for path, _ in state["puts"]].count(PENDING) > 1 and "000300000f" in state["dataset"]
 
 
 async def test_learns_the_network_only_once_a_channel_move_landed(border_router):

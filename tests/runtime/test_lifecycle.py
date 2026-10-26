@@ -359,6 +359,17 @@ async def test_one_that_stops_by_itself_waits_for_its_needs_to_change(tmp_path):
     assert state(runtime, integration) == S.RUNNING
 
 
+async def test_one_that_stopped_by_itself_starts_once_its_optional_provider_blips(tmp_path):
+    border = FakePeripheral("otbr", provides=[THREAD])
+    matter = FakePeripheral("matter", [Need("thread", is_required=False)], answer=True)
+    runtime = await run(tmp_path, border, matter)
+    await matter.output.peripheral_did_stop(matter)
+
+    await runtime.restart(border)  # its need went (it isn't handed one that doesn't run) and came back
+    await settle(runtime)
+    assert state(runtime, matter) == S.RUNNING and matter.calls == ["start", "stop", "start"]
+
+
 async def test_one_that_stopped_by_itself_starts_once_restarted(tmp_path):
     integration = FakePeripheral("hue")
     runtime = await run(tmp_path, integration)
@@ -960,6 +971,42 @@ async def test_new_settings_reach_one_still_starting_once_it_runs(tmp_path):
     assert (handles.calls, restarts.calls) == (["start"], ["start", "stop", "start"])
     assert handles.settings == restarts.settings == Channel(channel=20)
     assert state(runtime, handles) == state(runtime, restarts) == S.RUNNING
+
+
+async def test_facts_that_restart_one_once_it_runs_leave_it_to_read_its_new_settings(tmp_path):
+    restarts = Gated("restarts", settings=Channel)
+    runtime = await run(tmp_path, restarts, settled=False)
+    await until(runtime, lambda: state(runtime, restarts) == S.STARTING, settled=False)
+
+    before = runtime.platform
+    await runtime.update_platform(replace(before, region="Europe"))
+    await runtime.update_settings(restarts, {"channel": 15})
+    restarts.gate.set()
+    await settle(runtime)
+    assert restarts.changes == [("platform", before)]  # restarted for them: it read the settings anew
+    assert restarts.calls == ["start", "stop", "start"] and restarts.settings == Channel(channel=15)
+
+
+async def test_a_hook_told_once_it_runs_that_raises_is_a_failure(tmp_path):
+    raises = Gated("raises", answer=RuntimeError("confused"))
+    runtime = await run(tmp_path, raises, settled=False)
+    await until(runtime, lambda: state(runtime, raises) == S.STARTING, settled=False)
+
+    await runtime.update_platform(replace(runtime.platform, region="Europe"))
+    raises.gate.set()
+    await settle(runtime)
+    assert runtime.status(raises) == PeripheralStatus(S.WAITING, K.RETRYING, "confused; trying again in 0.01 s")
+
+
+async def test_new_settings_of_a_disabled_one_are_kept_and_start_nothing(tmp_path):
+    integration = FakePeripheral("zigbee", settings=Channel)
+    runtime = await run(tmp_path, integration)
+    await runtime.disable(integration)
+
+    await runtime.update_settings(integration, {"channel": 15})
+    await settle(runtime)
+    assert (state(runtime, integration), integration.calls) == (S.DISABLED, ["start", "stop"])
+    assert runtime.stored_settings(integration) == {"channel": 15}
 
 
 async def test_any_peripheral_reads_the_facts_and_what_it_learned_replaces_the_platform(tmp_path):
