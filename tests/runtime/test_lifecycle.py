@@ -1133,6 +1133,22 @@ async def test_a_read_only_setting_is_filled_in_by_its_peripheral_and_never_chan
     assert integration.changes == [("settings", Network(channel=25))]
 
 
+async def test_a_read_only_setting_is_never_kept(tmp_path):
+    """It shows what the peripheral filled in while it runs, never a value kept from before (the user's, when the field
+    wasn't read-only yet)."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "state.json").write_text(json.dumps({"settings": {"zigbee": {"channel": 15}}}))
+    integration = FakePeripheral("zigbee", settings=Network)
+    runtime = Runtime(tmp_path / "data", [integration])
+    assert integration.settings == Network() and runtime.state["settings"] == {"zigbee": {"permit_join": False}}
+
+    await runtime.start()
+    integration.settings.channel = 25
+    await runtime.update_settings(integration, {"permit_join": True})
+    assert json.loads((tmp_path / "data" / "state.json").read_text())["settings"] == {"zigbee": {"permit_join": True}}
+    await runtime.stop()
+
+
 async def test_one_that_cant_say_what_it_provides_provides_nothing(tmp_path):
     class Broken(FakePeripheral):
         @property

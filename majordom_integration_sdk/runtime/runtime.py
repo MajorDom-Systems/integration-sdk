@@ -367,8 +367,8 @@ class Runtime:
         one that stopped by itself tries again."""
         entry, model = self._entry(peripheral), peripheral.Settings
         live = getattr(peripheral, "settings", None)  # none yet when the ones kept didn't validate
-        read_only = {name for name, field in model.model_fields.items() if _is_read_only(field.json_schema_extra)}
-        filled = live.model_dump(mode="json", include=read_only) if live else {}  # newer than the ones kept
+        read_only = _read_only(model)
+        filled = live.model_dump(mode="json", include=read_only) if live else {}  # never kept: only the live ones
         current = self.state["settings"].get(entry.key, {}) | filled
         unknown = sorted(values.keys() - model.model_fields.keys())
         if changed := sorted(k for k in values.keys() & read_only if values[k] != current.get(k)) + unknown:
@@ -595,18 +595,19 @@ class Runtime:
 
     def _load_settings(self, peripheral: Peripheral, key: str):
         """The ones kept, else the ones it was given or the defaults, kept from now on; kept ones it no longer has (its
-        update dropped them) go."""
+        update dropped them, or made them read-only) go."""
         model, stored = peripheral.Settings, self.state["settings"].get(key)
         if stored is not None:
-            peripheral.settings = model.model_validate({k: v for k, v in stored.items() if k in model.model_fields})
+            kept = model.model_fields.keys() - _read_only(model)
+            peripheral.settings = model.model_validate({k: v for k, v in stored.items() if k in kept})
         elif not isinstance(getattr(peripheral, "settings", None), model):
             peripheral.settings = model()
-        if peripheral.settings.model_dump(mode="json") != (stored or {}):  # freeze generated defaults
+        if _kept(peripheral.settings) != (stored or {}):  # freeze generated defaults
             self._keep_settings(key, peripheral.settings)
 
     def _keep_settings(self, key: str, settings: BaseModel):
         """Keep ``settings`` from now on; nothing for a peripheral without any."""
-        if dumped := settings.model_dump(mode="json"):
+        if dumped := _kept(settings):
             self.state["settings"][key] = dumped
         else:
             self.state["settings"].pop(key, None)
@@ -945,6 +946,15 @@ async def _within[T](seconds: float, call: Awaitable[T], late: str) -> T:
 def _is_read_only(schema: Any) -> bool:
     """Whether a settings field is marked read-only in its JSON schema: its peripheral fills it in, never the user."""
     return isinstance(schema, dict) and schema.get("readOnly") is True
+
+
+def _read_only(model: type[BaseModel]) -> set[str]:
+    return {name for name, field in model.model_fields.items() if _is_read_only(field.json_schema_extra)}
+
+
+def _kept(settings: BaseModel) -> dict[str, Any]:
+    """What is kept of ``settings``: never what their peripheral fills in, shown only while it runs."""
+    return settings.model_dump(mode="json", exclude=_read_only(type(settings)))
 
 
 def _failure(error: BaseException) -> str:

@@ -118,7 +118,8 @@ class Peripheral[S: BaseModel = Any](Protocol):
     named as the type parameter, which types ``settings``: ``class Radio(Peripheral["Radio.Settings"])``. Without,
     they are `NoSettings`; a bare ``Peripheral`` is one of any settings. A field marked read-only in its JSON schema,
     ``channel: int = Field(11, json_schema_extra={"readOnly": True})``, shows what the peripheral fills in itself
-    (``self.settings.channel = 25``): the user sees it, and an update to another value is refused.
+    (``self.settings.channel = 25``): the user sees it, and an update to another value is refused. It is never kept:
+    until the peripheral fills it in again, it holds its default.
     """
 
     name: str  # what it is shown by
