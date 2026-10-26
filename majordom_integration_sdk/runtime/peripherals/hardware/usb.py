@@ -91,6 +91,10 @@ class Radio(Peripheral["Radio.Settings"]):
         """Firmwares it can be switched to on its channel."""
         return self.driver.flashable(self.path, self.settings.firmware_channel) if self.driver else []
 
+    async def settings_did_change(self, before: Radio.Settings) -> bool:
+        """Its channel only changes what it may be flashed to: nothing restarts."""
+        return True
+
     async def recognise(self, is_asking_again: bool = False):
         """Ask the drivers which firmware it runs, each once unless ``is_asking_again``, until one tells."""
         for driver in [d for d in self.drivers() if is_asking_again or all(d is not a for a in self._asked)]:

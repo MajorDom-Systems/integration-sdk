@@ -24,7 +24,7 @@ from majordom_integration_sdk.runtime import (
 )
 from majordom_integration_sdk.runtime.peripherals.hardware import host, usb
 from majordom_integration_sdk.runtime.peripherals.providers.ble import cpc_hci
-from majordom_integration_sdk.testing import FakePeripheral, RecordingPeripheralOutput
+from majordom_integration_sdk.testing import FakePeripheral, RecordingPeripheralOutput, RecordingRuntimeOutput
 
 NCP = {"baud": 115200, "flow_control": True}  # the firmware's serial settings
 SKYCONNECT = "usb-Nabu_Casa_SkyConnect_v1.0_1-if00"
@@ -421,6 +421,17 @@ async def test_the_firmware_offered_follows_the_radios_channel(tmp_path):
     assert radio.options == ["zigbee-ncp", "thread-rcp", "multipan-rcp"]
     assert runtime.reach(Silabs().serves("multipan-rcp", "x")) == []  # nothing here needs what it would serve
     assert runtime.reach(Silabs().serves("zigbee-ncp", "x")) == ["zigbee"]
+
+
+async def test_switching_a_radios_firmware_channel_restarts_nothing(tmp_path):
+    radio = Radio(SKYCONNECT, f"/dev/serial/by-id/{SKYCONNECT}", lambda: [], Silabs(), "zigbee-ncp")
+    output, integration = RecordingRuntimeOutput(), zigbee()
+    runtime = await run(tmp_path, FakePeripheral("board", provides=[radio]), integration, output=output)
+    told = len(output.statuses)
+
+    await runtime.update_settings(radio, {"firmware_channel": "dev"})  # it only changes what it may be flashed to
+    await settle(runtime)
+    assert output.statuses[told:] == [] and integration.calls == ["start"]
 
 
 async def test_a_multiprotocol_firmware_that_serves_bluetooth_offers_it_too(tmp_path, sticks, monkeypatch):
