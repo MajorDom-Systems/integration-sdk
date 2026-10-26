@@ -520,17 +520,17 @@ async def test_a_proxy_without_a_free_connection_slot_is_tried_last():
 async def test_the_router_hears_through_the_proxies_an_integration_brings_along(tmp_path):
     from support import changed, run
 
-    from majordom_integration_sdk import Need
-    from majordom_integration_sdk.runtime import BLEProxy
+    from majordom_integration_sdk.peripherals import BLEProxy, Need
     from majordom_integration_sdk.testing import FakePeripheral
 
     ble, proxy = BLEService(), FakeBLESource("esphome:aa")
     esphome = FakePeripheral("esphome", [Need("ble", ["router"], is_required=False)], answer=True)
     runtime = await run(tmp_path, ble, esphome)
 
-    esphome.provided.append(BLEProxy(proxy))  # a node connected
+    esphome.provided.append(BLEProxy(proxy, name="aa:bb"))  # a node connected, known by its Bluetooth MAC
     await changed(runtime, esphome)
     assert proxy.on_advertisement is not None  # heard through
+    assert runtime.peripheral("esphome/aa:bb") is esphome.provided[0]
 
     again = FakeBLESource("esphome:aa")  # it reconnected: another source under the same name
     esphome.provided[:] = [BLEProxy(again)]

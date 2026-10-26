@@ -4,13 +4,13 @@ in-process providers, integrations — and binds their needs. `default_periphera
 `majordom_integration_sdk.runtime.peripherals.providers.zeroconf`.
 """
 
+from majordom_integration_sdk.peripherals import BLEProxy
 from majordom_integration_sdk.runtime.defaults import default_peripherals
 from majordom_integration_sdk.runtime.peripherals.hardware.drivers import Silabs, ZWave, default_usb_drivers
 from majordom_integration_sdk.runtime.peripherals.hardware.fixed import FixedPeripherals, FixedRadio
 from majordom_integration_sdk.runtime.peripherals.hardware.host import BluetoothAdapters, HostNetwork
 from majordom_integration_sdk.runtime.peripherals.hardware.usb import Radio, UsbScanner
 from majordom_integration_sdk.runtime.peripherals.pinned import Pinned
-from majordom_integration_sdk.runtime.peripherals.providers.ble.proxy import BLEProxy
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
 from majordom_integration_sdk.runtime.peripherals.services.builtin import otbr, silabs_multiprotocol
