@@ -12,11 +12,12 @@ Out-of-scope reads come back ``None``/empty and out-of-scope writes raise — a 
 carelessness, not a security boundary. Constructing with ``integration=None`` gives full
 access (the Hub's own higher-level use).
 
-**Typed reads.** ``as_`` deserializes into your own ``Device``/``DeviceState`` subclass, so
-``integration_data`` comes back typed instead of a bare dict::
+**Typed reads.** ``as_`` deserializes into your own ``Device[MyData]`` /
+``DeviceState[MyData, MyParameterData]`` (or a subclass), so ``integration_data`` comes back
+typed instead of a bare dict::
 
     async with self.device_repository() as repo:
-        device = await repo.get(device_id, as_=MyDevice)  # device.integration_data: MyData
+        device = await repo.get(device_id, as_=MyDevice)  # class MyDevice(Device[MyData])
 
 **Not here on purpose:** ``delete`` and ``update_parameter_visibility`` are Hub-internal
 lifecycle operations. They exist on the concrete implementations, but are kept off this
@@ -56,7 +57,8 @@ class DeviceRepositoryProtocol(Protocol):
         """Insert or update a device, merging into whatever is already stored.
 
         Saving a ``Device`` updates its info/``integration_data``; saving a ``DeviceState``
-        updates its info/``parameters`` — neither clobbers the other's fields. ``previous_id``
+        updates its info/``parameters``, and its ``integration_data`` only when it was given
+        one — neither clobbers the other's fields. ``previous_id``
         renames an existing record before the write (pairing turning a provisional discovery
         id into the device's final id), carrying its stored data over. Rejects a device
         outside the bound integration's scope.

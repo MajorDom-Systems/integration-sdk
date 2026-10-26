@@ -11,7 +11,7 @@ from majordom_integration_sdk.repository import (
     SqliteDeviceRepository,
 )
 from majordom_integration_sdk.schemas.base import Base
-from majordom_integration_sdk.schemas.device import Device
+from majordom_integration_sdk.schemas.device import Device, DeviceState
 from majordom_integration_sdk.schemas.parameter import ParameterVisibility
 
 
@@ -21,8 +21,14 @@ class _PairingData(Base):
     token: str
 
 
-class _MyDevice(Device):
-    integration_data: _PairingData  # ty: ignore[invalid-mutable-override]  (typed reads narrow it on purpose)
+class _Endpoint(Base):
+    """A parameter's own typed `integration_data`."""
+
+    endpoint: int
+
+
+class _MyDevice(Device[_PairingData]):
+    pass
 
 
 def make_my_device(device_id=None, token: str = "secret", integration: str = "example") -> _MyDevice:
@@ -118,9 +124,22 @@ async def test_typed_read_returns_typed_integration_data(repository):
         assert [d.integration_data.token for d in listed] == ["secret"]
 
 
+async def test_a_typed_state_reads_the_data_of_the_device_and_its_parameters(repository, device_state):
+    device_state.parameters[0].integration_data = {"endpoint": 1}
+    async with repository.session() as repo:
+        await repo.save(device_state)
+        await repo.save(make_my_device(device_id=device_state.id, integration=device_state.integration))
+
+        state = await repo.state(device_state.id, as_=DeviceState[_PairingData, _Endpoint])
+        assert state is not None and state.integration_data.token == "secret"
+        assert state.parameters[0].integration_data.endpoint == 1
+        untyped = await repo.state(device_state.id)  # a bare name means any data
+        assert untyped is not None and untyped.parameters[0].integration_data == {"endpoint": 1}
+
+
 async def test_device_and_state_views_merge(repository, device_state):
-    """Device carries integration_data, DeviceState carries parameters — they're siblings, so
-    saving one must not clobber the other's half of the record."""
+    """Device carries integration_data, DeviceState parameters too — saving one must not clobber the other's half of
+    the record, nor a DeviceState that wasn't given integration_data the stored one."""
     device = make_my_device(device_id=device_state.id, token="t", integration=device_state.integration)
     async with repository.session() as repo:
         await repo.save(device_state)  # info + parameters

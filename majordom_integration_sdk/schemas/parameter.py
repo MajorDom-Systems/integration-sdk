@@ -120,8 +120,9 @@ def _sorted_values(values) -> list:
         return list(values)
 
 
-class Parameter[V](UUIdentifable):
-    """A device parameter. Generic over its value type ``V`` — ``value``, the keys of
+class Parameter[TData = Any, V = Any](UUIdentifable):
+    """A device parameter. Generic over what its integration keeps about it, ``integration_data``, typed as ``TData``
+    (a bare ``Parameter`` holds any), and over its value type ``V`` — ``value``, the keys of
     ``valid_values``, and ``default_value`` all share ``V`` (an ``int`` parameter has ``int``
     labels and an ``int`` default, a ``str`` parameter has ``str`` throughout, etc.)."""
 
@@ -153,7 +154,7 @@ class Parameter[V](UUIdentifable):
     # 3+ = cycle). Same value type V as `value`. See `main_cycle` / `can_be_main_parameter`.
     default_value: set[V] | V | None = None
 
-    integration_data: Any
+    integration_data: TData
 
     @field_validator("default_value", mode="before")
     @classmethod
@@ -240,7 +241,7 @@ class ParameterVisibilityPatch(Base):
     visibility: ParameterVisibility
 
 
-class ParameterState[V](Parameter[V]):
+class ParameterState[TData = Any, V = Any](Parameter[TData, V]):
     """A parameter plus its current ``value`` (same type ``V`` as the parameter's labels/default).
 
     Values are pythonic and serialize natively (Pydantic handles JSON — a ``set`` default_value

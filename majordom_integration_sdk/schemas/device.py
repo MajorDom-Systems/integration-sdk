@@ -92,16 +92,21 @@ class DeviceInfo(DevicePatch):
     # merlin24: DeviceMerlin24 | None # DEPRECATED
 
 
-class Device(DeviceInfo):  # TODO: review models
-    integration_data: SerializeAsAny[dict | Base] = Field(default_factory=Base)
+class Device[TData = Any](DeviceInfo):  # TODO: review models
+    """A device with what its integration keeps about it, ``integration_data``, typed as ``TData``: a bare ``Device``
+    holds any (a dict once read back), ``class HueDevice(Device[HueData])`` its own model."""
+
+    integration_data: SerializeAsAny[TData] = Field(default_factory=Base)
 
 
 class DeviceDataModel(DeviceInfo):
     parameters: list[Parameter]
 
 
-class DeviceState(DeviceInfo):
-    parameters: list[ParameterState]
+class DeviceState[TData = Any, TParameterData = Any](Device[TData]):
+    """A device with its parameters' current states, the data of each typed as ``TParameterData``."""
+
+    parameters: list[ParameterState[TParameterData]]
 
     @property
     def parameters_dict(self):
