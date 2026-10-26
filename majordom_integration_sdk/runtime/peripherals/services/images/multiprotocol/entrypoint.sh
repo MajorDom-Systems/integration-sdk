@@ -15,6 +15,8 @@
 #   RADIO_FLOW_CONTROL True         hardware flow control (RTS/CTS) on that UART: True or False
 #   EZSP_TCP_PORT  9999             bellows connects to socket://<host>:9999
 #   OTBR_REST_PORT 8081             Matter server reads the Thread dataset here
+#   LISTEN_ADDRESS 127.0.0.1        where both ports answer: only this host; 0.0.0.0 exposes them on the LAN
+#                                   (a lab harness: nothing guards them)
 #   BACKBONE_IF    eth0             OTBR backbone interface
 #   ZIGBEE_FORM    1                form a Zigbee network if the NCP has none
 #   THREAD_FORM    1                form a Thread network if OTBR has none
@@ -29,6 +31,7 @@ RADIO_FLOW_CONTROL=${RADIO_FLOW_CONTROL:-True}
 EZSP_TCP_PORT=${EZSP_TCP_PORT:-9999}
 CHANNEL=${CHANNEL:-15}
 OTBR_REST_PORT=${OTBR_REST_PORT:-8081}
+LISTEN_ADDRESS=${LISTEN_ADDRESS:-127.0.0.1}
 BACKBONE_IF=${BACKBONE_IF:-eth0}
 ZIGBEE_FORM=${ZIGBEE_FORM:-1}
 THREAD_FORM=${THREAD_FORM:-1}
@@ -77,7 +80,7 @@ sleep 2
 # up before forming Zigbee WARMS THE SHARED RADIO — forming Zigbee in the first seconds after zigbeed
 # starts (cold radio) reliably times out, but with Thread already running it succeeds.
 otbr-agent -I wpan0 -B "${BACKBONE_IF}" \
-  --rest-listen-address 0.0.0.0 --rest-listen-port "${OTBR_REST_PORT}" \
+  --rest-listen-address "${LISTEN_ADDRESS}" --rest-listen-port "${OTBR_REST_PORT}" \
   "spinel+cpc://cpcd_0?iid=2&iid-list=0" >/var/log/otbr.log 2>&1 &
 sleep 4
 log "otbr-agent up; Thread REST on :${OTBR_REST_PORT}"
@@ -152,7 +155,7 @@ fi
 
 # 6. Now expose EZSP over TCP for the Hub/bellows (socket://<host>:${EZSP_TCP_PORT}); steady-state
 # load + commands tolerate the bridge even though forming could not.
-socat "tcp-listen:${EZSP_TCP_PORT},reuseaddr,fork" file:/dev/ttyZigbeeNCP,raw,echo=0 &
+socat "tcp-listen:${EZSP_TCP_PORT},bind=${LISTEN_ADDRESS},reuseaddr,fork" file:/dev/ttyZigbeeNCP,raw,echo=0 &
 log "zigbeed up; EZSP exposed on tcp:${EZSP_TCP_PORT} (bellows: socket://<host>:${EZSP_TCP_PORT})"
 
 # Thread TX power (THREAD_TX_DBM). On a multi-PAN RCP the radio transmits at Zigbee's power: `ot-ctl

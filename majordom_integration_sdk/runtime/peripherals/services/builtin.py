@@ -8,7 +8,6 @@ import json
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -17,7 +16,17 @@ from majordom_integration_sdk.peripherals import Endpoint, Need, Service
 _IMAGES = Path(__file__).parent / "images"
 
 
-class ThreadRadio(BaseModel):
+class LanAccess(BaseModel):
+    """A container on the host network answers only the hub (over loopback) unless exposed."""
+
+    is_exposed_on_lan: bool = Field(
+        False,
+        title="Reachable from the network",
+        description="For a lab harness only: anyone on the network can then use it, nothing guards it.",
+    )
+
+
+class ThreadRadio(LanAccess):
     tx_power: int | None = Field(None, title="Thread transmit power, dBm", description="Empty uses the radio default.")
 
 
@@ -25,10 +34,11 @@ _OTBR_REST = Endpoint("thread", "otbr-rest", "http://127.0.0.1:{ports.rest}", is
 FORM_PATIENCE = 15  # seconds a border router answers without a network before one is formed on it
 POLL = 1  # seconds between asks of a border router that isn't there yet
 MOVE_DELAY = 10_000  # ms before a network moves to another channel, so its devices move along, as the entrypoints do
+_LISTEN = "{settings.is_exposed_on_lan:?0.0.0.0}{settings.is_exposed_on_lan:!127.0.0.1}"  # where its ports answer
 _CHANNEL, _EXTENDED_PAN_ID, _ACTIVE_TIMESTAMP, _PENDING_TIMESTAMP, _DELAY_TIMER = 0, 2, 14, 51, 52  # dataset TLVs
 
 
-class _BorderRouter[S: BaseModel = Any](Service[S]):
+class _BorderRouter[S: LanAccess = LanAccess](Service[S]):
     """On the hub's Thread network, ``platform.thread_dataset``: set up over its REST API to join it, or to form one
     when there is none yet; it tells the network it has once it serves. The network is never rendered into its
     container, so learning it recreates nothing."""
@@ -96,6 +106,7 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
                 "BACKBONE_IF": "{host.interface}",
                 "EZSP_TCP_PORT": "{ports.ezsp}",
                 "OTBR_REST_PORT": "{ports.rest}",
+                "LISTEN_ADDRESS": _LISTEN,
                 "THREAD_TX_DBM": "{settings.tx_power}",
             },
             "healthcheck": {
@@ -108,12 +119,13 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
     )
 
 
-def otbr() -> Service:
+def otbr() -> Service[LanAccess]:
     """OpenThread Border Router on a plain Thread RCP."""
     return _BorderRouter(
         "otbr",
         needs=[Need("thread", ["spinel"])],
         provides=[_OTBR_REST],
+        settings=LanAccess,
         ports={"rest": 8081},
         compose={
             # Pinned: a moved :latest once shipped a broken RCP serial init (no wpan0). Bump on purpose.
@@ -130,7 +142,7 @@ def otbr() -> Service:
                 "{peripherals.thread.params[flow_control]:&uart-flow-control}",
                 "OT_INFRA_IF": "{host.interface}",
                 "OT_THREAD_IF": "wpan0",
-                "OT_REST_LISTEN_ADDR": "0.0.0.0",
+                "OT_REST_LISTEN_ADDR": _LISTEN,
                 "OT_REST_LISTEN_PORT": "{ports.rest}",
             },
             "healthcheck": {

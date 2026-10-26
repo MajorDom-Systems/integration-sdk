@@ -24,6 +24,7 @@ services:
     environment:
       RADIO_DEVICE: ${RADIO_BY_ID:?set RADIO_BY_ID to the stick's /dev/serial/by-id path}
       THREAD_TX_DBM: ${THREAD_TX_DBM:-}
+      LISTEN_ADDRESS: ${LISTEN_ADDRESS:-127.0.0.1} # 0.0.0.0 for tests on another host (the CI node's IP): nothing guards it
     entrypoint: ["/bin/bash", "/entrypoint.sh"]
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f tcp-listen && ot-ctl state | grep -qE 'leader|router|child'"]

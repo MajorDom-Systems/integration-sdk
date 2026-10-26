@@ -117,6 +117,20 @@ async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp
     assert compose(tmp_path)["otbr"]["environment"]["OT_RCP_DEVICE"] == rcp_url
 
 
+@pytest.mark.parametrize(
+    ("router", "radio", "listening"),
+    [(builtin.silabs_multiprotocol, MULTIPAN, "LISTEN_ADDRESS"), (builtin.otbr, RCP, "OT_REST_LISTEN_ADDR")],
+)
+async def test_a_border_router_answers_only_the_hub_unless_exposed_on_the_lan(tmp_path, router, radio, listening):
+    service, matter = router(), FakePeripheral("matter", [Need("thread", ["otbr-rest"])])
+    runtime = await run(tmp_path, FakeCompose(), host(), stick("radio", radio), service, matter)
+    assert compose(tmp_path)[service.name]["environment"][listening] == "127.0.0.1"  # over loopback, on the host
+
+    await runtime.update_settings(service, {"is_exposed_on_lan": True})  # a lab harness: no password guards it
+    await settle(runtime)
+    assert compose(tmp_path)[service.name]["environment"][listening] == "0.0.0.0"
+
+
 async def test_a_container_keeps_its_data_in_its_documents_folder(tmp_path):
     otbr, matter = builtin.otbr(), FakePeripheral("matter", [Need("thread", ["otbr-rest"])])
     await run(tmp_path, FakeCompose(), host(), stick("rcp", RCP), otbr, matter)
