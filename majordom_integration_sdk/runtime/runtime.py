@@ -256,8 +256,9 @@ class Runtime:
         return {family: [p.key for p, _ in b] if family in many else b[0][0].key for family, b in bound.items()}
 
     def unbound(self, peripheral: Peripheral) -> dict[str, str]:
-        """Why each need isn't bound, by family: for the user, with what to do when there is something, e.g.
-        'need ble/bluez: every provider taken by ble-router — use Need("ble", ["router"])'."""
+        """Why each need isn't bound, by family: for the developer (logs, the CLI), with what to do when there is
+        something, e.g. 'need ble/bluez: every provider taken by ble-router — use Need("ble", ["router"])'. The Hub
+        words its own message for the user."""
         return dict(self._unbound.get(self._entry(peripheral).key, {}))
 
     def stored_settings(self, peripheral: Peripheral) -> dict[str, Any]:
