@@ -154,7 +154,8 @@ class Peripheral[S: BaseModel = Any](Protocol):
         return
 
     async def stop(self):
-        """Release everything it holds; what it brought along goes with it."""
+        """Release everything it holds; what it brought along goes with it. It also follows a start that failed or was
+        cut short: leave the object clean for the next ``start``, with nothing in flight taking resources after it."""
         return
 
     async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:

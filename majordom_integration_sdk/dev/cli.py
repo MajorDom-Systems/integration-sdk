@@ -289,8 +289,8 @@ async def run_cli(
 ):
     """Start what ``integration`` exports (its ``peripherals``: the controller and the servers it needs) under the
     runtime, or only its controller with the ``peripherals`` you bind, with a local repository and drop into an
-    interactive prompt. ``platform`` overrides
-    fields of `Platform` (``region``); ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`).
+    interactive prompt. ``platform`` overrides fields of `Platform` (``region``); ``runtime_peripherals`` and
+    ``pinned`` go to the runtime (`build_runtime`).
     ``db_path`` file-backs the repository so paired devices survive restarts; omit it for in-memory. ``exit`` / Ctrl-D
     leaves the prompt and stops everything cleanly."""
     # Capture all logs + warnings into a buffer for the duration of the session so they don't break

@@ -44,7 +44,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
 ):
     """
     Base class for all integration controllers.
-    Defines the interface the Hub uses to interact with an integration — the Hub instantiates the subclass and drives it by calling these methods.
+    Defines the interface the Hub uses to interact with an integration — its package's ``peripherals(platform)`` builds the subclass, the runtime starts and stops it, and the Hub drives it by calling these methods.
 
     A controller is a `Peripheral` like any other: the runtime starts it once its required needs are bound to what
     runs, stops it when one is lost, and hands moved needs, settings and platform facts over to its hooks. Its integration
@@ -170,15 +170,15 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
     @abstractmethod
     async def start(self):
         """
-        Starts the integration. Called once on Hub startup, or when the integration is manually enabled.
-        Register discovery services, subscribe to events, and check the status of already-paired devices here.
+        Starts the integration. Called by the runtime once its required needs are bound to what runs, and again after a stop: a restart, a hook it didn't take, a retry after a failure, the user enabling it.
+        Register discovery services, subscribe to events, and check the status of already-paired devices here. Raise when it can't start: it is tried again later, then failed.
         """
 
     @abstractmethod
     async def stop(self):
         """
-        Stops the integration. Called once on Hub shutdown, or when the integration is manually disabled.
-        Cancel running tasks and release all held resources.
+        Stops the integration. Called by the runtime on Hub shutdown, when it is disabled, loses a required need or restarts, and after a start that failed or was cut short.
+        Cancel running tasks and release all held resources, also after a partial start, and leave the object clean for the next ``start``: nothing in flight (a pairing) may take resources after it.
         """
 
     # Hub -> device
@@ -234,10 +234,8 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
     @final
     @classmethod
     def slug(cls) -> str:
-        """Slugified name of the integration.
-
-        Class-level, so the Hub can key an integration's storage on it before constructing
-        the controller.
+        """Slugified name of the integration: the controller's ``key``, which the runtime and the Hub know it by and its
+        devices and documents folder are scoped by.
         """
         slug = slugify(cls.name)
         if not slug:
