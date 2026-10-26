@@ -30,10 +30,10 @@ class Compose(Peripheral):
     """Docker Compose as the container host every `Service` needs (``container/compose``): the containers of the
     services that run, as one ``majordom`` project in ``compose.json`` of its documents folder, each service with its
     own documents folder as ``{data}`` (created when it renders, the folders under it the service binds when it is
-    created: Docker would create them as root). Each gets the
-    host ports it prefers when free, kept across restarts. A service's start returns once compose reports its container
-    running, its ports answer, its `Service.provision` finished and it is healthy. It runs while a service does; while
-    Docker isn't reachable its start fails, and the services wait, saying so.
+    created: Docker would create them as root). Each gets the host ports it prefers when free, kept across restarts.
+    A service's start returns once compose reports its container running, its ports answer, its `Service.provision`
+    finished and it is healthy. It runs while a service does; while Docker isn't reachable its start fails, and the
+    services wait, saying so.
 
     ``listen_address`` is where the services on the host network answer, ``{host.listen_address}``: loopback, the hub
     only, by default; ``0.0.0.0`` for a lab harness reached from another host, where nothing guards them."""
