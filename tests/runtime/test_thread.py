@@ -40,7 +40,8 @@ def rest(url: str) -> Endpoint:
 @pytest.fixture
 def border_router():
     """A border router's REST API with no network until one is put, and no change of it pending: one put lands at
-    once. It refuses puts to the path ``refused`` names, and fails each put in ``failing`` once."""
+    once, one pending while ``landing`` lands right after its active dataset is read. It refuses puts to the path
+    ``refused`` names, and fails each put in ``failing`` once."""
     state: dict[str, Any] = {"dataset": "", "pending": "", "thread": "leader", "puts": [], "failing": []}
 
     class Handler(BaseHTTPRequestHandler):
@@ -50,6 +51,8 @@ def border_router():
             self.send_response(200 if body else 204)
             self.end_headers()
             self.wfile.write(body)
+            if self.path == "/node/dataset/active" and state.get("landing"):
+                state["dataset"], state["pending"], state["landing"] = state["pending"], "", False
 
         def do_PUT(self):
             body = self.rfile.read(int(self.headers["Content-Length"])).decode()
@@ -229,6 +232,13 @@ async def test_learns_the_network_only_once_a_channel_move_landed(border_router)
 
     state["dataset"], state["pending"] = moved, ""
     assert await asyncio.wait_for(learning, 3) == moved
+
+
+async def test_a_move_landing_between_two_reads_is_learned_once_landed(border_router):
+    url, state = border_router
+    moved = dataset("dead00beef00cafe", channel=15)
+    state["dataset"], state["pending"], state["landing"] = dataset("dead00beef00cafe", channel=20), moved, True
+    assert await asyncio.wait_for(active_dataset(url), 3) == moved
 
 
 class Answering:
