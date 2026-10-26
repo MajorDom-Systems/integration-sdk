@@ -144,6 +144,21 @@ async def test_a_hook_that_raises_restarts_it_through_the_retries(tmp_path):
     assert integration.peripherals.endpoint("zigbee") == MOVED
 
 
+async def test_a_hook_cancelled_from_inside_is_a_failure_and_the_others_hear_on(tmp_path):
+    class Cancelled(FakePeripheral):
+        async def platform_facts_did_change(self, before):
+            raise asyncio.CancelledError  # e.g. a call it awaited lost its server
+
+    cancelled, after = Cancelled("matter"), FakePeripheral("after", answer=True)
+    runtime = await run(tmp_path, cancelled, after)
+    before = runtime.platform
+    await runtime.update_platform(replace(before, region="Europe"))
+    assert runtime.status(cancelled) == PeripheralStatus(
+        S.WAITING, K.RETRYING, "CancelledError; trying again in 0.01 s"
+    )
+    assert after.changes == [("platform", before)]
+
+
 async def moves(runtime, stick: FakePeripheral, integration: FakePeripheral, times: int):
     """The stick moves ``times``, each once the integration runs again."""
     for endpoint in [MOVED, ZIGBEE] * times:

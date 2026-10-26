@@ -717,7 +717,7 @@ class Runtime:
         try:
             await _within(timeout, peripheral.start(), f"didn't start within {timeout} s")
         except asyncio.CancelledError as error:
-            if (task := asyncio.current_task()) and task.cancelling():  # stopped
+            if _is_cancelled():  # stopped
                 raise
             failure = _failure(error)  # raised from inside, e.g. by a task it awaited
         except Exception as error:
@@ -810,6 +810,11 @@ class Runtime:
         try:
             if await _within(HOOK_TIMEOUT, hook, f"didn't take the change within {HOOK_TIMEOUT} s"):
                 return True
+        except asyncio.CancelledError as error:
+            if _is_cancelled():
+                raise
+            log.error(f"{entry.key} was cancelled taking a change", exc_info=error)  # from inside: a call it awaited
+            failure = _failure(error)
         except Exception as error:
             log.error(f"{entry.key} failed to take a change: {error}", exc_info=error)
             failure = _failure(error)
@@ -929,6 +934,11 @@ def _is_read_only(schema: Any) -> bool:
 
 def _failure(error: BaseException) -> str:
     return str(error) or type(error).__name__
+
+
+def _is_cancelled() -> bool:
+    """Whether the current task is being cancelled, rather than a CancelledError raised from inside what it awaits."""
+    return bool((task := asyncio.current_task()) and task.cancelling())
 
 
 def _read(peripheral: Peripheral) -> list[Endpoint | Peripheral]:
