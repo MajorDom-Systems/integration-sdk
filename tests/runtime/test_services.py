@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from pydantic import BaseModel
-from support import run, settle, state, until
+from support import changed, run, settle, state, until
 
 from majordom_integration_sdk import Endpoint, Need, Platform, Service
 from majordom_integration_sdk.runtime import PeripheralState, PeripheralStatus
@@ -185,6 +185,21 @@ async def test_the_rendered_containers_and_the_settings_are_kept_from_other_user
     assert compose(tmp_path)["zwave-js-server"]["environment"] == {"KEY": "secret"}
     for kept in (tmp_path / "data" / "peripherals" / "compose" / "compose.json", tmp_path / "data" / "state.json"):
         assert kept.stat().st_mode & 0o777 == 0o600
+
+
+async def test_a_moved_need_recreates_a_service_only_when_it_renders_otherwise(tmp_path):
+    containers, radio = FakeCompose(), stick("sky", NCP)
+    bridge = Service("bridge", {"devices": ["{peripherals.zigbee.url}:/dev/ttyRCP"]}, [Need("zigbee")], [Endpoint("b")])
+    runtime = await run(tmp_path, containers, radio, bridge, FakePeripheral("user", [Need("b")]))
+    applied = len(containers.calls)
+
+    radio.provided = [replace(NCP, params={"baud": 57600})]  # moved, but what it renders is the same
+    await changed(runtime, radio)
+    assert containers.calls[applied:] == [] and state(runtime, bridge) == PeripheralState.RUNNING
+
+    radio.provided = [replace(NCP, url="/dev/ttyUSB9")]
+    await changed(runtime, radio)
+    assert compose(tmp_path)["bridge"]["devices"] == ["/dev/ttyUSB9:/dev/ttyRCP"]
 
 
 async def test_the_platform_facts_render_and_a_change_recreates_only_what_renders_them(tmp_path):

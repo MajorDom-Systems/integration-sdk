@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel
 
-from majordom_integration_sdk.peripherals.endpoint import Endpoint
+from majordom_integration_sdk.peripherals.endpoint import Endpoint, PeripheralChange
 from majordom_integration_sdk.peripherals.need import Need
 from majordom_integration_sdk.peripherals.peripheral import NoSettings, Peripheral
 
@@ -55,7 +55,8 @@ class Service[S: BaseModel = Any](Peripheral[S]):
     ``compose`` and in the ``provides`` URLs. Integrations never read a port: they connect through
     ``self.peripherals.endpoint(<family>).url``.
 
-    Its start returns once its container runs, its ports answer, `provision` finished and `is_healthy` says so.
+    Its start returns once its container runs, its ports answer, `provision` finished and `is_healthy` says so. A
+    change of what its needs are bound to or of the platform's facts recreates it only when it renders otherwise.
     Subclass it to hook in: `provision` sets up what it runs, `is_healthy` checks more; a ``start`` of your own may tell
     what it learned once it serves (``self.output.peripheral_did_learn``).
     """
@@ -98,6 +99,10 @@ class Service[S: BaseModel = Any](Peripheral[S]):
     async def stop(self):
         if self.host:
             await self.host.down(self)
+
+    async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:
+        """Its container is recreated only when it would render otherwise now, or on another container host."""
+        return change.family != CONTAINER_HOST.family and self.host is not None and self.host.is_current(self)
 
     async def platform_facts_did_change(self, before: Platform) -> bool:
         """Its container is recreated only when it would render otherwise now."""
