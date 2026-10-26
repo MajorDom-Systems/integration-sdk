@@ -168,8 +168,8 @@ class Runtime:
     long, a crash it tells (``peripheral_did_fail``) and a hook that raises are tried again after each of
     ``retry_delays`` (`RETRY_DELAYS` unless given: a test passes short ones), then it is failed; one that stops by
     itself (``peripheral_did_stop``) waits for its needs to change. What it brought along goes when it stops. A provider
-    restarting is a blip for what runs on it, but for one bound to the very object it runs in process (a zeroconf
-    browser): that one stops first and starts again after.
+    restarting is a blip for what runs on it, but for one whose required need is bound to the very object it runs in
+    process (a zeroconf browser): that one stops first and starts again after.
     """
 
     def __init__(
