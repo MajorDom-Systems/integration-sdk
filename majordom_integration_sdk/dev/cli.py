@@ -58,11 +58,12 @@ logger = logging.getLogger("majordom_integration_sdk.dev")
 
 
 def _println(msg: object):
+    console = rich.get_console()  # markup off: the prefixes ("[error]") are text, not tags
     if not sys.stdout.isatty():
-        rich.print(msg)
+        console.print(msg, markup=False)
         return
     builtins.print("\x1b[s\x1b[1A\x1b[999D\x1b[1S\x1b[L", end="", flush=True)  # save, up, home, scroll, insert-line
-    rich.print(msg, end="", flush=True)
+    console.print(msg, end="", markup=False)
     builtins.print("\x1b[u", end="", flush=True)  # restore cursor to the prompt
 
 
