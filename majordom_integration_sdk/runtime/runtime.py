@@ -160,9 +160,10 @@ class Runtime:
     what brought it along runs, and once every required need is bound to a provider that runs. Only a waiting one
     starts by itself: a stick plugged in again never revives a disabled or failed one. A start that raises or takes too
     long, a crash it tells (``peripheral_did_fail``) and a hook that raises are tried again after each of
-    `RETRY_DELAYS`, then it is failed; one that stops by itself (``peripheral_did_stop``) waits for its needs to
-    change. What it brought along goes when it stops. A provider restarting is a blip for what runs on it, but for one
-    bound to the very object it runs in process (a zeroconf browser): that one stops first and starts again after.
+    ``retry_delays`` (`RETRY_DELAYS` unless given: a test passes short ones), then it is failed; one that stops by
+    itself (``peripheral_did_stop``) waits for its needs to change. What it brought along goes when it stops. A provider
+    restarting is a blip for what runs on it, but for one bound to the very object it runs in process (a zeroconf
+    browser): that one stops first and starts again after.
     """
 
     def __init__(
@@ -174,8 +175,10 @@ class Runtime:
         controller_output: ControllerOutput | None = None,
         output: RuntimeOutput | None = None,
         disabled: DisabledStore | None = None,
+        retry_delays: Sequence[float] | None = None,
     ):
         self.data, self.given, self.output = data, list(peripherals), output
+        self._retry_delays = retry_delays  # None: RETRY_DELAYS, read when it fails (a test may patch it)
         self.platform = platform or Platform(documents_root=data / "peripherals")
         self._shared_output = HostOutput(self, controller_output or LoggingControllerOutput())
         self.disabled = disabled or MemoryDisabledStore()
@@ -766,7 +769,8 @@ class Runtime:
     def _fail(self, entry: _Entry, reason: str):
         """Count a failure: wait to try again, or give up once the retries are spent."""
         entry.attempts += 1
-        if entry.attempts > len(RETRY_DELAYS):
+        delays = RETRY_DELAYS if self._retry_delays is None else self._retry_delays
+        if entry.attempts > len(delays):
             entry.state, entry.kind, entry.detail, entry.attempts = (
                 PeripheralState.FAILED,
                 StatusKind.GAVE_UP,
@@ -775,7 +779,7 @@ class Runtime:
             )
             self._failed[entry.key] = reason
             return
-        delay = RETRY_DELAYS[entry.attempts - 1]
+        delay = delays[entry.attempts - 1]
         entry.state, entry.kind, entry.retry_at = PeripheralState.WAITING, StatusKind.RETRYING, monotonic() + delay
         entry.detail = entry.failure = f"{reason}; trying again in {delay} s"
 

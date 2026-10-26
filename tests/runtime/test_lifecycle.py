@@ -395,6 +395,17 @@ async def test_one_that_crashes_is_started_again_then_given_up(tmp_path):
     assert state(runtime, integration) == S.RUNNING
 
 
+async def test_the_retries_are_the_ones_it_is_given(tmp_path):
+    integration = FakePeripheral("zigbee")
+    runtime = await run(tmp_path, integration, retry_delays=[0])  # a test's own: once, at once
+    await integration.output.peripheral_did_fail(integration, "Lost the radio.")
+    await until(runtime, lambda: state(runtime, integration) == S.RUNNING)
+
+    await integration.output.peripheral_did_fail(integration, "Lost the radio.")
+    await settle(runtime)
+    assert runtime.status(integration) == PeripheralStatus(S.FAILED, K.GAVE_UP, "Lost the radio.")
+
+
 async def test_a_failure_told_from_inside_its_start_fails_that_start(tmp_path):
     class GivesUp(FakePeripheral):
         async def start(self):
