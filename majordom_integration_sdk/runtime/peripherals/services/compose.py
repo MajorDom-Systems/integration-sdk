@@ -32,12 +32,16 @@ class Compose(Peripheral):
     own documents folder as ``{data}`` (created when it renders, before Docker would create it as root). Each gets the
     host ports it prefers when free, kept across restarts. A service's start returns once compose reports its container
     running, its ports answer, its `Service.provision` finished and it is healthy. It runs while a service does; while
-    Docker isn't reachable its start fails, and the services wait, saying so."""
+    Docker isn't reachable its start fails, and the services wait, saying so.
+
+    ``listen_address`` is where the services on the host network answer, ``{host.listen_address}``: loopback, the hub
+    only, by default; ``0.0.0.0`` for a lab harness reached from another host, where nothing guards them."""
 
     name = "compose"
     is_on_demand = True
 
-    def __init__(self):
+    def __init__(self, listen_address: str = "127.0.0.1"):
+        self.listen_address = listen_address
         self._running: dict[str, Service] = {}
         self._tentative: dict[str, dict[str, int]] = {}  # the ports a service that doesn't run would get
         self._rendered: dict[str, Mapping[str, Any]] = {}  # what each one runs with, rendered when it was created
@@ -103,7 +107,7 @@ class Compose(Peripheral):
             "peripherals": _Peripherals(service.peripherals.bound),
             "settings": service.settings,
             "platform": service.platform,
-            "host": _Host(),
+            "host": _Host(self.listen_address),
             "ports": SimpleNamespace(**self._ports(service)),
         }
 
@@ -223,6 +227,9 @@ class _Params(dict):
 
 class _Host:
     uid, gid = os.getuid(), os.getgid()  # for services that should write their data as the hub's user
+
+    def __init__(self, listen_address: str):
+        self.listen_address = listen_address
 
     @property
     def interface(self) -> str:

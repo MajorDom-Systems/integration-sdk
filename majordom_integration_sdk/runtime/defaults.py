@@ -27,17 +27,18 @@ from majordom_integration_sdk.runtime.peripherals.services.compose import Compos
 log = logging.getLogger(__name__)
 
 
-def default_peripherals() -> list[Peripheral]:
+def default_peripherals(*, listen_address: str = "127.0.0.1") -> list[Peripheral]:
     """Everything the SDK runs around integrations, in the order it binds: the sticks plugged in (by
     `default_usb_drivers`) before the containers that serve over them, Docker Compose that runs those, the
     multiprotocol border router before the standalone one, the Bluetooth router before the integrations, so it takes
-    every adapter. On-demand ones run only while used."""
+    every adapter. On-demand ones run only while used. The containers on the host network answer on
+    ``listen_address`` (`Compose`): the hub only by default."""
     zeroconf = _zeroconf()
     return [
         UsbScanner(),
         BluetoothAdapters(),
         HostNetwork(),
-        Compose(),
+        Compose(listen_address),
         silabs_multiprotocol(),
         otbr(),
         BLEService(),

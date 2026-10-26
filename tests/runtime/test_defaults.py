@@ -3,7 +3,7 @@
 import subprocess
 import sys
 
-from majordom_integration_sdk.runtime import UsbScanner, default_peripherals, default_usb_drivers
+from majordom_integration_sdk.runtime import Compose, UsbScanner, default_peripherals, default_usb_drivers
 from majordom_integration_sdk.runtime.peripherals.services.builtin import otbr, silabs_multiprotocol
 
 WITHOUT_EXTRAS = """
@@ -35,6 +35,12 @@ def test_the_defaults_are_what_runs_around_integrations_in_the_order_they_bind()
     ]
     on_demand = [p.name for p in default_peripherals() if p.is_on_demand]
     assert on_demand == ["compose", "silabs-multiprotocol", "otbr", "ble-router", "zeroconf", "ssdp"]
+
+
+def test_the_containers_listen_where_the_host_says():
+    assert next(p for p in default_peripherals() if isinstance(p, Compose)).listen_address == "127.0.0.1"
+    lab = default_peripherals(listen_address="0.0.0.0")  # a lab harness reached from another host
+    assert next(p for p in lab if isinstance(p, Compose)).listen_address == "0.0.0.0"
 
 
 def test_the_usb_scanner_knows_every_sdk_driver_by_default():

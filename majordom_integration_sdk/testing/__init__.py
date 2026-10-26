@@ -204,8 +204,8 @@ class FakeCompose(Compose):
     """Docker Compose without Docker: it renders, keeps ports and writes ``compose.json`` as the real one, and a
     container runs and answers once applied. ``calls`` are the docker commands it would have run."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, listen_address: str = "127.0.0.1"):
+        super().__init__(listen_address)
         self.calls: list[tuple[str, ...]] = []
 
     async def _docker(self, *args: str) -> str:

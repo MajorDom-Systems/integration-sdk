@@ -43,10 +43,12 @@ class Service[S: BaseModel = Any](Peripheral[S]):
 
     ``compose`` is its Docker Compose service definition (image, environment, volumes, …); its strings may hold
     ``{data}`` (its own documents folder), ``{peripherals.<family>.url}``, ``{settings.<field>}``,
-    ``{platform.<fact>}`` (``{platform.region}``), ``{host.interface|uid|gid}`` and ``{ports.<name>}``. A format spec
-    turns a value into text: ``{x:!text}`` renders ``text`` when ``x`` is empty, ``{x:?text}`` when it isn't; a list
-    item that renders empty is left out, so ``"volumes": ["{peripherals.ble.url:?/run/dbus:/run/dbus:ro}"]`` mounts
-    D-Bus only while an adapter is bound.
+    ``{platform.<fact>}`` (``{platform.region}``), ``{host.interface|uid|gid|listen_address}`` and ``{ports.<name>}``.
+    A format spec turns a value into text: ``{x:!text}`` renders ``text`` when ``x`` is empty, ``{x:?text}`` when it
+    isn't; a list item that renders empty is left out, so
+    ``"volumes": ["{peripherals.ble.url:?/run/dbus:/run/dbus:ro}"]`` mounts D-Bus only while an adapter is bound. One
+    on the host network (``network_mode: host``) listens on ``{host.listen_address}``: loopback unless the host opens
+    its services to the LAN for a lab harness.
     The ``params`` of the ``provides`` endpoints render the same way, which is how a consumer learns what its service
     got: ``params={"adapter": "{peripherals.ble.url}"}``. ``settings`` is the model of its options, its ``Settings``.
 
