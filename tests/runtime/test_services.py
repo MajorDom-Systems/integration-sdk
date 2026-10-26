@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from pydantic import BaseModel
 from support import changed, run, settle, state, until
 
@@ -133,6 +134,13 @@ async def test_a_border_router_answers_only_the_hub_unless_the_host_listens_on_t
     await run(lab, containers, host(), stick("radio", radio), service, matter)
     assert compose(lab)[service.name]["environment"][listening] == "0.0.0.0"
     assert "is_exposed_on_lan" not in service.Settings.model_fields  # the host's switch, not the user's
+
+
+def test_the_harness_runs_matterjs_server_on_loopback_without_logging_the_thread_key():
+    # at info matter.js logs every command's fields, the Thread network key among them; the LAN only for a lab harness
+    harness = yaml.safe_load((builtin._IMAGES / "multiprotocol" / "docker-compose.yml").read_text())
+    environment = harness["services"]["matterjs-server"]["environment"]
+    assert (environment["LISTEN_ADDRESS"], environment["LOG_LEVEL"]) == ("${LISTEN_ADDRESS:-127.0.0.1}", "warning")
 
 
 async def test_a_container_keeps_its_data_in_its_documents_folder(tmp_path):

@@ -39,7 +39,9 @@ services:
     userns_mode: host
     environment:
       STORAGE_PATH: /data
+      LISTEN_ADDRESS: ${LISTEN_ADDRESS:-127.0.0.1} # as the border router's: no authentication guards the fabric
       BLE_PROXY: "true" # Bluetooth comes from the hub (integration-matter's MatterServerBLEDelegate), as in production
+      LOG_LEVEL: warning # at info matter.js logs every command's fields, the Thread network key included
     volumes:
       - ${MATTER_DATA_DIR:-/var/lib/majordom/matter-data}:/data
 volumes:
