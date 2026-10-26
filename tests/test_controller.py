@@ -1,6 +1,9 @@
 """A minimal concrete controller exercises the framework end to end with test doubles."""
 
 import inspect
+import subprocess
+import sys
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -57,6 +60,22 @@ def test_its_documents_folder_is_its_own_under_the_platforms(tmp_path):
     controller = _MinimalController(build_test_platform(documents_root=tmp_path))
     assert controller.platform.documents_folder(controller) == tmp_path / "example-protocol"
     assert (tmp_path / "example-protocol").is_dir()
+
+
+LEAVES = """
+from majordom_integration_sdk.testing import build_test_platform
+
+for platform in (build_test_platform(), build_test_platform()):
+    (platform.documents_root / "zigbee").mkdir()
+    (platform.documents_root / "zigbee" / "app.db").write_text("devices")
+    print(platform.documents_root)
+"""
+
+
+def test_a_platform_built_without_a_root_leaves_no_folder_behind():
+    # a folder each, never removed, piled up in the temp folder run after run
+    roots = subprocess.run([sys.executable, "-c", LEAVES], capture_output=True, text=True, check=True).stdout.split()
+    assert len(set(roots)) == 2 and not any(Path(root).exists() for root in roots)
 
 
 async def test_its_device_repository_holds_only_its_own_devices():

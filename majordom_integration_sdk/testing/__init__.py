@@ -21,6 +21,7 @@ instead of reinventing them, so every integration is exercised through the same 
 
 from __future__ import annotations
 
+import functools
 import tempfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
@@ -324,17 +325,23 @@ def build_test_platform(
     """Assemble a ``Platform`` wired entirely with offline test doubles, as the Hub gives it to every peripheral: an
     in-memory repository each controller sees only its own devices of, scoped by its key, and the facts given.
 
-    Pass ``documents_root`` as the root of the peripherals' folders; a fresh temp dir is used otherwise. Pass
-    ``store`` to see every device kept there: ``DeviceRepositoryMemory(store=store)``.
+    Pass ``documents_root`` as the root of the peripherals' folders; a fresh temp folder otherwise, removed when the
+    process ends. Pass ``store`` to see every device kept there: ``DeviceRepositoryMemory(store=store)``.
     """
     store = store if store is not None else {}
     return Platform(
-        documents_root=documents_root or Path(tempfile.mkdtemp(prefix="majordom-sdk-test-")),
+        documents_root=documents_root or Path(tempfile.mkdtemp(dir=_temp_root().name)),
         make_device_repository=lambda key: DeviceRepositoryMemory(key, store).session(),
         region=region,
         wifi=wifi,
         thread_dataset=thread_dataset,
     )
+
+
+@functools.cache
+def _temp_root() -> tempfile.TemporaryDirectory[str]:
+    """Where the platforms built without a root keep their folders, one each: removed when the process ends."""
+    return tempfile.TemporaryDirectory(prefix="majordom-sdk-test-")
 
 
 __all__ = [
