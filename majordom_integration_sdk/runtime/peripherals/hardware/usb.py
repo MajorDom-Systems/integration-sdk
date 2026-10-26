@@ -149,7 +149,8 @@ class UsbScanner(Peripheral):
     then by the ones integrations provide (``usb-driver``): radios today. Only a device whose USB id is a known
     radio's is opened unasked; another is identified when the user asks (`Radio.probe`). One another program holds is
     left alone until then. What it identified and what the user probed is remembered, in ``sticks.json`` of its data
-    folder: a stick known from before isn't opened again.
+    folder: a stick known from before isn't opened again, and waits for the driver that identified it (an
+    integration's, bound once that runs).
 
         UsbScanner()  # every SDK driver: default_usb_drivers()
         UsbScanner(drivers=[Silabs()])
@@ -202,12 +203,15 @@ class UsbScanner(Peripheral):
         async with self._scanning:
             radios = {radio.name: radio for radio in self.radios}
             found = _sticks()
+            drivers = {driver.name for driver in self._drivers()}
             for name, path in found.items():
                 radio = radios.get(name) or self._radio(name, path)
                 if radio.driver is None:  # what identified it may only now be here: a driver an integration provides
                     self._restore(radio)
                 radio.node = os.path.realpath(path)
-                is_trusted = radio.is_claimed or _usb_id(path) in RADIO_USB_IDS
+                remembered = self._known.get(name, {}).get("driver")
+                is_awaited = radio.driver is None and remembered is not None and remembered not in drivers
+                is_trusted = (radio.is_claimed or _usb_id(path) in RADIO_USB_IDS) and not is_awaited
                 if not radio.is_claimed and not radio.is_busy:
                     radio.held_by = _holder(path, is_opening_allowed=is_trusted and radio.driver is None)
                 if is_trusted and radio.driver is None and not radio.held_by and not radio.is_busy:

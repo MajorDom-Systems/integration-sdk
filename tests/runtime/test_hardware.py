@@ -234,10 +234,10 @@ async def test_a_driver_an_integration_brings_along_recognises_what_the_others_d
     assert runtime.providers(scanner) == {"usb-driver": "zigpy"}
 
     await runtime.stop()
-    again, integration = Zigpy("zigpy", conbee="deconz"), FakePeripheral("zigbee", [Need("zigbee")])
-    runtime = await run(tmp_path, UsbScanner([Driver()]), again, integration)  # after a reboot
+    sdk, again, integration = Driver(), Zigpy("zigpy", conbee="deconz"), FakePeripheral("zigbee", [Need("zigbee")])
+    runtime = await run(tmp_path, UsbScanner([sdk]), again, integration)  # after a reboot
     await until(runtime, lambda: state(runtime, integration) == PeripheralState.RUNNING)
-    assert again.opened == []  # known from before: not opened again
+    assert again.opened == sdk.opened == []  # known from before: not opened again, also while its driver starts
 
 
 async def test_one_rescan_at_a_time_opens_a_stick_once(tmp_path, sticks):
