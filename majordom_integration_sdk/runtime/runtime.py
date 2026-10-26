@@ -373,8 +373,9 @@ class Runtime:
 
     async def update_settings[S: BaseModel](self, peripheral: Peripheral[S], values: Mapping[str, Any]) -> S:
         """Validate and keep new values of its ``Settings``, none it doesn't have and no other value of a read-only one
-        than its own; one that runs hears it (`settings_did_change`), one still starting once it runs, a failed one or
-        one that stopped by itself tries again."""
+        than its own; the ones left out stay as kept (a write-only one too). One that runs hears it
+        (`settings_did_change`), one still starting once it runs, a failed one or one that stopped by itself tries
+        again."""
         entry, model = self._entry(peripheral), peripheral.Settings
         live = getattr(peripheral, "settings", None)  # none yet when the ones kept didn't validate
         read_only = _read_only(model)

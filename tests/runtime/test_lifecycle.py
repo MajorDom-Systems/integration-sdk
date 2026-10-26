@@ -1234,6 +1234,22 @@ async def test_a_read_only_setting_is_never_kept(tmp_path):
     await runtime.stop()
 
 
+class Keys(BaseModel):
+    network_key: str = Field("", json_schema_extra={"writeOnly": True})  # set by the user, never shown
+    region: str = "Europe"
+
+
+async def test_a_write_only_setting_is_kept_when_an_update_leaves_it_out(tmp_path):
+    """The host never shows it, so an update of the others comes without it: the one kept stays."""
+    assert Keys.model_json_schema()["properties"]["network_key"]["writeOnly"] is True
+    server = FakePeripheral("zwave-js-server", settings=Keys)
+    runtime = await run(tmp_path, server)
+    await runtime.update_settings(server, {"network_key": "secret"})
+
+    assert await runtime.update_settings(server, {"region": "USA"}) == Keys(network_key="secret", region="USA")
+    assert runtime.stored_settings(server) == {"network_key": "secret", "region": "USA"}  # kept, unlike a read-only one
+
+
 async def test_one_that_cant_say_what_it_provides_provides_nothing(tmp_path):
     class Broken(FakePeripheral):
         @property

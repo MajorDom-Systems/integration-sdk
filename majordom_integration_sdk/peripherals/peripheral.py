@@ -121,7 +121,9 @@ class Peripheral[S: BaseModel = Any](Protocol):
     they are `NoSettings`; a bare ``Peripheral`` is one of any settings. A field marked read-only in its JSON schema,
     ``channel: int = Field(11, json_schema_extra={"readOnly": True})``, shows what the peripheral fills in itself
     (``self.settings.channel = 25``): the user sees it, and an update to another value is refused. It is never kept:
-    until the peripheral fills it in again, it holds its default.
+    until the peripheral fills it in again, it holds its default. One marked write-only,
+    ``network_key: str = Field("", json_schema_extra={"writeOnly": True})``, is the reverse: the user sets it, and the
+    host never shows it (the Hub never reads it back), so an update that leaves it out keeps it.
     """
 
     name: str  # what it is shown by
