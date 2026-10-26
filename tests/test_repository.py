@@ -176,6 +176,13 @@ async def test_a_typed_state_without_data_holds_its_own_model_and_keeps_the_stor
         assert typed is not None and typed.integration_data.token == "t"
 
 
+def test_optional_data_is_none_until_paired(device_state):
+    """`Device[X | None]`: unset, or the `{}` the Hub stores a device with before pairing, is None."""
+    optional = DeviceState[_PairingData | None]
+    assert optional(**device_state.model_dump(exclude={"integration_data"})).integration_data is None
+    assert optional(**device_state.model_dump()).integration_data is None
+
+
 @pytest.fixture(params=["memory", "sqlite"])
 def make_scoped(request, tmp_path):
     """Factory building repositories that share one backing store, scoped per call."""

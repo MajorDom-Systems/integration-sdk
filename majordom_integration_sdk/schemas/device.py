@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from types import NoneType
+from typing import Any, get_args
 from uuid import UUID
 
 from pydantic import Field, SerializeAsAny, field_validator
@@ -96,9 +97,16 @@ class Device[TData = Any](DeviceInfo):  # TODO: review models
     """A device with what its integration keeps about it, ``integration_data``, typed as ``TData``: a bare ``Device``
     holds any (a dict once read back), ``class HueDevice(Device[HueData])`` its own model. Unset, it is ``TData``
     validated from ``{}`` (the Hub creates a device before its integration pairs it), and stays unset: a save keeps
-    the stored one."""
+    the stored one. For ``Device[HueData | None]`` that ``{}``, unset or stored, is None."""
 
     integration_data: SerializeAsAny[TData] = Field(default_factory=dict, validate_default=True)
+
+    @field_validator("integration_data", mode="before")
+    @classmethod
+    def _empty_is_none_when_optional(cls, value: Any) -> Any:
+        if value == {} and NoneType in get_args(cls.model_fields["integration_data"].annotation):
+            return None
+        return value
 
 
 class DeviceDataModel(DeviceInfo):
