@@ -1177,6 +1177,21 @@ async def test_one_disabled_with_invalid_stored_settings_fails_once_enabled(tmp_
     assert runtime.status(integration).kind == K.INVALID_SETTINGS and integration.calls == []
 
 
+async def test_why_stored_settings_are_invalid_reads_as_they_load_also_while_disabled(tmp_path):
+    (tmp_path / "data").mkdir()
+    stored = {"zigbee": {"channel": "eleven"}, "network": {"channel": "eleven", "permit_join": True}}
+    (tmp_path / "data" / "state.json").write_text(json.dumps({"settings": stored}))
+    integration, network = FakePeripheral("zigbee", settings=Channel), FakePeripheral("network", settings=Network)
+    runtime = await run(tmp_path, integration, network, disabled=MemoryDisabledStore(["zigbee"]))
+
+    error = runtime.settings_error(integration)  # what the Hub shows with them: it fails once enabled
+    assert error is not None and [e["loc"] for e in error.errors()] == [("channel",)]
+    assert runtime.settings_error(network) is None  # a read-only value is never loaded
+
+    await runtime.update_settings(integration, {"channel": 15})
+    assert runtime.settings_error(integration) is None
+
+
 async def test_stored_settings_it_no_longer_has_are_dropped(tmp_path):
     (tmp_path / "data").mkdir()
     stored = {"zigbee": {"channel": 15, "pan_id": 1}, "host": {"old": 1}}  # the host's update dropped its settings

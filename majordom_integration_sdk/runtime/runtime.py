@@ -272,6 +272,17 @@ class Runtime:
         """Its settings as kept, raw: what to show with an invalid-settings failure, where they don't validate."""
         return copy.deepcopy(self.state["settings"].get(self._entry(peripheral).key, {}))
 
+    def settings_error(self, peripheral: Peripheral) -> ValidationError | None:
+        """Why its kept settings don't validate as they load, also while it is disabled (it fails once enabled); None
+        when they do. Show it with `stored_settings`."""
+        stored = self.state["settings"].get(self._entry(peripheral).key)
+        try:
+            if stored is not None:
+                _loaded(peripheral.Settings, stored)
+        except ValidationError as error:
+            return error
+        return None
+
     def users(self, peripheral: Peripheral) -> list[str]:
         """Every peripheral that runs on it, directly or through others: a radio's integrations and their containers."""
         users: list[str] = []
@@ -625,8 +636,7 @@ class Runtime:
         update dropped them, or made them read-only) go."""
         model, stored = peripheral.Settings, self.state["settings"].get(key)
         if stored is not None:
-            kept = model.model_fields.keys() - _read_only(model)
-            peripheral.settings = model.model_validate({k: v for k, v in stored.items() if k in kept})
+            peripheral.settings = _loaded(model, stored)
         elif not isinstance(getattr(peripheral, "settings", None), model):
             peripheral.settings = model()
         if _kept(peripheral.settings) != (stored or {}):  # freeze generated defaults
@@ -979,6 +989,12 @@ def _is_read_only(schema: Any) -> bool:
 
 def _read_only(model: type[BaseModel]) -> set[str]:
     return {name for name, field in model.model_fields.items() if _is_read_only(field.json_schema_extra)}
+
+
+def _loaded[S: BaseModel](model: type[S], stored: Mapping[str, Any]) -> S:
+    """Kept settings as they load: the fields the model has but the read-only ones, never kept."""
+    kept = model.model_fields.keys() - _read_only(model)
+    return model.model_validate({k: v for k, v in stored.items() if k in kept})
 
 
 def _kept(settings: BaseModel) -> dict[str, Any]:
