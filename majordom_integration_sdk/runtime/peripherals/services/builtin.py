@@ -40,18 +40,28 @@ class _BorderRouter[S: BaseModel = Any](Service[S]):
     async def start(self):
         await super().start()
         rest = next(endpoint for endpoint in self.provides if endpoint.dialect == _OTBR_REST.dialect)
+        await self._align(rest.url)
         await self.output.peripheral_did_learn(self, {"thread_dataset": await active_dataset(rest.url)})
+
+    async def _align(self, url: str):
+        """Put the network it joined where its radio needs it, before it is told: nowhere in particular here."""
+        return
 
 
 class _MultiPanBorderRouter(_BorderRouter[ThreadRadio]):
     """One multi-PAN radio listens on one channel: the Thread network follows Zigbee's, the one its container put
     Thread on before it answered (it forms there, and moves a network it restored on another)."""
 
+    _zigbee_channel: int | None = None  # Zigbee's channel, read before the network is joined
+
     async def provision(self, endpoint: Endpoint):
         if endpoint.dialect == _OTBR_REST.dialect:
-            zigbees = await network_channel(endpoint.url)
+            self._zigbee_channel = await network_channel(endpoint.url)
             await super().provision(endpoint)
-            await move_channel(endpoint.url, zigbees)
+
+    async def _align(self, url: str):
+        if self._zigbee_channel is not None:
+            await move_channel(url, self._zigbee_channel, FORM_PATIENCE)  # one that can't land fails the start
 
 
 def silabs_multiprotocol() -> Service[ThreadRadio]:
@@ -168,17 +178,21 @@ async def network_channel(url: str) -> int:
         await asyncio.sleep(POLL)
 
 
-async def move_channel(url: str, channel: int):
+async def move_channel(url: str, channel: int, patience: float = FORM_PATIENCE):
     """Move the network of the border router at ``url`` to ``channel`` through a pending dataset, which its devices
-    follow in `MOVE_DELAY`, unless it is there or on its way."""
+    follow in `MOVE_DELAY`, unless it is there or on its way; TimeoutError once it couldn't for ``patience`` seconds."""
+    waited = 0.0
     while True:
         try:
             active, pending = await asyncio.to_thread(_datasets, url)
             if _channel(pending or active) != channel:
                 await asyncio.to_thread(_call, url, "PUT", "/node/dataset/pending", _moved(active, channel))
             return
-        except OSError:  # not up, or not attached yet: a pending dataset needs a network to go to
-            await asyncio.sleep(POLL)
+        except OSError as error:  # not up, or not attached yet: a pending dataset needs a network to go to
+            if waited >= patience:
+                raise TimeoutError(f"The Thread network didn't move to Zigbee's channel {channel}: {error}") from None
+        waited += POLL
+        await asyncio.sleep(POLL)
 
 
 async def join_network(url: str, dataset: str | None, patience: float = FORM_PATIENCE):

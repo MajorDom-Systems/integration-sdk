@@ -1,14 +1,15 @@
 import asyncio
 import json
 import threading
+from collections.abc import Mapping
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingTCPServer
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
-from majordom_integration_sdk import Endpoint, Peripherals, Service
+from majordom_integration_sdk import Endpoint, Peripheral, Peripherals, Service
 from majordom_integration_sdk.runtime.peripherals.services import builtin as services
 from majordom_integration_sdk.runtime.peripherals.services.builtin import (
     active_dataset,
@@ -35,7 +36,8 @@ def rest(url: str) -> Endpoint:
 
 @pytest.fixture
 def border_router():
-    """A border router's REST API with no network until one is put, and no change of it pending."""
+    """A border router's REST API with no network until one is put, and no change of it pending: one put lands at
+    once. It refuses puts to the path ``refused`` names."""
     state: dict[str, Any] = {"dataset": "", "pending": "", "puts": []}
 
     class Handler(BaseHTTPRequestHandler):
@@ -48,10 +50,14 @@ def border_router():
         def do_PUT(self):
             body = self.rfile.read(int(self.headers["Content-Length"])).decode()
             state["puts"].append((self.path, body))
+            if self.path == state.get("refused"):
+                self.send_response(409)
+                self.end_headers()
+                return
             if self.path == "/node/dataset/active" and not state.get("stuck"):
                 state["dataset"] = body if body.startswith("0e") else "0e08newnetwork"
             elif self.path == PENDING:
-                state["pending"] = body
+                state["dataset"] = body  # its delay passed
             self.send_response(200)
             self.end_headers()
 
@@ -114,10 +120,8 @@ async def test_a_border_router_is_provisioned_onto_the_hubs_thread_network(borde
     url, state = border_router
     monkeypatch.setattr(services, "FORM_PATIENCE", 0)
     state["dataset"] = formed  # the multiprotocol container forms one of its own, as it warms the radio up
-    service = router()
-    service.platform = build_test_platform(thread_dataset=HUB)  # learned from the stick before
-    await asyncio.wait_for(service.provision(Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999")), 1)
-    await asyncio.wait_for(service.provision(rest(url)), 3)
+    service = serving(router(), url, thread_dataset=HUB)  # learned from the stick before
+    await asyncio.wait_for(service.start(), 3)
     assert await active_dataset(url) == HUB
     assert PENDING not in [path for path, _ in state["puts"]]  # on the same channel
 
@@ -125,22 +129,30 @@ async def test_a_border_router_is_provisioned_onto_the_hubs_thread_network(borde
 async def test_a_multiprotocol_router_moves_the_network_it_joins_to_zigbees_channel(border_router):
     url, state = border_router
     state["dataset"] = dataset("0123456789abcdef", channel=15)  # its container formed it on Zigbee's channel
-    service = silabs_multiprotocol()
-    service.platform = build_test_platform(thread_dataset=dataset("dead00beef00cafe", channel=20))
-    await asyncio.wait_for(service.provision(rest(url)), 3)
+    service = serving(silabs_multiprotocol(), url, thread_dataset=dataset("dead00beef00cafe", channel=20))
+    await asyncio.wait_for(service.start(), 3)
 
-    assert state["dataset"] == service.platform.thread_dataset  # joined
-    pending = state["pending"]  # the devices on it follow: a new active and a pending timestamp, and a delay
+    assert state["puts"][1] == ("/node/dataset/active", service.platform.thread_dataset)  # joined
+    pending = dict(state["puts"])[PENDING]  # the devices on it follow: new active and pending timestamps, a delay
     assert "000300000f" in pending and "0208dead00beef00cafe" in pending and "3308" in pending and "3404" in pending
+
+
+async def test_a_channel_move_that_cant_land_fails_the_start(border_router, monkeypatch):
+    url, state = border_router
+    monkeypatch.setattr(services, "FORM_PATIENCE", 0.1)
+    state["dataset"], state["refused"] = dataset("0123456789abcdef", channel=15), PENDING  # e.g. not attached
+    service = serving(silabs_multiprotocol(), url, thread_dataset=dataset("dead00beef00cafe", channel=20))
+    with pytest.raises(TimeoutError, match="channel 15"):
+        await asyncio.wait_for(service.start(), 3)
+    assert learned(service) == []
 
 
 async def test_a_standalone_router_keeps_the_channel_of_the_network_it_joins(border_router):
     url, state = border_router
     state["dataset"] = dataset("0123456789abcdef", channel=15)
-    service = otbr()
-    service.platform = build_test_platform(thread_dataset=dataset("dead00beef00cafe", channel=20))
-    await asyncio.wait_for(service.provision(rest(url)), 3)
-    assert state["pending"] == ""
+    service = serving(otbr(), url, thread_dataset=dataset("dead00beef00cafe", channel=20))
+    await asyncio.wait_for(service.start(), 3)
+    assert PENDING not in [path for path, _ in state["puts"]]
 
 
 async def test_learns_the_network_only_once_a_channel_move_landed(border_router):
@@ -156,7 +168,7 @@ async def test_learns_the_network_only_once_a_channel_move_landed(border_router)
 
 
 class Answering:
-    """Runs nothing: the border router at ``url`` answers already."""
+    """Runs nothing: the border router at ``url`` answers already, and is set up as the runtime's containers are."""
 
     def __init__(self, url: str):
         self.url = url
@@ -165,7 +177,8 @@ class Answering:
         return [replace(endpoint, url=self.url) for endpoint in service.templates]
 
     async def up(self, service: Service):
-        pass
+        for endpoint in service.provides:
+            await service.provision(endpoint)
 
     async def down(self, service: Service):
         pass
@@ -174,12 +187,22 @@ class Answering:
         return True
 
 
+def serving[S: Service](service: S, url: str, **facts: Any) -> S:
+    """``service`` on the border router at ``url``, the platform holding ``facts``; what it tells recorded."""
+    service.platform = build_test_platform(**facts)
+    service.peripherals = Peripherals({"container": Endpoint("container", "compose", instance=Answering(url))})
+    service.output = RecordingPeripheralOutput()
+    return service
+
+
+def learned(service: Service) -> list[tuple[Peripheral, Mapping[str, Any]]]:
+    return cast(RecordingPeripheralOutput, service.output).learned
+
+
 @pytest.mark.parametrize("router", [otbr, silabs_multiprotocol])
 async def test_a_border_router_tells_its_thread_network_once_it_serves(border_router, router):
     url, state = border_router
-    state["dataset"] = "0e08existing"
-    service, output = router(), RecordingPeripheralOutput()
-    service.peripherals = Peripherals({"container": Endpoint("container", "compose", instance=Answering(url))})
-    service.output = output
+    state["dataset"] = dataset("0123456789abcdef")
+    service = serving(router(), url)
     await asyncio.wait_for(service.start(), 3)
-    assert output.learned == [(service, {"thread_dataset": "0e08existing"})]
+    assert learned(service) == [(service, {"thread_dataset": dataset("0123456789abcdef")})]
