@@ -301,7 +301,11 @@ class BLEService(Peripheral):
             logger.warning(f"BLE source {name} failed to start: {e}")
 
     async def _stop_sources(self):
+        """Stop every radio, and let go of the ones it was bound to: the runtime binds them anew before it starts."""
         await asyncio.gather(*(s.stop() for s in self._sources.values()), return_exceptions=True)
+        for name in self._bound.values():
+            self._sources.pop(name, None)
+        self._bound.clear()
 
     def _advertisement_handler(self, source: str) -> OnAdvertisement:
         def on_advertisement(device: BLEDevice, adv_data: AdvertisementData):

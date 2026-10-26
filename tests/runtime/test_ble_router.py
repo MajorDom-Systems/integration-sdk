@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 
 from majordom_integration_sdk.capabilities import BLEBusyError, BLEConnection, BLEDiscoveryInfo, BLEMatcher
+from majordom_integration_sdk.peripherals import Endpoint, Peripherals
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.testing import FakeBLESource
 
@@ -318,6 +319,20 @@ async def test_a_radio_that_fails_to_stop_is_let_go_of_all_the_same(radios):
     near.advertise("AA", service_uuids=[str(MATTER)])
     await settle()
     assert ble.devices()[0].source == "near" and "proxy" not in ble._candidates("AA")
+
+
+async def test_a_stopped_router_lets_go_of_the_radios_it_was_bound_to():
+    proxy, given = FakeBLESource("esphome:aa"), FakeBLESource("given")
+    ble = BLEService(sources=[given])
+    ble.peripherals = Peripherals({"ble": [Endpoint("ble", "esphome-proxy", "esphome:aa", instance=proxy)]})
+    await ble.start()
+    await ble.stop()
+    assert list(ble._sources) == ["given"]  # the runtime binds them anew before its next start
+
+    ble.peripherals = Peripherals({"ble": []})  # the node went meanwhile
+    await ble.start()
+    assert list(ble._sources) == ["given"] and proxy.on_advertisement is None
+    await ble.stop()
 
 
 async def test_a_silent_radio_is_restarted(radios):
