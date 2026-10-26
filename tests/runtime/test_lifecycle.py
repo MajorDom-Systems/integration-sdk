@@ -594,6 +594,24 @@ async def test_the_owner_hears_when_one_goes(tmp_path):
     assert radio not in runtime.peripherals
 
 
+async def test_what_is_read_while_one_goes_names_only_what_is_still_there(tmp_path):
+    seen: list[list[str]] = []
+
+    class Node(FakePeripheral):
+        async def stop(self):
+            await super().stop()
+            seen.append([runtime.peripheral(key).key for key in runtime.uses(app)])  # the Hub reads meanwhile
+
+    node = Node("node", provides=[Endpoint("bridge", is_shared=True)])
+    bridge = FakePeripheral("bridge", provides=[node])
+    app = FakePeripheral("app", [Need("bridge", is_required=False)], answer=True)
+    runtime = await run(tmp_path, bridge, app)
+
+    bridge.provided.clear()  # the node went
+    await changed(runtime, bridge)
+    assert (seen, node.calls) == ([[]], ["start", "stop"])
+
+
 async def test_one_that_failed_stays_failed_when_brought_along_anew(tmp_path):
     esphome = FakePeripheral("esphome", provides=[FakePeripheral("aa", failures=10)])
     runtime = await run(tmp_path, esphome)

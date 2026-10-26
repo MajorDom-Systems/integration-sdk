@@ -504,11 +504,12 @@ class Runtime:
         can. True when something changed that the next round may bind differently."""
         before = self._snapshot()
         is_changed = False
-        for entry in self._collect():  # gone: what brought it along let go of it, or it was replaced
+        gone = self._collect()  # what brought it along let go of it, or it was replaced
+        self._resolve()  # first: what is read while they stop names none of them
+        for entry in gone:
             is_changed = True
             await self._stop(entry, _waiting())
             self._gone.append(entry)
-        self._resolve()
         for entry in _users_first([e for e in self._entries.values() if e.is_started and e.key not in self._wanted]):
             is_changed = True
             await self._stop(entry, _waiting())
