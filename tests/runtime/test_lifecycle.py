@@ -777,10 +777,12 @@ async def test_an_optional_need_is_handed_over_once_its_provider_runs(tmp_path):
     await until(runtime, lambda: state(runtime, matter) == S.RUNNING, settled=False)
     assert state(runtime, border) == S.STARTING  # it doesn't hold it back
     assert matter.peripherals.bound == {}  # nor is it handed over before it serves
+    assert runtime.bound(matter) == runtime.providers(matter) == {}  # what the Hub shows: what it was handed
 
     border.gate.set()
     await settle(runtime)
     assert matter.changes == [PeripheralChange("thread", None, THREAD)] and matter.calls == ["start"]
+    assert (runtime.bound(matter), runtime.providers(matter)) == ({"thread": THREAD}, {"thread": "otbr"})
 
 
 async def test_an_optional_need_rides_out_its_provider_restarting(tmp_path):

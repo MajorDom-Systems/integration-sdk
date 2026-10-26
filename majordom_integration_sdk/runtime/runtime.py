@@ -241,12 +241,13 @@ class Runtime:
         return self._entry(peripheral).status
 
     def bound(self, peripheral: Peripheral) -> dict[str, Bound]:
-        """What each need is bound to, by family: an `Endpoint`, a list of them for an ``is_many`` need."""
-        return _view(peripheral, self._bound.get(self._entry(peripheral).key, {}))
+        """What each need is bound to, by family: an `Endpoint`, a list of them for an ``is_many`` need. What it has
+        (or would have) in ``peripherals``: an optional need only once its provider runs."""
+        return _view(peripheral, self._held(self._entry(peripheral)))
 
     def providers(self, peripheral: Peripheral) -> dict[str, str]:
         """Who serves each bound need, by family; several, comma-separated, for an ``is_many`` need."""
-        bound = self._bound.get(self._entry(peripheral).key, {})
+        bound = self._held(self._entry(peripheral))
         return {family: ", ".join(p.key for p, _ in bindings) for family, bindings in bound.items()}
 
     def unbound(self, peripheral: Peripheral) -> dict[str, str]:
@@ -702,6 +703,10 @@ class Runtime:
             if bindings:
                 handed[family] = bindings
         return handed
+
+    def _held(self, entry: _Entry) -> dict[str, list[Binding]]:
+        """What it was started or last told with; what it would be handed, while it doesn't run."""
+        return entry.bindings if entry.is_started else self._handed(entry)
 
     def _bind_view(self, entry: _Entry, bound: Mapping[str, list[Binding]]):
         entry.peripheral.peripherals = Peripherals(_view(entry.peripheral, bound))
