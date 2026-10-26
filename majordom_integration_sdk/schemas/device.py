@@ -94,9 +94,11 @@ class DeviceInfo(DevicePatch):
 
 class Device[TData = Any](DeviceInfo):  # TODO: review models
     """A device with what its integration keeps about it, ``integration_data``, typed as ``TData``: a bare ``Device``
-    holds any (a dict once read back), ``class HueDevice(Device[HueData])`` its own model."""
+    holds any (a dict once read back), ``class HueDevice(Device[HueData])`` its own model. Unset, it is ``TData``
+    validated from ``{}`` (the Hub creates a device before its integration pairs it), and stays unset: a save keeps
+    the stored one."""
 
-    integration_data: SerializeAsAny[TData] = Field(default_factory=Base)
+    integration_data: SerializeAsAny[TData] = Field(default_factory=dict, validate_default=True)
 
 
 class DeviceDataModel(DeviceInfo):

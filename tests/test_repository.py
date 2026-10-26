@@ -27,6 +27,12 @@ class _Endpoint(Base):
     endpoint: int
 
 
+class _Learned(Base):
+    """Typed `integration_data` an unpaired device can hold: every field has a default."""
+
+    firmware: str | None = None
+
+
 class _MyDevice(Device[_PairingData]):
     pass
 
@@ -155,6 +161,19 @@ async def test_device_and_state_views_merge(repository, device_state):
         typed_again = await repo.get(device_state.id, as_=_MyDevice)
         assert typed_again is not None, "integration_data must survive a DeviceState save"
         assert typed_again.integration_data.token == "t"
+
+
+async def test_a_typed_state_without_data_holds_its_own_model_and_keeps_the_stored_one(repository, device_state):
+    """Built without `integration_data`, a typed device holds its own model validated from `{}`; the field stays unset,
+    so saving it leaves the stored data as it is."""
+    state = DeviceState[_Learned](**device_state.model_dump(exclude={"integration_data"}))
+    assert isinstance(state.integration_data, _Learned)
+    async with repository.session() as repo:
+        await repo.save(make_my_device(device_id=state.id, token="t", integration=state.integration))
+        await repo.save(state)
+
+        typed = await repo.get(state.id, as_=_MyDevice)
+        assert typed is not None and typed.integration_data.token == "t"
 
 
 @pytest.fixture(params=["memory", "sqlite"])
