@@ -69,10 +69,8 @@ async def test_its_device_repository_holds_only_its_own_devices():
 
 
 async def test_recording_output_captures_reports():
-    deps = build_test_platform()
-    controller = _MinimalController(deps)
-    output = deps.output
-    assert isinstance(output, RecordingControllerOutput)
+    controller = _MinimalController(build_test_platform())
+    output = controller.output = RecordingControllerOutput()
 
     device = make_device_state()
     change = DeviceParameterChange(device_id=device.id, parameter_id=device.parameters[0].id, value=1)

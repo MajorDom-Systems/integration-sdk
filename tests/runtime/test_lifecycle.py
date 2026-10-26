@@ -317,7 +317,7 @@ async def test_one_that_stops_by_itself_waits_for_its_needs_to_change(tmp_path):
     stick, integration = radio(ZIGBEE), zigbee()
     runtime = await run(tmp_path, stick, integration)
 
-    await integration.runtime.peripheral_did_stop(integration)
+    await integration.output.peripheral_did_stop(integration)
     assert runtime.status(integration) == PeripheralStatus(S.WAITING, K.STOPPED_ITSELF, STOPPED)
     assert integration.calls == ["start", "stop"]
     await runtime.refresh()
@@ -333,7 +333,7 @@ async def test_one_that_stops_by_itself_waits_for_its_needs_to_change(tmp_path):
 async def test_one_that_stopped_by_itself_starts_once_restarted(tmp_path):
     integration = FakePeripheral("hue")
     runtime = await run(tmp_path, integration)
-    await integration.runtime.peripheral_did_stop(integration)
+    await integration.output.peripheral_did_stop(integration)
 
     await runtime.restart(integration)
     await settle(runtime)
@@ -345,7 +345,7 @@ async def test_one_that_crashes_is_started_again_then_given_up(tmp_path):
     runtime = await run(tmp_path, integration)
     for _ in range(len(module.RETRY_DELAYS) + 1):
         await until(runtime, lambda: state(runtime, integration) == S.RUNNING)
-        await integration.runtime.peripheral_did_fail(integration, "Lost the connection to the Zigbee radio.")
+        await integration.output.peripheral_did_fail(integration, "Lost the connection to the Zigbee radio.")
     assert runtime.status(integration) == PeripheralStatus(
         S.FAILED, K.GAVE_UP, "Lost the connection to the Zigbee radio."
     )
@@ -360,7 +360,7 @@ async def test_a_failure_told_from_inside_its_start_fails_that_start(tmp_path):
         async def start(self):
             await super().start()
             if len(self.calls) == 1:
-                await self.runtime.peripheral_did_fail(self, "Wrong credentials: re-enter them.")
+                await self.output.peripheral_did_fail(self, "Wrong credentials: re-enter them.")
                 raise RuntimeError("can't go on")
 
     hue = GivesUp("hue")
@@ -386,7 +386,7 @@ async def test_a_call_from_a_task_a_start_spawned_returns_once_acted_on(tmp_path
         async def flash_later(self):
             await asyncio.sleep(0.01)
             self.provided = []  # busy: being flashed
-            await self.runtime.peripheral_did_change_provided(self)
+            await self.output.peripheral_did_change_provided(self)
             seen.append(state(runtime, integration))
 
     stick, integration = Stick("stick", provides=[ZIGBEE]), zigbee()
@@ -445,7 +445,7 @@ async def test_a_server_only_a_failed_one_needs_stops(tmp_path):
     runtime = await run(tmp_path, server, matter)
     for _ in range(len(module.RETRY_DELAYS) + 1):
         await until(runtime, lambda: state(runtime, matter) == S.RUNNING)
-        await matter.runtime.peripheral_did_fail(matter, "gave up")
+        await matter.output.peripheral_did_fail(matter, "gave up")
     assert runtime.status(server) == PeripheralStatus(S.WAITING, K.UNUSED, "nothing that runs uses it")
 
 
@@ -797,13 +797,13 @@ async def test_any_peripheral_reads_the_facts_and_what_it_learned_replaces_the_p
     runtime = await run(tmp_path, router, matter, output=output, platform=europe)
     assert router.platform.region == "Europe"
 
-    await router.runtime.peripheral_did_learn(router, {"thread_dataset": "0e08"})
+    await router.output.peripheral_did_learn(router, {"thread_dataset": "0e08"})
     await settle(runtime)
     assert output.learned == [("my-border-router", {"thread_dataset": "0e08"})]  # for the host to keep
     assert matter.platform == runtime.platform == replace(europe, thread_dataset="0e08")
     assert matter.changes == [("platform", europe)]
 
-    await router.runtime.peripheral_did_learn(router, {"thread_dataset": "0e08"})  # again, at the next boot
+    await router.output.peripheral_did_learn(router, {"thread_dataset": "0e08"})  # again, at the next boot
     await settle(runtime)
     assert matter.changes == [("platform", europe)]  # nothing changed
 

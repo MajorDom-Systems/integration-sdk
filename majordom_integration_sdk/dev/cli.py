@@ -305,10 +305,9 @@ async def run_cli(
 
     loop = asyncio.get_running_loop()
 
+    base = replace(build_platform(storage_root=storage_root, db_path=db_path), **platform)
     # The output also persists state.
-    base = build_platform(storage_root=storage_root, db_path=db_path, output=_CliControllerOutput())
-    base = replace(base, **platform)
-    runner = _runner(integration(base), storage_root, peripherals, runtime_peripherals, pinned)
+    runner = _runner(integration(base), storage_root, peripherals, runtime_peripherals, pinned, _CliControllerOutput())
     controller = runner.controller
     session = _CliSession(controller, runner.runtime)
 

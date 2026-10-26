@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -14,6 +15,8 @@ from majordom_integration_sdk.peripherals.need import Need
 if TYPE_CHECKING:
     from majordom_integration_sdk.controller.platform import Platform
 
+log = logging.getLogger(__name__)
+
 START_TIMEOUT = 600  # seconds a start may take to serve by default, else it failed
 
 
@@ -24,8 +27,9 @@ class NoSettings(BaseModel):
 
 
 class PeripheralOutput(Protocol):
-    """What a peripheral tells whatever runs it, as its ``runtime``, delegate style like `ControllerOutput`: what
-    changed on its own (a stick plugged in, a node connected), and that it stopped.
+    """What a peripheral tells whatever runs it, through its ``output``, delegate style like `ControllerOutput`: what
+    changed on its own (a stick plugged in, a node connected), what it learned, and that it stopped or failed. The
+    runtime gives every peripheral it runs the same output; a controller reports through `ControllerOutput` instead.
 
     Awaiting a call returns once the runtime acted on it, e.g. stopped what used a radio about to be flashed. From
     inside ``start``, ``stop`` or a hook it returns at once: the runtime acts when that call returns.
@@ -52,20 +56,20 @@ class PeripheralOutput(Protocol):
         ...
 
 
-class _NoRuntime:
-    """Nothing runs the peripheral: library mode, a test."""
+class LoggingPeripheralOutput:
+    """Nothing runs the peripheral (library mode, a test): what it tells is logged."""
 
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
-        pass
+        log.info(f"{peripheral.key} changed what it provides")
 
     async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
-        pass
+        log.info(f"{peripheral.key} learned {', '.join(facts)}")
 
     async def peripheral_did_stop(self, peripheral: Peripheral):
-        pass
+        log.info(f"{peripheral.key} stopped by itself")
 
     async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
-        pass
+        log.error(f"{peripheral.key} failed: {reason}")
 
 
 class Peripherals:
@@ -108,8 +112,8 @@ class Peripheral[S: BaseModel = Any](Protocol):
     optional need is handed over once its provider runs, as it appears.
 
     Subclass it for the defaults. The runtime sets ``platform`` (the host, the same for every peripheral: its facts,
-    and a documents folder per peripheral), ``runtime``, ``peripherals``, ``contributor`` and ``settings``, its options
-    validated by its ``Settings``. Declare them as a nested ``class Settings(BaseModel)``
+    and a documents folder per peripheral), ``output`` (what it tells), ``peripherals``, ``contributor`` and
+    ``settings``, its options validated by its ``Settings``. Declare them as a nested ``class Settings(BaseModel)``
     named as the type parameter, which types ``settings``: ``class Radio(Peripheral["Radio.Settings"])``. Without,
     they are `NoSettings`; a bare ``Peripheral`` is one of any settings. A field marked read-only in its JSON schema,
     ``channel: int = Field(11, json_schema_extra={"readOnly": True})``, shows what the peripheral fills in itself
@@ -123,7 +127,7 @@ class Peripheral[S: BaseModel = Any](Protocol):
     start_timeout: float = START_TIMEOUT
     settings: S
     platform: Platform  # the host it runs on
-    runtime: PeripheralOutput = _NoRuntime()  # what runs it
+    output: PeripheralOutput = LoggingPeripheralOutput()  # what it tells whatever runs it
     peripherals: Peripherals = Peripherals()  # what its needs are bound to
 
     @property
@@ -140,7 +144,7 @@ class Peripheral[S: BaseModel = Any](Protocol):
     @property
     def provides(self) -> Sequence[Endpoint | Peripheral]:
         """What it serves to the others' needs, and the peripherals it brings along while it runs: the USB scanner a
-        radio per stick, ESPHome a Bluetooth proxy per node. When it changes on its own, tell ``runtime``."""
+        radio per stick, ESPHome a Bluetooth proxy per node. When it changes on its own, tell ``output``."""
         return ()
 
     async def start(self):

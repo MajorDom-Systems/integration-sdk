@@ -38,7 +38,7 @@ async def run(path: Path, *peripherals: Peripheral, settled: bool = True, **kwar
 
 async def changed(runtime: Runtime, peripheral: Peripheral):
     """``peripheral`` changed what it provides or brings along on its own, and told the runtime."""
-    await peripheral.runtime.peripheral_did_change_provided(peripheral)
+    await peripheral.output.peripheral_did_change_provided(peripheral)
     await settle(runtime)
 
 

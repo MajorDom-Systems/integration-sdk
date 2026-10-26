@@ -1,4 +1,4 @@
-"""What an integration reports back to the Hub."""
+"""What an integration reports back to the Hub, through its ``self.output``."""
 
 from __future__ import annotations
 
@@ -26,12 +26,15 @@ class IntegrationError:
     # the "hub-" prefix is reserved for the errors the Hub reports on its behalf.
     id: str
     message: str  # plain language, with any call-to-action in the text
+    # False when it can't go on: it is stopped, and started again after each retry delay, then failed
+    is_still_running: bool = True
 
 
 class ControllerOutput(Protocol):
     """
-    Defines the callback interface for passing data from an integration back to the Hub.
-    An instance is injected by the Hub into every controller as ``platform.output``.
+    Defines the callback interface for passing data from an integration back to the Hub: a controller's
+    ``self.output``, which the runtime sets (it relays to the Hub). Without one, in library mode, it logs
+    every call (`LoggingControllerOutput`); give it yours: ``controller.output = MyOutput()``.
     """
 
     async def controller_did_receive_discovery(self, controller: AbstractController, discovery: Discovery): ...
@@ -60,8 +63,9 @@ class ControllerOutput(Protocol):
         integration stops. Reporting an active ``id`` again replaces it, so it is fine to report on
         every failed attempt; several ids can be active at once.
 
-        A controller that can't go on tells the runtime instead (``self.runtime.peripheral_did_fail``), with the reason
-        for the user.
+        A controller that can't go on reports an error that isn't ``is_still_running``: it is stopped,
+        started again after each of the runtime's retry delays (5, 30, 120 s), then failed until the
+        user restarts it, ``error.message`` saying why. One that can't start raises from ``start``.
         """
         ...
 
@@ -77,6 +81,11 @@ class ControllerOutput(Protocol):
         (info/warning/error), delivery ``priority``, and ``ttl`` (seconds before auto-dismiss).
         """
         ...
+
+    async def controller_did_change_provided(self, controller: AbstractController):
+        """What it ``provides`` changed on its own, e.g. ESPHome's Bluetooth proxies as nodes come and go: the
+        runtime reads it again. The runtime's output takes this one itself: the Hub's needn't implement it."""
+        return
 
 
 class LoggingControllerOutput(ControllerOutput):
@@ -102,10 +111,14 @@ class LoggingControllerOutput(ControllerOutput):
             logger.info(f"event {type(event).__name__}: {event!r}")
 
     async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError):
-        logger.error(f"integration error {error.id}: {error.message}")
+        stopped = "" if error.is_still_running else ", it can't go on"
+        logger.error(f"integration error {error.id}{stopped}: {error.message}")
 
     async def controller_did_resolve_error(self, controller: AbstractController, error_id: str):
         logger.info(f"integration error {error_id} resolved")
 
     async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):
         logger.info(f"notification [{notification.type.value}/{notification.priority.value}]: {notification.message}")
+
+    async def controller_did_change_provided(self, controller: AbstractController):
+        logger.info(f"{controller.key} changed what it provides")

@@ -27,8 +27,8 @@ class Pinned(Peripheral):
     async def pin(self, endpoint: Endpoint):
         """Provide ``endpoint`` for its family, in place of the one pinned before."""
         self._endpoints[endpoint.family] = endpoint
-        await self.runtime.peripheral_did_change_provided(self)
+        await self.output.peripheral_did_change_provided(self)
 
     async def unpin(self, family: str):
         self._endpoints.pop(family, None)
-        await self.runtime.peripheral_did_change_provided(self)
+        await self.output.peripheral_did_change_provided(self)

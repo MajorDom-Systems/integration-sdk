@@ -304,7 +304,7 @@ class Router(Service):
     async def start(self):
         await super().start()
         self.calls.append(("learn", "http://ours"))
-        await self.runtime.peripheral_did_learn(self, {"thread_dataset": "0e08"})
+        await self.output.peripheral_did_learn(self, {"thread_dataset": "0e08"})
 
 
 async def test_what_needs_a_service_waits_for_its_setup_then_hears_what_it_learned(tmp_path):

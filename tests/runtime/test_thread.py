@@ -180,6 +180,6 @@ async def test_a_border_router_tells_its_thread_network_once_it_serves(border_ro
     state["dataset"] = "0e08existing"
     service, output = router(), RecordingPeripheralOutput()
     service.peripherals = Peripherals({"container": Endpoint("container", "compose", instance=Answering(url))})
-    service.runtime = output
+    service.output = output
     await asyncio.wait_for(service.start(), 3)
     assert output.learned == [(service, {"thread_dataset": "0e08existing"})]

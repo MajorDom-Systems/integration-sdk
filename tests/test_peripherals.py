@@ -41,7 +41,7 @@ async def test_a_peripheral_needs_provides_and_is_bound_nothing_by_default():
     assert host.Settings is NoSettings  # it takes none
     await host.start()
     await host.stop()
-    await host.runtime.peripheral_did_change_provided(host)  # nothing runs it: told no one
+    await host.output.peripheral_did_change_provided(host)  # nothing runs it: logged
     assert await host.needed_peripheral_did_change(PeripheralChange("ip", None, None)) is False  # restart it
     assert await host.settings_did_change(NoSettings()) is False
     assert await host.platform_facts_did_change(build_test_platform()) is True  # the facts concern few

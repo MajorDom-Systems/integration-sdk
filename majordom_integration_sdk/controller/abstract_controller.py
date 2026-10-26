@@ -14,6 +14,7 @@ from uuid import UUID, uuid5
 from pydantic import BaseModel
 from slugify import slugify
 
+from majordom_integration_sdk.controller.output import ControllerOutput, LoggingControllerOutput
 from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.peripherals import Need, Peripheral, PeripheralChange
 from majordom_integration_sdk.schemas.command import DeviceCommand
@@ -57,15 +58,19 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
 
     - ``self.platform``: the host, the same for every peripheral, given to its constructor: its facts (``region``,
       ``wifi``, ``thread_dataset``), its device repository and a documents folder, scoped to the controller
-      (``self.platform.device_repository(self)``, ``self.platform.documents_folder(self)``), and the output;
+      (``self.platform.device_repository(self)``, ``self.platform.documents_folder(self)``);
+    - ``self.output``: what it reports (``controller_did_…``: discoveries, devices, events, errors, notifications,
+      what it provides), which the runtime relays to the Hub; it logs them in library mode until you give yours;
     - ``self.settings``: its validated ``Settings``, declared as a nested ``class Settings(BaseModel)`` named as the
       last type parameter, ``AbstractController[Device, Parameter, "HueController.Settings"]``; `NoSettings` without;
     - ``self.peripherals``: the endpoints its needs are bound to (``endpoint()``, ``endpoints()``, ``instance()``).
 
-    In library mode, with no runtime, give it any settings and hand the bound needs over yourself::
+    In library mode, with no runtime, give it any settings, hand the bound needs over yourself and, to hear what it
+    reports rather than read it in the log, your output::
 
         controller = HueController(platform, settings=HueController.Settings(bridge="192.168.1.2"))
         controller.peripherals = Peripherals({"mdns": Endpoint("mdns", "zeroconf", instance=zeroconf)})
+        controller.output = MyOutput()  # a ControllerOutput
     """
 
     def __init_subclass__(cls, **kwargs):
@@ -73,6 +78,9 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
         # Auto-derive `name` from the class name unless the subclass set one explicitly.
         if "name" not in cls.__dict__:
             cls.name = _titleize(cls.__name__)
+
+    # A controller reports through the controller calls alone: the runtime's output answers the peripheral ones too
+    output: ControllerOutput = LoggingControllerOutput()  # ty: ignore[invalid-attribute-override]
 
     def __init__(self, platform: Platform, *, settings: TSettings | None = None):
         """``settings`` hold until the user changes them (the runtime keeps them): the defaults of ``Settings`` without.

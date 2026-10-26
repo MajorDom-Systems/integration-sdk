@@ -14,9 +14,9 @@ instead of reinventing them, so every integration is exercised through the same 
   Bluetooth router to hear through (``router.add_source(source)``), :class:`FakeBLERouter`,
   :class:`FakeZeroconf` (the ``discovery`` extra) and :class:`FakeSSDP`. Each provides itself as
   ``.endpoint``, to bind as the controller's peripherals: ``Peripherals({"ble": router.endpoint})``.
-- :func:`build_test_platform` — assembles a ``Platform`` wired with the recording output, an
-  in-memory device repository and temp-dir storage, and the facts you give, so a test can drive
-  a controller (or any peripheral) exactly as the Hub would.
+- :func:`build_test_platform` — assembles a ``Platform`` with an in-memory device repository,
+  temp-dir storage and the facts you give, so a test can drive a controller (or any peripheral)
+  exactly as the Hub would; give the controller a ``RecordingControllerOutput`` as its ``output``.
 """
 
 from __future__ import annotations
@@ -59,6 +59,7 @@ class RecordingControllerOutput(ControllerOutput):
         self.errors: dict[str, IntegrationError] = {}  # the active ones, by id
         self.error_log: list[IntegrationError | str] = []  # every report, and the id of every resolve
         self.notifications: list[Notification] = []
+        self.provided_changes: list[_Controller] = []  # every time one said what it provides changed
 
     async def controller_did_receive_discovery(self, controller: _Controller, discovery: Discovery):
         self.received_discoveries.append(discovery)
@@ -89,11 +90,14 @@ class RecordingControllerOutput(ControllerOutput):
     async def controller_did_emit_notification(self, controller: _Controller, notification: Notification):
         self.notifications.append(notification)
 
+    async def controller_did_change_provided(self, controller: _Controller):
+        self.provided_changes.append(controller)
+
 
 class FakePeripheral(Peripheral):
     """A peripheral that records how it is run (``calls``: "start", "stop") and the changes it hears. Its first
     ``failures`` starts raise; ``answer`` is what its hooks return, or an exception they raise. Change ``provided``,
-    then tell ``runtime``, as a real one does when a stick is plugged in."""
+    then tell ``output``, as a real one does when a stick is plugged in."""
 
     def __init__(
         self,
@@ -152,7 +156,7 @@ class FakePeripheral(Peripheral):
 
 
 class RecordingPeripheralOutput:
-    """Captures what peripherals report to whatever runs them: set it as a peripheral's ``runtime``."""
+    """Captures what peripherals report to whatever runs them: set it as a peripheral's ``output``."""
 
     def __init__(self):
         self.changed: list[Peripheral] = []
@@ -311,12 +315,10 @@ def build_test_platform(
     """Assemble a ``Platform`` wired entirely with offline test doubles, as the Hub gives it to every peripheral: an
     in-memory repository each controller sees only its own devices of, scoped by its key, and the facts given.
 
-    Pass ``documents_root`` as the root of the peripherals' folders; a fresh temp dir is used otherwise. The
-    recording output is reachable as ``platform.output``.
+    Pass ``documents_root`` as the root of the peripherals' folders; a fresh temp dir is used otherwise.
     """
     return Platform(
         documents_root=documents_root or Path(tempfile.mkdtemp(prefix="majordom-sdk-test-")),
-        output=RecordingControllerOutput(),
         region=region,
         wifi=wifi,
         thread_dataset=thread_dataset,

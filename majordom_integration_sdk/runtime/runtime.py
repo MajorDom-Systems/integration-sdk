@@ -16,6 +16,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ValidationError
 from pydantic_core import InitErrorDetails
 
+from majordom_integration_sdk.controller.output import ControllerOutput, LoggingControllerOutput
 from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.peripherals import (
     Bound,
@@ -26,6 +27,7 @@ from majordom_integration_sdk.peripherals import (
     Peripherals,
 )
 from majordom_integration_sdk.runtime.files import read_json, write_json
+from majordom_integration_sdk.runtime.output import HostOutput
 
 log = logging.getLogger(__name__)
 
@@ -140,7 +142,7 @@ class _Entry:
 
 class Runtime:
     """Runs every peripheral it is given, and what those bring along, by one rule (see `Peripheral`); binds their
-    needs, and is the ``runtime`` of each::
+    needs, and hears what each tells through the ``output`` they share::
 
         runtime = Runtime(data, [Pinned(*mine), FixedPeripherals(*soldered), *default_peripherals(), *integrations])
         await runtime.start()
@@ -149,9 +151,10 @@ class Runtime:
     endpoint (the Bluetooth router takes every adapter before the containers) and serves a need first: `Pinned`,
     then the hardware, the defaults and the integrations. ``platform`` is the host every peripheral runs on, its
     ``self.platform``: the facts peripherals read and containers render, a documents folder per peripheral (by default
-    under ``data/peripherals``) and the device repository; `update_platform` replaces it. ``output`` hears every change
-    of status, what is learned and what is gone; ``disabled`` keeps what the user disabled (in memory by default). Its
-    own state, the settings, goes to ``data``.
+    under ``data/peripherals``) and the device repository; `update_platform` replaces it. ``controller_output`` (the
+    Hub's) hears what controllers report through their ``output``, logged by default. ``output`` hears every change of
+    status, what is learned and what is gone; ``disabled`` keeps what the user disabled (in memory by default). Its own
+    state, the settings, goes to ``data``.
 
     A peripheral that isn't disabled or failed runs while something that runs binds it if it ``is_on_demand``, while
     what brought it along runs, and once every required need is bound to a provider that runs. Only a waiting one
@@ -167,11 +170,13 @@ class Runtime:
         peripherals: Sequence[Peripheral] = (),
         *,
         platform: Platform | None = None,
+        controller_output: ControllerOutput | None = None,
         output: RuntimeOutput | None = None,
         disabled: DisabledStore | None = None,
     ):
         self.data, self.given, self.output = data, list(peripherals), output
         self.platform = platform or Platform(documents_root=data / "peripherals")
+        self._shared_output = HostOutput(self, controller_output or LoggingControllerOutput())
         self.disabled = disabled or MemoryDisabledStore()
         self.state: dict[str, Any] = {"settings": {}}
         saved = read_json(data / "state.json")
@@ -394,7 +399,7 @@ class Runtime:
 
         await self._act(apply)
 
-    # PeripheralOutput
+    # What peripherals tell, through their output
 
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
         await self._settle()
@@ -545,7 +550,7 @@ class Runtime:
 
     def _adopt(self, peripheral: Peripheral) -> _Entry:
         key = peripheral.key
-        peripheral.runtime, peripheral.platform = self, self.platform
+        peripheral.output, peripheral.platform = self._shared_output, self.platform
         status = _waiting()
         if key in self._failed:
             status = PeripheralStatus(PeripheralState.FAILED, StatusKind.GAVE_UP, self._failed[key])

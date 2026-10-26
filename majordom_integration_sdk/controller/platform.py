@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from majordom_integration_sdk.controller.output import ControllerOutput, LoggingControllerOutput
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtocol
 from majordom_integration_sdk.schemas.credentials import WifiCredentials
@@ -43,7 +42,6 @@ class Platform:
     documents_root: Path
     # One unit of work on the device repository, scoped to the devices of the peripheral keyed; in memory by default
     make_device_repository: MakeDeviceRepository = field(default_factory=_in_memory)
-    output: ControllerOutput = field(default_factory=LoggingControllerOutput)
     region: str | None = None  # RF region for sub-GHz radios, a Z-Wave JS name: "Europe", "USA", …
     wifi: WifiCredentials | None = None  # the network to provision Wi-Fi devices onto
     thread_dataset: str | None = None  # active operational dataset of the hub's Thread network, hex TLVs

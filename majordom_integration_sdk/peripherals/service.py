@@ -57,7 +57,7 @@ class Service[S: BaseModel = Any](Peripheral[S]):
 
     Its start returns once its container runs, its ports answer, `provision` finished and `is_healthy` says so.
     Subclass it to hook in: `provision` sets up what it runs, `is_healthy` checks more; a ``start`` of your own may tell
-    what it learned once it serves (``self.runtime.peripheral_did_learn``).
+    what it learned once it serves (``self.output.peripheral_did_learn``).
     """
 
     is_on_demand = True

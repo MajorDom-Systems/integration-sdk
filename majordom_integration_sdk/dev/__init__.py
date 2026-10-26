@@ -39,12 +39,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("majordom_integration_sdk.dev")
 
 
-def build_platform(
-    *,
-    storage_root: Path | None = None,
-    db_path: str | Path | None = None,
-    output: ControllerOutput | None = None,
-) -> Platform:
+def build_platform(*, storage_root: Path | None = None, db_path: str | Path | None = None) -> Platform:
     """Assemble the host for a standalone run, as the Hub gives it to every peripheral.
 
     ``db_path`` selects a file-backed :class:`SqliteDeviceRepository` (state survives
@@ -53,7 +48,7 @@ def build_platform(
     """
     root = Path(storage_root) if storage_root is not None else Path(".majordom-dev")
     root.mkdir(parents=True, exist_ok=True)
-    platform = Platform(documents_root=root, output=output or LoggingControllerOutput())
+    platform = Platform(documents_root=root)
     if db_path is not None:
         return replace(platform, make_device_repository=lambda key: SqliteDeviceRepository(db_path, key).session())
     return platform
@@ -79,10 +74,12 @@ def build_runtime(
     runtime_peripherals: Sequence[Peripheral] | None = None,
     pinned: Sequence[Endpoint] = (),
     platform: Platform | None = None,
+    controller_output: ControllerOutput | None = None,
 ) -> Runtime:
     """The runtime for one integration, as under the Hub: the endpoints you pin first, then ``runtime_peripherals``
     (`default_peripherals()` by default), then what the integration exports, all on ``platform`` (the one its
-    controller was given). Needs the ``runtime`` extra."""
+    controller was given), what its controller reports going to ``controller_output`` (logged by default). Needs the
+    ``runtime`` extra."""
     if importlib.util.find_spec("serial") is None:
         raise ImportError(
             "Resolving needs takes the runtime — install it with:\n"
@@ -93,7 +90,9 @@ def build_runtime(
 
     around = default_peripherals() if runtime_peripherals is None else runtime_peripherals
     peripherals = [Pinned(*pinned), *around, *integration]
-    return Runtime(data, peripherals, platform=platform, output=LoggingRuntimeOutput())
+    return Runtime(
+        data, peripherals, platform=platform, controller_output=controller_output, output=LoggingRuntimeOutput()
+    )
 
 
 class Runner:
@@ -147,7 +146,7 @@ async def run_controller(
     ``region``; ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     exported = integration(replace(build_platform(storage_root=storage_root, db_path=db_path), **platform))
-    runner = _runner(exported, storage_root, peripherals, runtime_peripherals, pinned)
+    runner = _runner(exported, storage_root, peripherals, runtime_peripherals, pinned, LoggingControllerOutput())
     await runner.start()
     try:
         await asyncio.Event().wait()  # run forever until cancelled
@@ -164,14 +163,15 @@ def _runner(
     peripherals: Mapping[str, Bound] | None,
     runtime_peripherals: Sequence[Peripheral] | None,
     pinned: Sequence[Endpoint],
+    controller_output: ControllerOutput,
 ) -> Runner:
-    """What an integration exported, run around its one controller."""
+    """What an integration exported, run around its one controller, which reports to ``controller_output``."""
     controllers = [peripheral for peripheral in exported if isinstance(peripheral, AbstractController)]
     if len(controllers) != 1:
         raise ValueError(f"An integration exports one controller, not {len(controllers)}: {list(exported)}")
     controller, root = controllers[0], Path(storage_root) if storage_root is not None else Path(".majordom-dev")
     if peripherals is not None:
-        controller.peripherals = Peripherals(peripherals)
+        controller.peripherals, controller.output = Peripherals(peripherals), controller_output
         return Runner(controller)
     runtime = build_runtime(
         exported,
@@ -179,6 +179,7 @@ def _runner(
         runtime_peripherals=runtime_peripherals,
         pinned=pinned,
         platform=controller.platform,
+        controller_output=controller_output,
     )
     return Runner(controller, runtime)
 

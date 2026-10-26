@@ -53,7 +53,7 @@ class BluetoothAdapters(Peripheral):
             if (found := _adapters()) != self._adapters:
                 self._adapters = found
                 try:
-                    await self.runtime.peripheral_did_change_provided(self)
+                    await self.output.peripheral_did_change_provided(self)
                 except Exception:
                     log.exception("Following the Bluetooth adapters failed")
 

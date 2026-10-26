@@ -18,6 +18,7 @@ from majordom_integration_sdk import Endpoint, Need, PeripheralChange
 from majordom_integration_sdk.controller import AbstractController
 from majordom_integration_sdk.dev import LoggingControllerOutput, Runner, build_platform, build_runtime, run_controller
 from majordom_integration_sdk.runtime import Pinned, Runtime
+from majordom_integration_sdk.runtime.output import HostOutput
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.testing import FakeBLERouter, FakeSSDP
@@ -101,20 +102,9 @@ async def until(condition):
 # --- build_platform -----------------------------------------------------------------------
 
 
-def test_build_platform_defaults_to_memory_and_logging_output(tmp_path):
-    assert isinstance(build_platform(storage_root=tmp_path).output, LoggingControllerOutput)
-
-
 def test_build_platform_roots_every_peripherals_documents_folder(tmp_path):
     platform = build_platform(storage_root=tmp_path)
     assert platform.documents_root == tmp_path and tmp_path.is_dir()
-
-
-def test_build_platform_honors_custom_output(tmp_path):
-    from majordom_integration_sdk.testing import RecordingControllerOutput
-
-    output = RecordingControllerOutput()
-    assert build_platform(storage_root=tmp_path, output=output).output is output
 
 
 async def test_build_platform_memory_repository_round_trips_in_its_scope(tmp_path):
@@ -204,6 +194,7 @@ async def test_run_controller_with_peripherals_given_runs_without_the_runtime(tm
     assert controller.started and controller.stopped
     assert controller.peripherals.endpoint("zwave") == ZWAVE
     assert controller.platform.documents_folder(controller) == tmp_path / "dev-example"  # by its key, as by the Hub
+    assert isinstance(controller.output, LoggingControllerOutput)  # what it reports is logged
     assert not (tmp_path / "runtime").exists()
 
 
@@ -235,3 +226,5 @@ async def test_run_controller_starts_and_stops_cleanly_under_the_runtime(tmp_pat
     assert controller.started and controller.stopped
     assert controller.peripherals.endpoint("zwave") == ZWAVE  # bound by the runtime
     assert controller.platform.region == "Europe"  # the platform it was given, its overrides too
+    output = controller.output  # the runtime's, which logs what it reports
+    assert isinstance(output, HostOutput) and isinstance(output.controller_output, LoggingControllerOutput)

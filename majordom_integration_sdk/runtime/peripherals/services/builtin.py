@@ -39,7 +39,7 @@ class _BorderRouter[S: BaseModel = Any](Service[S]):
     async def start(self):
         await super().start()
         rest = next(endpoint for endpoint in self.provides if endpoint.dialect == _OTBR_REST.dialect)
-        await self.runtime.peripheral_did_learn(self, {"thread_dataset": await active_dataset(rest.url)})
+        await self.output.peripheral_did_learn(self, {"thread_dataset": await active_dataset(rest.url)})
 
 
 class _MultiPanBorderRouter(_BorderRouter[ThreadRadio]):
