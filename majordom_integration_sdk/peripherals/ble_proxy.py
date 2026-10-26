@@ -13,8 +13,8 @@ class BLEProxy(Peripheral):
     """A Bluetooth source an integration brings along while it has it, e.g. an ESPHome node's proxy as
     ``ble/esphome-proxy``: the router binds it and hears through ``source``. Add one to what you provide when the source
     connects, remove it when it goes, and tell your ``output`` each time (``controller_did_change_provided``); they go
-    when you stop. ``name`` is what it is
-    known by after you, ``esphome/<name>``: the source's name by default, else e.g. the node's Bluetooth MAC.
+    when you stop. ``name`` is what it is known by after you, ``esphome/<name>``: the source's name by default, else
+    e.g. the node's Bluetooth MAC.
     """
 
     def __init__(self, source: BLESource, name: str | None = None, dialect: str = "esphome-proxy"):
