@@ -1,5 +1,7 @@
 """How the runtime binds needs: in the order it is given, single-use endpoints once, and why a need stays unbound."""
 
+import json
+
 import pytest
 from support import run, settle
 
@@ -100,24 +102,19 @@ async def test_a_single_use_endpoint_goes_to_the_first_given_and_then_to_the_nex
     assert runtime.status(second).state == PeripheralState.RUNNING
 
 
-async def test_a_reserved_adapter_goes_to_its_owner_before_the_router(tmp_path):
+async def test_an_adapter_goes_by_the_order_given_alone(tmp_path):
+    (tmp_path / "data").mkdir()
+    reserved = {"settings": {}, "reserved": {"matterjs-server": {"ble": "hci1"}}}  # kept by an older runtime
+    (tmp_path / "data" / "state.json").write_text(json.dumps(reserved))
     ble = router()
     server = FakePeripheral("matterjs-server", [Need("ble", ["bluez"])], [Endpoint("matter", "x", "ws")])
     runtime = await run(tmp_path, adapters(), ble, FakePeripheral("matter", [Need("ble", ["router"])]), server)
 
-    await runtime.reserve("matterjs-server", "ble", "hci1")
-    assert ble.peripherals.endpoints("ble") == ADAPTERS[:1]  # the router skips it
-    assert server.peripherals.endpoint("ble") == ADAPTERS[1]
-
-    await runtime.reserve("matterjs-server", "ble", None)
     assert ble.peripherals.endpoints("ble") == ADAPTERS
-
-
-async def test_a_reserved_endpoint_is_no_one_elses(tmp_path):
-    sniffer = FakePeripheral("sniffer", [Need("ble", ["bluez"], is_many=True)])
-    runtime = await run(tmp_path, adapters(), sniffer)
-    await runtime.reserve("someone", "ble", "hci0")
-    assert sniffer.peripherals.endpoints("ble") == ADAPTERS[1:]
+    assert runtime.unbound(server) == {
+        "ble": 'need ble/bluez: every provider taken by ble-router — use Need("ble", ["router"])'
+    }
+    assert "reserved" not in runtime.state and not hasattr(runtime, "reserve")
 
 
 async def test_the_first_given_of_two_providers_serves_a_need(tmp_path):

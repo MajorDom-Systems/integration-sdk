@@ -25,7 +25,7 @@ class HostNetwork(Peripheral):
 
 class BluetoothAdapters(Peripheral):
     """Every Bluetooth adapter of the host as its own single-use ``ble/bluez`` endpoint, with its ``index`` (the router
-    takes them all, unless one is reserved); off Linux, bleak's default adapter on the OS's own stack. Adapters that
+    takes them all when it is given first); off Linux, bleak's default adapter on the OS's own stack. Adapters that
     appear or disappear are followed."""
 
     name = "bluetooth-adapters"

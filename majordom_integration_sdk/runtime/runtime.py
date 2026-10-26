@@ -149,8 +149,8 @@ class Runtime:
     endpoint (the Bluetooth router takes every adapter before the containers) and serves a need first: `Pinned`,
     then the hardware, the defaults and the integrations. ``context`` gives the Hub-wide facts, which peripherals read
     and containers render; ``output`` hears every change of status, what is learned and what is gone; ``disabled``
-    keeps what the user disabled (in memory by default). Its own state, the settings and the user's reservations, goes
-    to ``data``; every peripheral gets a folder there, ``peripherals/<key>``.
+    keeps what the user disabled (in memory by default). Its own state, the settings, goes to ``data``; every peripheral
+    gets a folder there, ``peripherals/<key>``.
 
     A peripheral that isn't disabled or failed runs while something that runs binds it if it ``is_on_demand``, while
     what brought it along runs, and once every required need is bound to a provider that runs. Only a waiting one
@@ -171,7 +171,7 @@ class Runtime:
     ):
         self.data, self.given, self._context, self.output = data, list(peripherals), context, output
         self.disabled = disabled or MemoryDisabledStore()
-        self.state: dict[str, Any] = {"settings": {}, "reserved": {}}
+        self.state: dict[str, Any] = {"settings": {}}
         saved = read_json(data / "state.json")
         self.state |= {key: saved[key] for key in saved.keys() & self.state.keys()}  # older keys start fresh
         self._entries: dict[str, _Entry] = {}  # in binding order
@@ -377,17 +377,6 @@ class Runtime:
                     entry.context_before = before
 
         await self._act(apply)
-
-    async def reserve(self, owner: str, family: str, url: str | None):
-        """Keep the ``family`` endpoint at ``url`` for ``owner`` alone, bound to it before anything else can bind it,
-        ``is_many`` needs included: one Bluetooth adapter, ``ble/bluez hci1``, for matterjs-server to use directly.
-        None gives it back."""
-        if url is None:
-            self.state["reserved"].get(owner, {}).pop(family, None)
-        else:
-            self.state["reserved"].setdefault(owner, {})[family] = url
-        self._save()
-        await self._settle()
 
     # PeripheralOutput
 
@@ -610,7 +599,7 @@ class Runtime:
                 chosen = [
                     (provider, endpoint)
                     for provider, endpoint in self._candidates(key, need, among, provides)
-                    if self._is_free(provider, endpoint, key, taken)
+                    if (provider.key, endpoint.family, endpoint.url) not in taken
                 ]
                 chosen = chosen if need.is_many else chosen[:1]
                 for provider, endpoint in chosen:
@@ -630,24 +619,14 @@ class Runtime:
     def _candidates(
         self, owner: str, need: Need, among: set[str], provides: Mapping[str, list[Endpoint]]
     ) -> list[Binding]:
-        """What could serve ``need`` of ``owner``, best first: reserved for it, then in the order given."""
-        candidates = [
+        """What could serve ``need`` of ``owner``, in the order given."""
+        return [
             (self._entries[key], endpoint)
             for key in self._entries
             if key in among and key != owner
             for endpoint in provides[key]
             if need.accepts(endpoint)
         ]
-        reserved = self.state["reserved"].get(owner, {})
-        return sorted(candidates, key=lambda c: reserved.get(c[1].family) != c[1].url)
-
-    def _is_free(
-        self, provider: _Entry, endpoint: Endpoint, owner: str, taken: Mapping[tuple[str, str, str], str]
-    ) -> bool:
-        """Whether ``owner`` may bind ``endpoint``: no one took it, and it isn't reserved for another."""
-        reserved = self.state["reserved"].items()
-        is_kept = any(kept.get(endpoint.family) == endpoint.url and key != owner for key, kept in reserved)
-        return not is_kept and (provider.key, endpoint.family, endpoint.url) not in taken
 
     def _why_waiting(self, entry: _Entry) -> PeripheralStatus | None:
         """Why a waiting one doesn't start now; None when it can."""
@@ -865,12 +844,9 @@ class _Reasons:
     def why(self, owner: str, need: Need) -> str | None:
         """Why ``need`` of ``owner`` can't be bound; None when it could be, had the owner a reason to run."""
         rejected: list[str] = []
-        entries, reserved = self.runtime._entries, self.runtime.state["reserved"]
+        entries = self.runtime._entries
         for provider, endpoint in self.runtime._candidates(owner, need, set(entries), self.provides):
-            keeper = next((n for n, kept in reserved.items() if kept.get(need.family) == endpoint.url), owner)
-            if keeper != owner:
-                rejected.append(f"{endpoint.url or endpoint.dialect} is reserved for {keeper}")
-            elif (taker := self.taken.get((provider.key, endpoint.family, endpoint.url))) not in (None, owner):
+            if (taker := self.taken.get((provider.key, endpoint.family, endpoint.url))) not in (None, owner):
                 rejected.append(f"every provider taken by {taker}" + self.hint(taker, need.family))
             elif provider.key not in self.alive:
                 rejected.append(f"{provider.key} is {entries[provider.key].state}")
