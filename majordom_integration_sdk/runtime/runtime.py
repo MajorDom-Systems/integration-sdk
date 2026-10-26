@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import copy
 import logging
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
 from pathlib import Path
@@ -38,6 +39,8 @@ HOOK_TIMEOUT = 30  # seconds a hook may take: it runs while the runtime waits
 STOP_TIMEOUT = 15  # a stop stuck on a vanished radio (zigpy awaiting its dead I/O thread) is abandoned
 _PASSES = 10  # bound on the passes one change takes to settle: each may change what the next one binds
 _FACTS = {f.name for f in fields(Platform)} - {"documents_root", "make_device_repository"}  # never its resources
+# The peripheral call (start, stop, a hook) a task runs in: the tasks it creates inherit it
+_CALL: contextvars.ContextVar[object | None] = contextvars.ContextVar("_CALL", default=None)
 
 
 class PeripheralState(StrEnum):
@@ -197,6 +200,7 @@ class Runtime:
         self._unbound: dict[str, dict[str, str]] = {}  # key -> family -> why its need isn't bound
         self._lock = asyncio.Lock()
         self._holder: asyncio.Task | None = None  # the task holding the lock
+        self._calls: set[object] = set()  # the marks of the peripheral calls it waits on
         self._tasks: set[asyncio.Task] = set()
         self._timer: asyncio.TimerHandle | None = None
         self._is_running = False
@@ -488,7 +492,7 @@ class Runtime:
         """Bind and run anew."""
         await self._in_own_task(self.refresh())
 
-    async def _in_own_task(self, work: Awaitable[Any]):
+    async def _in_own_task(self, work: Coroutine[Any, Any, Any]):
         """Do ``work`` in a task of the runtime's own, never in the caller's: a stop it brings may cancel the caller (a
         peripheral telling from its own task), and a caller cancelled meanwhile only stops waiting. The caller waits
         for it, unless the runtime waits on the caller: then it happens once that call returns."""
@@ -497,10 +501,22 @@ class Runtime:
             await asyncio.shield(task)
 
     def _is_driving(self) -> bool:
-        """Whether the runtime waits on the current task: it holds the lock, or it is a start. Waiting in it for the
-        runtime to act would never end; a task it spawned is no one the runtime waits on."""
-        task = asyncio.current_task()
-        return task is self._holder or any(entry.task is task for entry in self._entries.values())
+        """Whether the runtime waits on the current task: it holds the lock, or it runs a peripheral's start, stop or
+        hook, or a task that call awaits. Waiting in it for the runtime to act would never end; a task a call left
+        running (a keeper a start spawned) is no one the runtime waits on."""
+        return asyncio.current_task() is self._holder or _CALL.get() in self._calls
+
+    async def _call[T](self, seconds: float, call: Awaitable[T], late: str) -> T:
+        """A peripheral's ``call``, which the runtime waits on, marked so that what it awaits in tasks of its own (a
+        ``TaskGroup``, ``gather``) counts as inside it while it runs: `_within`."""
+        mark = object()
+        self._calls.add(mark)
+        reset = _CALL.set(mark)
+        try:
+            return await _within(seconds, call, late)
+        finally:
+            _CALL.reset(reset)
+            self._calls.discard(mark)
 
     @contextlib.asynccontextmanager
     async def _locked(self):
@@ -740,7 +756,7 @@ class Runtime:
         peripheral, failure = entry.peripheral, ""
         timeout = peripheral.start_timeout
         try:
-            await _within(timeout, peripheral.start(), f"didn't start within {timeout} s")
+            await self._call(timeout, peripheral.start(), f"didn't start within {timeout} s")
         except asyncio.CancelledError as error:
             if _is_cancelled():  # stopped
                 raise
@@ -814,7 +830,7 @@ class Runtime:
         entry.running_since = None
         if is_started:
             try:
-                await _within(STOP_TIMEOUT, entry.peripheral.stop(), f"didn't stop within {STOP_TIMEOUT} s")
+                await self._call(STOP_TIMEOUT, entry.peripheral.stop(), f"didn't stop within {STOP_TIMEOUT} s")
             except Exception as error:
                 log.error(f"{entry.key} failed to stop cleanly: {error}", exc_info=error)
         entry.state, entry.kind, entry.detail, entry.bindings = status.state, status.kind, status.detail, {}
@@ -834,7 +850,7 @@ class Runtime:
         """Whether it handled a change in place; if not it restarts, and a hook that raised counts as a failure."""
         failure = ""
         try:
-            if await _within(HOOK_TIMEOUT, hook, f"didn't take the change within {HOOK_TIMEOUT} s"):
+            if await self._call(HOOK_TIMEOUT, hook, f"didn't take the change within {HOOK_TIMEOUT} s"):
                 return True
         except asyncio.CancelledError as error:
             if _is_cancelled():
@@ -880,8 +896,10 @@ class Runtime:
     def _save(self):
         write_json(self.data / "state.json", self.state)
 
-    def _spawn(self, awaitable: Awaitable[Any]) -> asyncio.Task:
-        task = asyncio.ensure_future(awaitable)
+    def _spawn(self, work: Coroutine[Any, Any, Any]) -> asyncio.Task:
+        context = contextvars.copy_context()
+        context.run(_CALL.set, None)  # the runtime's own: inside no peripheral's call, whichever set it off
+        task = asyncio.get_running_loop().create_task(work, context=context)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return task

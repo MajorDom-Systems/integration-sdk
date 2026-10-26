@@ -446,6 +446,40 @@ async def test_a_call_from_a_task_a_start_spawned_returns_once_acted_on(tmp_path
     assert seen == [S.WAITING]  # it let go of the stick before the flash goes on
 
 
+async def test_a_call_from_a_task_a_hook_awaits_returns_at_once(tmp_path, monkeypatch):
+    """A task a hook awaits counts as inside it (a TaskGroup reconnecting its nodes): the runtime acts once the hook
+    returned, rather than the hook waiting on the runtime that waits on it."""
+    monkeypatch.setattr(module, "HOOK_TIMEOUT", 0.5)
+
+    class Reconnects(FakePeripheral):
+        async def needed_peripheral_did_change(self, change):
+            async with asyncio.TaskGroup() as group:
+                group.create_task(self.output.peripheral_did_change_provided(self))
+            return await super().needed_peripheral_did_change(change)
+
+    stick, integration = radio(ZIGBEE), Reconnects("zigbee", [Need("zigbee")], answer=True)
+    runtime = await run(tmp_path, stick, integration)
+    stick.provided = [MOVED]
+    await changed(runtime, stick)
+    assert (runtime.status(integration), integration.calls) == (PeripheralStatus(S.RUNNING), ["start"])
+
+
+async def test_a_call_from_a_task_a_stop_awaits_returns_at_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(module, "STOP_TIMEOUT", 0.5)
+    stopped: list[bool] = []
+
+    class LetsGo(FakePeripheral):
+        async def stop(self):
+            await super().stop()
+            await asyncio.gather(self.output.peripheral_did_change_provided(self))  # its nodes go, each telling
+            stopped.append(True)
+
+    integration = LetsGo("esphome")
+    runtime = await run(tmp_path, integration)
+    await runtime.disable(integration)
+    assert stopped == [True]  # ran to its end, never cut short
+
+
 async def test_a_call_scheduled_by_a_status_callback_returns_once_acted_on(tmp_path):
     seen: list[S] = []
     integration, ran = FakePeripheral("zigbee"), asyncio.Event()
@@ -465,6 +499,41 @@ async def test_a_call_scheduled_by_a_status_callback_returns_once_acted_on(tmp_p
     runtime = await run(tmp_path, integration, output=output)
     ran.set()
     await output.task
+    assert seen == [S.DISABLED]
+
+
+async def test_a_call_scheduled_from_what_a_starts_task_set_off_returns_once_acted_on(tmp_path):
+    """The runtime's own work is inside no peripheral's call, though a task of one's start set it off: what its owner
+    schedules from there waits like any other caller."""
+    seen: list[S] = []
+    integration, released = zigbee(), asyncio.Event()
+
+    class Brings(FakePeripheral):
+        async def start(self):
+            await super().start()
+            async with asyncio.TaskGroup() as group:
+                group.create_task(self.bring())
+            await released.wait()
+
+        async def bring(self):
+            self.provided = [ZIGBEE]
+            await self.output.peripheral_did_change_provided(self)
+
+    class Output(RecordingRuntimeOutput):
+        def peripheral_did_change_status(self, peripheral, status):
+            super().peripheral_did_change_status(peripheral, status)
+            if peripheral is integration and status.kind == K.NEEDS_STARTING:
+                self.task = asyncio.ensure_future(disable())
+
+    async def disable():
+        await runtime.disable(integration)
+        seen.append(state(runtime, integration))
+
+    output = Output()
+    runtime = await run(tmp_path, Brings("stick"), integration, output=output, settled=False)
+    await until(runtime, lambda: hasattr(output, "task"), settled=False)
+    await output.task
+    released.set()
     assert seen == [S.DISABLED]
 
 

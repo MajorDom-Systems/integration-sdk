@@ -32,8 +32,9 @@ class PeripheralOutput(Protocol):
     runtime gives every peripheral it runs the same output; a controller reports through `ControllerOutput` instead.
 
     Awaiting a call returns once the runtime acted on it, e.g. stopped what used a radio about to be flashed. From
-    inside ``start``, ``stop`` or a hook it returns at once: the runtime acts when that call returns. It acts in a task
-    of its own, so a call from a task of the peripheral's, which its ``stop`` cancels, is fine: that task just ends.
+    inside ``start``, ``stop`` or a hook, or a task that call awaits (a ``TaskGroup``'s), it returns at once: the
+    runtime acts when that call returns. It acts in a task of its own, so a call from a task the peripheral keeps
+    running, which its ``stop`` cancels before awaiting it, is fine: that task just ends.
     """
 
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
