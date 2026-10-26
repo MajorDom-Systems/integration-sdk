@@ -177,6 +177,16 @@ async def test_a_service_setting_recreates_only_that_service(tmp_path):
     assert zwave.calls == ["start"]  # what it is bound to is the same: it reconnects on its own
 
 
+async def test_the_rendered_containers_and_the_settings_are_kept_from_other_users(tmp_path):
+    keys = Service(
+        "zwave-js-server", {"environment": {"KEY": "{settings.key}"}}, provides=[Endpoint("zwave")], settings=Keys
+    )
+    await run(tmp_path, FakeCompose(), keys, FakePeripheral("zwave", [Need("zwave")]))  # its network keys
+    assert compose(tmp_path)["zwave-js-server"]["environment"] == {"KEY": "secret"}
+    for kept in (tmp_path / "data" / "peripherals" / "compose" / "compose.json", tmp_path / "data" / "state.json"):
+        assert kept.stat().st_mode & 0o777 == 0o600
+
+
 async def test_the_platform_facts_render_and_a_change_recreates_only_what_renders_them(tmp_path):
     before, containers = Platform(documents_root=tmp_path / "data" / "peripherals", region="Europe"), FakeCompose()
     app, server = matter(REGION="{platform.region}")
