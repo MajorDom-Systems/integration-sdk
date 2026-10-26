@@ -272,7 +272,9 @@ class BLEService(Peripheral):
             logger.warning(f"BLE source {name} failed to resume: {e}")
 
     async def _start_sources(self):
-        await asyncio.gather(*(self._start_source(name) for name in self._sources if not self._is_leased(name)))
+        # a lease can outlive a stop: its source starts too when it can pause, so the lease connects through it
+        names = [n for n, s in self._sources.items() if not self._is_leased(n) or isinstance(s, PausableBLESource)]
+        await asyncio.gather(*(self._start_source(name) for name in names))
 
     def _scans_passively(self) -> bool:
         return monotonic() >= self._active_until
@@ -297,6 +299,8 @@ class BLEService(Peripheral):
             if isinstance(source, ScanModeBLESource):
                 await source.set_scan_mode(not self._scans_passively())
             await source.start(self._advertisement_handler(name))
+            if isinstance(source, PausableBLESource):  # paused exactly while leased, though a lease ended while stopped
+                await (source.pause_scanning() if self._is_leased(name) else source.resume_scanning())
         except Exception as e:
             logger.warning(f"BLE source {name} failed to start: {e}")
 

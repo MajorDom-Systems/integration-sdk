@@ -196,8 +196,28 @@ async def test_a_lease_pauses_a_radio_that_can_pause_instead_of_stopping_it(radi
 
     async with ble.exclusive("AA", owner="matter") as lease:
         assert lease.source == "proxy"
-        assert proxy.calls == ["start", "pause"]
-    assert proxy.calls == ["start", "pause", "resume"]
+        assert proxy.calls == ["start", "resume", "pause"]
+    assert proxy.calls == ["start", "resume", "pause", "resume"]
+
+
+async def test_a_radio_that_can_pause_is_paused_exactly_while_leased_across_a_router_restart(radios):
+    """A lease held across a restart keeps its radio subscribed (its connects go through it) and muted; one that ended
+    while the router was stopped leaves it hearing once the router starts."""
+    ble, _, _ = radios
+    await ble.add_source(proxy := PausableFakeBLESource("proxy"))
+    proxy.advertise("AA", rssi=-10)
+    await settle()
+
+    async with ble.exclusive("AA", owner="matter"):
+        await ble.stop()
+        await ble.start()
+        assert proxy.on_advertisement is not None and proxy.calls[-1] == "pause"
+    assert proxy.calls[-1] == "resume"
+
+    async with ble.exclusive("AA", owner="matter"):
+        await ble.stop()
+    await ble.start()
+    assert proxy.on_advertisement is not None and proxy.calls[-1] == "resume"
 
 
 async def test_a_second_lease_waits_then_takes_the_next_radio(radios):
