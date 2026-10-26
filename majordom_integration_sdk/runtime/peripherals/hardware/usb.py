@@ -58,6 +58,7 @@ class Radio(Peripheral["Radio.Settings"]):
     ):
         self.name, self.path, self.drivers, self.scanner = name, path, drivers, scanner
         self.driver, self.firmware, self.params = driver, firmware, params or {}
+        self.found: dict[str, Any] = {}  # the serial settings its driver found it at, under the board's ``params``
         self.node = os.path.realpath(path)  # a container keeps the node it was created with: follow a re-enumeration
         self.held_by: str | None = None  # another program that has it open: left alone until probed
         self.is_claimed = False  # the user probed it: opened whoever holds it or whatever its USB id
@@ -70,7 +71,7 @@ class Radio(Peripheral["Radio.Settings"]):
     def provides(self) -> list[Endpoint]:
         if self.is_busy or self.held_by or self.driver is None:
             return []
-        endpoints = self.driver.serves(self.firmware, self.node, self.params)
+        endpoints = self.driver.serves(self.firmware, self.node, {**self.found, **self.params})
         if self.has_bluetooth:  # the multiprotocol container attaches it and tells its hciN
             endpoints.append(Endpoint("ble", "silabs-cpc-hci", self.node, params={"hci": None}))
         return endpoints
@@ -83,8 +84,8 @@ class Radio(Peripheral["Radio.Settings"]):
     async def recognise(self, is_asking_again: bool = False):
         """Ask the drivers which firmware it runs, each once unless ``is_asking_again``, until one tells."""
         for driver in [d for d in self.drivers() if is_asking_again or all(d is not a for a in self._asked)]:
-            if firmware := await _firmware(driver, self.path):
-                self.driver, self.firmware = driver, firmware
+            if identified := await _identified(driver, self.path):
+                self.driver, (self.firmware, self.found) = driver, identified
                 await self.check_bluetooth()
                 return
             self._asked.append(driver)
@@ -106,7 +107,8 @@ class Radio(Peripheral["Radio.Settings"]):
             try:
                 await driver.flash(self.path, firmware, self.settings.firmware_channel, FIRMWARE_CACHE)
             finally:  # whether it took or not, what ran before may be gone
-                self.firmware, self.has_bluetooth = await _firmware(driver, self.path), False
+                self.firmware, self.found = await _identified(driver, self.path) or (None, {})
+                self.has_bluetooth = False
                 await self.check_bluetooth()
                 self._remember()
 
@@ -114,7 +116,8 @@ class Radio(Peripheral["Radio.Settings"]):
         """Forget what it is and that the user probed it: whatever uses it lets go of it, and it is looked at again as
         a stick plugged in anew, or, soldered, identified again."""
         async with self._busy():
-            self.driver, self.firmware, self.has_bluetooth, self.is_claimed, self._asked = None, None, False, False, []
+            self.driver, self.firmware, self.found, self.has_bluetooth = None, None, {}, False
+            self.is_claimed, self._asked = False, []
             if self.scanner is None:
                 await self.recognise()
         if self.scanner:
@@ -231,12 +234,18 @@ class UsbScanner(Peripheral):
         known, drivers = self._known.get(radio.name, {}), {driver.name: driver for driver in self._drivers()}
         if (driver := drivers.get(known.get("driver", ""))) and (firmware := known.get("firmware")):
             radio.driver, radio.firmware, radio.has_bluetooth = driver, firmware, known.get("has_bluetooth", False)
+            radio.found = known.get("params", {})
 
     def remember(self, *radios: Radio):
         """Keep what ``radios`` are, and whether the user claimed them, across restarts."""
         for radio in radios:
             driver = radio.driver.name if radio.driver else None
-            known = {"driver": driver, "firmware": radio.firmware, "has_bluetooth": radio.has_bluetooth}
+            known = {
+                "driver": driver,
+                "firmware": radio.firmware,
+                "params": radio.found,
+                "has_bluetooth": radio.has_bluetooth,
+            }
             self._known[radio.name] = known | {"is_claimed": radio.is_claimed}
         write_json(self.platform.documents_folder(self) / "sticks.json", self._known)
 
@@ -267,14 +276,17 @@ class UsbScanner(Peripheral):
             log.exception("Following the USB sticks failed")
 
 
-async def _firmware(driver: UsbDriver, path: str) -> str | None:
-    """What ``driver`` recognises the device at ``path`` running; None when it doesn't, can't tell, or hangs."""
+async def _identified(driver: UsbDriver, path: str) -> tuple[str, dict[str, Any]] | None:
+    """What ``driver`` recognises the device at ``path`` running, and the serial settings it found it at; None when it
+    doesn't, can't tell, or hangs."""
     try:
         async with asyncio.timeout(PROBE_TIMEOUT):
-            return await driver.identify(path)
+            found = await driver.identify(path)
     except Exception as error:
         log.warning(f"{driver.name} failed to identify {path}: {_failure(error)}")
         return None
+    firmware, params = (found, {}) if isinstance(found, str) or found is None else found
+    return (firmware, dict(params)) if firmware else None
 
 
 def _failure(error: Exception) -> str:

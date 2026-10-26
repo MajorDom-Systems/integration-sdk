@@ -29,8 +29,10 @@ class UsbDriver(Peripheral):
     def provides(self) -> Sequence[Endpoint]:
         return [Endpoint(USB_DRIVER, self.name, self.name, is_shared=True, instance=self)]
 
-    async def identify(self, path: str) -> str | None:
-        """The firmware the device at ``path`` runs, or None when it isn't one of its kind."""
+    async def identify(self, path: str) -> str | tuple[str, Mapping[str, Any]] | None:
+        """The firmware the device at ``path`` runs, or None when it isn't one of its kind; with the serial settings it
+        found the device at where they may differ from the firmware's, ``("deconz", {"baud": 38400})``: the device's
+        endpoints take them."""
         return None
 
     def serves(self, firmware: str | None, path: str, params: Mapping[str, Any] | None = None) -> list[Endpoint]:

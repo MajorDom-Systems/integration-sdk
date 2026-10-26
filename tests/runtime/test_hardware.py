@@ -2,7 +2,9 @@
 
 import asyncio
 import json
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 from support import run, settle, state, until
@@ -28,17 +30,18 @@ SKYCONNECT = "usb-Nabu_Casa_SkyConnect_v1.0_1-if00"
 
 
 class Driver(UsbDriver):
-    """Recognises the sticks named in ``recognised``, recording each one it opened."""
+    """Recognises the sticks named in ``recognised``, with the serial settings it found them at where given, recording
+    each one it opened."""
 
     firmwares = {
         "zigbee-ncp": [Endpoint("zigbee", "ezsp", "{device}", params=NCP)],
         "multipan-rcp": [Endpoint("multipan", "silabs-cpc", "{device}")],
     }
 
-    def __init__(self, name: str = "silabs", **recognised: str):
+    def __init__(self, name: str = "silabs", **recognised: str | tuple[str, Mapping[str, Any]]):
         self.name, self.recognised, self.opened = name, recognised, []
 
-    async def identify(self, path: str) -> str | None:
+    async def identify(self, path: str) -> str | tuple[str, Mapping[str, Any]] | None:
         self.opened.append(Path(path).name)
         return self.recognised.get(Path(path).name)
 
@@ -81,6 +84,19 @@ async def test_each_stick_is_a_radio_serving_what_its_firmware_does(tmp_path, st
     assert (radio.name, radio.driver and radio.driver.name, radio.firmware) == ("sky", "silabs", "zigbee-ncp")
     assert integration.peripherals.endpoint("zigbee") == Endpoint("zigbee", "ezsp", "/dev/serial/by-id/sky", params=NCP)
     assert runtime.users(radio) == ["zigbee"]
+
+
+async def test_the_serial_settings_a_driver_found_a_stick_at_reach_its_endpoint_and_are_remembered(tmp_path, sticks):
+    plug(sticks, "conbee")
+    driver, integration = Driver(conbee=("zigbee-ncp", {"baud": 38400})), zigbee()
+    runtime = await run(tmp_path, UsbScanner([driver]), integration)
+    expected = Endpoint("zigbee", "ezsp", "/dev/serial/by-id/conbee", params=NCP | {"baud": 38400})
+    assert integration.peripherals.endpoint("zigbee") == expected
+
+    await runtime.stop()
+    again, integration = Driver(conbee="zigbee-ncp"), zigbee()
+    await run(tmp_path, UsbScanner([again]), integration)  # after a reboot
+    assert again.opened == [] and integration.peripherals.endpoint("zigbee") == expected
 
 
 async def test_only_known_radios_are_opened_until_asked(tmp_path, sticks):
@@ -245,7 +261,7 @@ async def test_one_rescan_at_a_time_opens_a_stick_once(tmp_path, sticks):
     at_once: list[int] = []
 
     class Slow(Driver):
-        async def identify(self, path: str) -> str | None:
+        async def identify(self, path: str) -> str | tuple[str, Mapping[str, Any]] | None:
             opening.append(path)
             at_once.append(len(opening))
             await asyncio.sleep(0.02)
