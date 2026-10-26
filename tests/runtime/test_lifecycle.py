@@ -117,13 +117,14 @@ async def test_an_optional_need_lost_or_back_is_handed_over(tmp_path):
 
     await runtime.disable(border)
     await settle(runtime)
-    assert matter.changes[-1] == PeripheralChange("thread", THREAD, None)
+    appeared = PeripheralChange("thread", None, THREAD)  # it started beside the border router, at boot
+    assert matter.changes == [appeared, PeripheralChange("thread", THREAD, None)]
     assert state(runtime, matter) == S.RUNNING
     assert runtime.unbound(matter) == {"thread": "need thread/*: otbr is disabled"}
 
     await runtime.enable(border)
     await settle(runtime)
-    assert matter.changes[-1] == PeripheralChange("thread", None, THREAD)
+    assert matter.changes == [appeared, PeripheralChange("thread", THREAD, None), appeared]
     assert matter.calls == ["start"]
 
 
