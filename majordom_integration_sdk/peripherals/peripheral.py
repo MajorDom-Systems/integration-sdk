@@ -122,7 +122,9 @@ class Peripheral[S: BaseModel = Any](Protocol):
     Subclass it for the defaults. The runtime sets ``runtime``, ``peripherals``, ``data``, ``contributor`` and
     ``settings``, its options validated by its ``Settings``. Declare them as a nested ``class Settings(BaseModel)``
     named as the type parameter, which types ``settings``: ``class Radio(Peripheral["Radio.Settings"])``. Without,
-    they are `NoSettings`; a bare ``Peripheral`` is one of any settings.
+    they are `NoSettings`; a bare ``Peripheral`` is one of any settings. A field marked read-only in its JSON schema,
+    ``channel: int = Field(11, json_schema_extra={"readOnly": True})``, shows what the peripheral fills in itself
+    (``self.settings.channel = 25``): the user sees it, and an update to another value is refused.
     """
 
     name: str  # what it is shown by

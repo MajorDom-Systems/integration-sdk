@@ -338,17 +338,23 @@ class Runtime:
         await self._act(apply)
 
     async def update_settings[S: BaseModel](self, peripheral: Peripheral[S], values: Mapping[str, Any]) -> S:
-        """Validate and keep new values of its ``Settings``, none it doesn't have; one that runs hears it
-        (`settings_did_change`), one still starting once it runs, a failed one or one that stopped by itself tries
-        again."""
+        """Validate and keep new values of its ``Settings``, none it doesn't have and no other value of a read-only one
+        than its own; one that runs hears it (`settings_did_change`), one still starting once it runs, a failed one or
+        one that stopped by itself tries again."""
         entry, model = self._entry(peripheral), peripheral.Settings
-        if unknown := sorted(values.keys() - model.model_fields.keys()):
-            extra: list[InitErrorDetails] = [
-                {"type": "extra_forbidden", "loc": (k,), "input": values[k]} for k in unknown
+        live = getattr(peripheral, "settings", None)  # none yet when the ones kept didn't validate
+        read_only = {name for name, field in model.model_fields.items() if _is_read_only(field.json_schema_extra)}
+        filled = live.model_dump(mode="json", include=read_only) if live else {}  # newer than the ones kept
+        current = self.state["settings"].get(entry.key, {}) | filled
+        unknown = sorted(values.keys() - model.model_fields.keys())
+        if changed := sorted(k for k in values.keys() & read_only if values[k] != current.get(k)) + unknown:
+            refused: list[InitErrorDetails] = [
+                {"type": "extra_forbidden" if k in unknown else "frozen_field", "loc": (k,), "input": values[k]}
+                for k in changed
             ]
-            raise ValidationError.from_exception_data(model.__name__, extra)
-        settings = model.model_validate(self.state["settings"].get(entry.key, {}) | dict(values))
-        before = getattr(peripheral, "settings", settings)  # none yet when the ones kept didn't validate
+            raise ValidationError.from_exception_data(model.__name__, refused)
+        settings = model.model_validate(current | dict(values))
+        before = live if live is not None else settings
         peripheral.settings = settings
         self.state["settings"][entry.key] = peripheral.settings.model_dump(mode="json")
         self._save()
@@ -878,6 +884,11 @@ async def _within[T](seconds: float, call: Awaitable[T], late: str) -> T:
         if timeout.expired():
             raise TimeoutError(late) from None
         raise
+
+
+def _is_read_only(schema: Any) -> bool:
+    """Whether a settings field is marked read-only in its JSON schema: its peripheral fills it in, never the user."""
+    return isinstance(schema, dict) and schema.get("readOnly") is True
 
 
 def _failure(error: BaseException) -> str:

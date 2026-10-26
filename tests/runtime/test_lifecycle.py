@@ -4,7 +4,7 @@ import asyncio
 import json
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from support import changed, run, settle, state, until
 
 from majordom_integration_sdk import Context, Endpoint, Need, NoSettings, PeripheralChange
@@ -842,6 +842,27 @@ async def test_new_settings_it_doesnt_have_are_refused(tmp_path):
     with pytest.raises(ValidationError, match="pan_id"):
         await runtime.update_settings(integration, {"channel": 15, "pan_id": 1})
     assert integration.settings == Channel() and runtime.state["settings"] == {"zigbee": {"channel": 11}}
+
+
+class Network(BaseModel):
+    channel: int = Field(11, json_schema_extra={"readOnly": True})  # the live network's, filled in by the peripheral
+    permit_join: bool = False
+
+
+async def test_a_read_only_setting_is_filled_in_by_its_peripheral_and_never_changed_by_an_update(tmp_path):
+    assert Network.model_json_schema()["properties"]["channel"]["readOnly"] is True
+    integration = FakePeripheral("zigbee", settings=Network, answer=True)
+    runtime = await run(tmp_path, integration)
+    integration.settings.channel = 25  # the network it found
+
+    with pytest.raises(ValidationError, match="frozen"):
+        await runtime.update_settings(integration, {"channel": 15})
+    assert integration.settings == Network(channel=25) and integration.changes == []
+
+    assert await runtime.update_settings(integration, {"channel": 25, "permit_join": True}) == Network(
+        channel=25, permit_join=True
+    )
+    assert integration.changes == [("settings", Network(channel=25))]
 
 
 async def test_one_that_cant_say_what_it_provides_provides_nothing(tmp_path):
