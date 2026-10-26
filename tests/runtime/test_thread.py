@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import threading
 from collections.abc import Mapping
@@ -37,12 +38,13 @@ def rest(url: str) -> Endpoint:
 @pytest.fixture
 def border_router():
     """A border router's REST API with no network until one is put, and no change of it pending: one put lands at
-    once. It refuses puts to the path ``refused`` names."""
-    state: dict[str, Any] = {"dataset": "", "pending": "", "puts": []}
+    once. It refuses puts to the path ``refused`` names, and fails each put in ``failing`` once."""
+    state: dict[str, Any] = {"dataset": "", "pending": "", "thread": "leader", "puts": [], "failing": []}
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            body = state["pending" if self.path == PENDING else "dataset"].encode()
+            read = {PENDING: state["pending"], "/node/state": json.dumps(state["thread"])}
+            body = read.get(self.path, state["dataset"]).encode()
             self.send_response(200 if body else 204)
             self.end_headers()
             self.wfile.write(body)
@@ -50,10 +52,14 @@ def border_router():
         def do_PUT(self):
             body = self.rfile.read(int(self.headers["Content-Length"])).decode()
             state["puts"].append((self.path, body))
-            if self.path == state.get("refused"):
+            if self.path == state.get("refused") or (self.path, body) in state["failing"]:
+                with contextlib.suppress(ValueError):
+                    state["failing"].remove((self.path, body))
                 self.send_response(409)
                 self.end_headers()
                 return
+            if self.path == "/node/state":
+                state["thread"] = "disabled" if body == json.dumps("disable") else "leader"
             if self.path == "/node/dataset/active" and not state.get("stuck"):
                 state["dataset"] = body if body.startswith("0e") else "0e08newnetwork"
             elif self.path == PENDING:
@@ -97,6 +103,21 @@ async def test_joins_the_given_network_in_place_of_another_it_has(border_router)
     state["dataset"] = OTHER  # its container formed one before the hub's was known
     await join_network(url, HUB)
     assert state["puts"] == [DISABLE, ("/node/dataset/active", HUB), ENABLE]  # written only while Thread is off
+
+
+async def test_a_join_whose_enable_failed_once_turns_thread_on_when_tried_again(border_router):
+    url, state = border_router
+    state["dataset"], state["failing"] = OTHER, [ENABLE]  # otbr-agent busy a moment
+    await join_network(url, HUB)
+    assert state["puts"] == [DISABLE, ("/node/dataset/active", HUB), ENABLE, ENABLE]
+    assert state["thread"] == "leader"
+
+
+async def test_a_forming_whose_enable_failed_once_turns_thread_on_when_tried_again(border_router):
+    url, state = border_router
+    state["thread"], state["failing"] = "disabled", [ENABLE]  # no network yet: Thread is off
+    await join_network(url, None, patience=0)
+    assert state["puts"][-2:] == [ENABLE, ENABLE] and state["thread"] == "leader"
 
 
 async def test_keeps_the_given_network_after_it_moved(border_router):

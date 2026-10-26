@@ -198,7 +198,7 @@ async def move_channel(url: str, channel: int, patience: float = FORM_PATIENCE):
 async def join_network(url: str, dataset: str | None, patience: float = FORM_PATIENCE):
     """Have the border router at ``url`` join the network of ``dataset`` (its active dataset, hex TLVs) in place of
     another one it has, or once it has answered for ``patience`` seconds without one; with no ``dataset``, form a new
-    network then — once."""
+    network then — once. Thread is on once it returns."""
 
     def put(is_running: bool):
         if is_running:  # the active dataset is written only while Thread is off
@@ -207,6 +207,9 @@ async def join_network(url: str, dataset: str | None, patience: float = FORM_PAT
             _call(url, "PUT", "/node/dataset/active", dataset)
         else:
             _call(url, "PUT", "/node/dataset/active", json.dumps({"NetworkName": "MajorDom"}), "application/json")
+        enable()
+
+    def enable():
         _call(url, "PUT", "/node/state", json.dumps("enable"), "application/json")
 
     answered = 0.0
@@ -215,6 +218,8 @@ async def join_network(url: str, dataset: str | None, patience: float = FORM_PAT
             if active := await asyncio.to_thread(_call, url, "GET", "/node/dataset/active"):
                 if dataset and _tlvs(active)[_EXTENDED_PAN_ID] != _tlvs(dataset)[_EXTENDED_PAN_ID]:
                     await asyncio.to_thread(put, True)
+                elif "disabled" in await asyncio.to_thread(_call, url, "GET", "/node/state"):
+                    await asyncio.to_thread(enable)  # a join or a forming whose enable failed, tried again
                 return
             answered += POLL
             if answered > patience:
