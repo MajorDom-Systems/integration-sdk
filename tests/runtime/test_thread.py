@@ -176,6 +176,14 @@ async def test_a_standalone_router_keeps_the_channel_of_the_network_it_joins(bor
     assert PENDING not in [path for path, _ in state["puts"]]
 
 
+def test_a_move_is_stamped_after_the_network_it_moves_with_the_clock_behind(monkeypatch):
+    monkeypatch.setattr(services.time, "time", lambda: 1000)  # a Pi without a clock of its own, before NTP
+    stamped = (2_000_000_000 << 16).to_bytes(8).hex()  # by an earlier move, with the clock right
+    moved = services._tlvs(services._moved(f"0e08{stamped}000300000f0208dead00beef00cafe", 20))
+    assert int.from_bytes(moved[services._ACTIVE_TIMESTAMP]) >> 16 == 2_000_000_001  # newer: the devices take it
+    assert moved[services._PENDING_TIMESTAMP] == moved[services._ACTIVE_TIMESTAMP]
+
+
 async def test_learns_the_network_only_once_a_channel_move_landed(border_router):
     url, state = border_router
     moved = dataset("dead00beef00cafe", channel=15)

@@ -244,7 +244,11 @@ def _channel(dataset: str) -> int:
 
 def _moved(active: str, channel: int) -> str:
     """A pending dataset moving the network of ``active`` to ``channel`` in `MOVE_DELAY` ms."""
-    now = (int(time.time()) << 16).to_bytes(8)  # a timestamp: seconds, then no ticks and not authoritative
+    tlvs = _tlvs(active)
+    # newer than the network's own, which a clock still behind (no RTC, before NTP) wouldn't be: seconds, then no
+    # ticks and not authoritative
+    seconds = max(int(time.time()), (int.from_bytes(tlvs.get(_ACTIVE_TIMESTAMP, b"")) >> 16) + 1)
+    now = (seconds << 16).to_bytes(8)
     moved = {_CHANNEL: b"\0" + channel.to_bytes(2), _ACTIVE_TIMESTAMP: now, _PENDING_TIMESTAMP: now}
-    tlvs = _tlvs(active) | moved | {_DELAY_TIMER: MOVE_DELAY.to_bytes(4)}
+    tlvs = tlvs | moved | {_DELAY_TIMER: MOVE_DELAY.to_bytes(4)}
     return b"".join(bytes([kind, len(value)]) + value for kind, value in tlvs.items()).hex()
