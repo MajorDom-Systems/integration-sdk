@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,7 @@ import pytest
 from pydantic import BaseModel
 from support import run, settle, state, until
 
-from majordom_integration_sdk import Context, Endpoint, Need, Service
+from majordom_integration_sdk import Endpoint, Need, Platform, Service
 from majordom_integration_sdk.runtime import PeripheralState, PeripheralStatus
 from majordom_integration_sdk.runtime import StatusKind as K
 from majordom_integration_sdk.runtime.peripherals.services import builtin
@@ -93,13 +94,13 @@ async def test_a_multipan_stick_serves_zigbee_and_matter_through_one_container(t
 
 
 async def test_learning_the_thread_network_recreates_no_border_router(tmp_path):
-    network, containers = Context(thread_dataset="0e08hub"), FakeCompose()
+    containers = FakeCompose()
+    network = Platform(documents_root=tmp_path / "data" / "peripherals", thread_dataset="0e08hub")
     peripherals = (host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol(), zigbee())
-    runtime = await run(tmp_path, containers, *peripherals, context=lambda: network)
+    runtime = await run(tmp_path, containers, *peripherals, platform=network)
     applied = len(containers.calls)
 
-    before, network = network, Context(thread_dataset="0e08learned")  # provisioned onto it instead
-    await runtime.context_did_change(before)
+    await runtime.update_platform(replace(network, thread_dataset="0e08learned"))  # provisioned onto it instead
     await settle(runtime)
     assert containers.calls[applied:] == []
 
@@ -116,11 +117,11 @@ async def test_split_radios_use_direct_zigbee_and_a_standalone_border_router(tmp
     assert compose(tmp_path)["otbr"]["environment"]["OT_RCP_DEVICE"] == rcp_url
 
 
-async def test_a_container_keeps_its_data_in_its_peripherals_folder(tmp_path):
+async def test_a_container_keeps_its_data_in_its_documents_folder(tmp_path):
     otbr, matter = builtin.otbr(), FakePeripheral("matter", [Need("thread", ["otbr-rest"])])
     await run(tmp_path, FakeCompose(), host(), stick("rcp", RCP), otbr, matter)
     assert compose(tmp_path)["otbr"]["volumes"][0] == f"{tmp_path}/data/peripherals/otbr:/data"
-    assert otbr.data.is_dir()
+    assert (tmp_path / "data" / "peripherals" / "otbr").is_dir()
 
 
 async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
@@ -176,46 +177,45 @@ async def test_a_service_setting_recreates_only_that_service(tmp_path):
     assert zwave.calls == ["start"]  # what it is bound to is the same: it reconnects on its own
 
 
-async def test_the_context_renders_and_a_change_recreates_only_what_renders_it(tmp_path):
-    region, containers = Context(region="Europe"), FakeCompose()
-    app, server = matter(REGION="{context.region}")
+async def test_the_platform_facts_render_and_a_change_recreates_only_what_renders_them(tmp_path):
+    before, containers = Platform(documents_root=tmp_path / "data" / "peripherals", region="Europe"), FakeCompose()
+    app, server = matter(REGION="{platform.region}")
     plain = Service("plain", {"image": "plain"}, [Need("ip")], [Endpoint("plain")])
     user = FakePeripheral("user", [Need("plain")], answer=True)
-    runtime = await run(tmp_path, containers, host(), server, app, plain, user, context=lambda: region)
+    runtime = await run(tmp_path, containers, host(), server, app, plain, user, platform=before)
     assert compose(tmp_path)["matterjs-server"]["environment"]["REGION"] == "Europe"
     applied = len(containers.calls)
 
-    before, region = region, Context(region="USA")
-    await runtime.context_did_change(before)
+    await runtime.update_platform(replace(before, region="USA"))
     await settle(runtime)
     assert compose(tmp_path)["matterjs-server"]["environment"]["REGION"] == "USA"
     assert len([call for call in containers.calls[applied:] if "-f" in call]) == 2  # without it, then with it again
     assert runtime.status(server).state == PeripheralState.RUNNING
-    assert app.changes == user.changes == [("context", before)]  # the integrations hear it too
+    assert app.changes == user.changes == [("platform", before)]  # the integrations hear it too
 
 
 async def test_a_service_renders_only_when_it_is_created(tmp_path):
     class InPlace(Service):
-        async def context_did_change(self, before: Context) -> bool:
+        async def platform_facts_did_change(self, before: Platform) -> bool:
             return True  # it takes the region over its API
 
-    region = Context(region="Europe")
+    europe = Platform(documents_root=tmp_path / "data" / "peripherals", region="Europe")
     radio = InPlace(
-        "radio", {"image": "radio", "environment": {"REGION": "{context.region}"}}, [Need("ip")], [Endpoint("r")]
+        "radio", {"image": "radio", "environment": {"REGION": "{platform.region}"}}, [Need("ip")], [Endpoint("r")]
     )
     plain = Service("plain", {"image": "plain"}, [Need("ip")], [Endpoint("plain")])
     user = FakePeripheral("user", [Need("r"), Need("plain")])
-    runtime = await run(tmp_path, FakeCompose(), host(), radio, plain, user, context=lambda: region)
+    runtime = await run(tmp_path, FakeCompose(), host(), radio, plain, user, platform=europe)
 
-    before, region = region, Context(region="USA")
-    await runtime.context_did_change(before)
+    await runtime.update_platform(replace(europe, region="USA"))
     await runtime.restart(plain)
     await settle(runtime)
     assert compose(tmp_path)["radio"]["environment"]["REGION"] == "Europe"  # not recreated behind its back
 
 
-async def test_a_container_still_starting_is_recreated_once_it_serves_only_if_the_context_renders_it(tmp_path):
-    gate, region, containers, created = asyncio.Event(), Context(region="Europe"), FakeCompose(), set()
+async def test_a_container_still_starting_is_recreated_once_it_serves_only_if_the_facts_render_it(tmp_path):
+    gate, containers, created = asyncio.Event(), FakeCompose(), set()
+    europe = Platform(documents_root=tmp_path / "data" / "peripherals", region="Europe")
 
     class Slow(Service):
         async def is_healthy(self) -> bool:
@@ -223,16 +223,15 @@ async def test_a_container_still_starting_is_recreated_once_it_serves_only_if_th
             await gate.wait()
             return True
 
-    environment = {"REGION": "{context.region}"}
+    environment = {"REGION": "{platform.region}"}
     renders = Slow("renders", {"image": "r", "environment": environment}, [Need("ip")], [Endpoint("r")])
     plain = Slow("plain", {"image": "plain"}, [Need("ip")], [Endpoint("plain")])
     user = FakePeripheral("user", [Need("r"), Need("plain")])
-    runtime = await run(tmp_path, containers, host(), renders, plain, user, settled=False, context=lambda: region)
+    runtime = await run(tmp_path, containers, host(), renders, plain, user, settled=False, platform=europe)
     await until(runtime, lambda: created == {"renders", "plain"}, settled=False)
     applied = len(containers.calls)
 
-    before, region = region, Context(region="USA")
-    await runtime.context_did_change(before)
+    await runtime.update_platform(replace(europe, region="USA"))
     gate.set()
     await settle(runtime)
     assert compose(tmp_path)["renders"]["environment"]["REGION"] == "USA"

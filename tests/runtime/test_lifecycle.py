@@ -2,12 +2,13 @@
 
 import asyncio
 import json
+from dataclasses import replace
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
 from support import changed, run, settle, state, until
 
-from majordom_integration_sdk import Context, Endpoint, Need, NoSettings, PeripheralChange
+from majordom_integration_sdk import Endpoint, Need, NoSettings, PeripheralChange, Platform
 from majordom_integration_sdk.runtime import MemoryDisabledStore, PeripheralStatus, Runtime
 from majordom_integration_sdk.runtime import PeripheralState as S
 from majordom_integration_sdk.runtime import StatusKind as K
@@ -472,12 +473,22 @@ async def test_what_it_brings_along_is_known_under_its_key(tmp_path):
     assert (proxy.key, proxy.name) == ("esphome/aa", "aa") and runtime.peripheral("esphome/aa") is proxy
 
 
-async def test_each_one_keeps_its_data_in_a_folder_of_its_own(tmp_path):
+async def test_each_one_keeps_its_documents_in_a_folder_of_its_own(tmp_path):
     proxy = FakePeripheral("aa")
     esphome = FakePeripheral("esphome", provides=[proxy])
-    await run(tmp_path, esphome)
-    assert esphome.data == tmp_path / "data" / "peripherals" / "esphome"
-    assert proxy.data == tmp_path / "data" / "peripherals" / "esphome" / "aa"
+    runtime = await run(tmp_path, esphome)
+    assert esphome.platform is proxy.platform is runtime.platform  # one per host
+    assert esphome.platform.documents_folder(esphome) == tmp_path / "data" / "peripherals" / "esphome"
+    assert proxy.platform.documents_folder(proxy) == tmp_path / "data" / "peripherals" / "esphome" / "aa"
+    assert (tmp_path / "data" / "peripherals" / "esphome" / "aa").is_dir()  # once used
+
+
+async def test_every_one_runs_on_the_runtimes_platform(tmp_path):
+    platform = Platform(documents_root=tmp_path / "documents", region="Europe")
+    given = FakePeripheral("given")
+    given.platform = Platform(documents_root=tmp_path / "another")  # e.g. a controller built with another one
+    await run(tmp_path, given, platform=platform)
+    assert given.platform is platform
 
 
 async def test_the_owner_hears_when_one_goes(tmp_path):
@@ -694,7 +705,7 @@ async def test_one_replaced_by_another_of_its_name_goes_and_the_other_runs(tmp_p
     assert state(runtime, new) == S.RUNNING and runtime.peripheral("esphome/aa") is new
 
 
-# settings and context
+# settings and platform facts
 
 
 async def test_settings_are_kept_and_handed_over_or_restart_it(tmp_path):
@@ -728,17 +739,19 @@ async def test_one_without_settings_takes_none(tmp_path):
     assert runtime.state["settings"] == {}  # nothing kept for it
 
 
-async def test_a_changed_context_is_handed_over_or_restarts_it(tmp_path):
+async def test_changed_facts_replace_the_platform_and_are_handed_over_or_restart_it(tmp_path):
     handles, restarts = FakePeripheral("handles", answer=True), FakePeripheral("restarts")
     runtime = await run(tmp_path, handles, restarts)
+    before, europe = runtime.platform, replace(runtime.platform, region="Europe")
 
-    await runtime.context_did_change(Context(region="Europe"))
+    await runtime.update_platform(europe)
     await settle(runtime)
-    assert handles.changes == restarts.changes == [("context", Context(region="Europe"))]
+    assert runtime.platform is handles.platform is restarts.platform is europe
+    assert handles.changes == restarts.changes == [("platform", before)]
     assert (handles.calls, restarts.calls) == (["start"], ["start", "stop", "start"])
 
 
-async def test_a_changed_context_reaches_one_still_starting_once_it_runs(tmp_path):
+async def test_changed_facts_reach_one_still_starting_once_it_runs(tmp_path):
     gate = asyncio.Event()
 
     class Slow(FakePeripheral):
@@ -750,12 +763,13 @@ async def test_a_changed_context_reaches_one_still_starting_once_it_runs(tmp_pat
     runtime = await run(tmp_path, handles, restarts, settled=False)
     await until(runtime, lambda: state(runtime, handles) == state(runtime, restarts) == S.STARTING, settled=False)
 
-    await runtime.context_did_change(Context(region="Europe"))  # it may have read the one before
-    await runtime.context_did_change(Context(region="USA"))
-    assert handles.changes == restarts.changes == []
+    before = runtime.platform
+    await runtime.update_platform(replace(before, region="Europe"))  # it may have read the one before
+    await runtime.update_platform(replace(before, region="USA"))
+    assert handles.changes == restarts.changes == [] and handles.platform.region == "USA"
     gate.set()
     await settle(runtime)
-    assert handles.changes == restarts.changes == [("context", Context(region="Europe"))]  # once, since what it read
+    assert handles.changes == restarts.changes == [("platform", before)]  # once, since what it read
     assert (handles.calls, restarts.calls) == (["start"], ["start", "stop", "start"])
     assert state(runtime, handles) == state(runtime, restarts) == S.RUNNING
 
@@ -777,14 +791,21 @@ async def test_new_settings_reach_one_still_starting_once_it_runs(tmp_path):
     assert state(runtime, handles) == state(runtime, restarts) == S.RUNNING
 
 
-async def test_any_peripheral_reads_the_context_and_tells_what_it_learned(tmp_path):
-    output, region = RecordingRuntimeOutput(), Context(region="Europe")
-    router = FakePeripheral("my-border-router")  # one of the user's own
-    await run(tmp_path, router, output=output, context=lambda: region)
-    assert router.runtime.context == region
+async def test_any_peripheral_reads_the_facts_and_what_it_learned_replaces_the_platform(tmp_path):
+    output, europe = RecordingRuntimeOutput(), Platform(documents_root=tmp_path, region="Europe")
+    router, matter = FakePeripheral("my-border-router"), FakePeripheral("matter", answer=True)  # one of the user's own
+    runtime = await run(tmp_path, router, matter, output=output, platform=europe)
+    assert router.platform.region == "Europe"
 
     await router.runtime.peripheral_did_learn(router, {"thread_dataset": "0e08"})
-    assert output.learned == [("my-border-router", {"thread_dataset": "0e08"})]
+    await settle(runtime)
+    assert output.learned == [("my-border-router", {"thread_dataset": "0e08"})]  # for the host to keep
+    assert matter.platform == runtime.platform == replace(europe, thread_dataset="0e08")
+    assert matter.changes == [("platform", europe)]
+
+    await router.runtime.peripheral_did_learn(router, {"thread_dataset": "0e08"})  # again, at the next boot
+    await settle(runtime)
+    assert matter.changes == [("platform", europe)]  # nothing changed
 
 
 async def test_one_added_while_it_runs_runs_and_one_removed_is_gone(tmp_path):

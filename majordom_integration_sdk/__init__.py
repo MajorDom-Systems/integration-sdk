@@ -20,7 +20,6 @@ from importlib.metadata import version
 
 from majordom_integration_sdk.controller import (
     AbstractController,
-    Context,
     ControllerOutput,
     IntegrationError,
     Platform,
@@ -74,6 +73,5 @@ __all__ = [
     "Service",
     "UsbDriver",
     "PeripheralChange",
-    "Context",
     "WifiCredentials",
 ]

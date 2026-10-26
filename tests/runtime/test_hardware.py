@@ -133,7 +133,7 @@ async def test_a_forgotten_stick_is_looked_at_again_as_one_plugged_in_anew(tmp_p
     await settle(runtime)
     assert driver.opened == ["sky", "arduino", "sky"]
     assert (sky.firmware, arduino.firmware, arduino.is_claimed, arduino.provides) == ("zigbee-ncp", None, False, [])
-    assert json.loads((scanner.data / "sticks.json").read_text()).keys() == {"sky"}
+    assert json.loads((scanner.platform.documents_folder(scanner) / "sticks.json").read_text()).keys() == {"sky"}
 
 
 async def test_a_forgotten_soldered_radio_is_identified_again(tmp_path):

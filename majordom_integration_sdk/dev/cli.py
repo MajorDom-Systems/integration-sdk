@@ -25,6 +25,7 @@ import logging
 import shutil
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -124,15 +125,15 @@ class _CliSession:
         await self._controller.start_pairing_window(seconds)
 
     async def list_devices(self):
-        async with self._controller.device_repository() as repo:
+        async with self._controller.platform.device_repository(self._controller) as repo:
             return await repo.get_all()
 
     async def device_state(self, device_id: UUID):
-        async with self._controller.device_repository() as repo:
+        async with self._controller.platform.device_repository(self._controller) as repo:
             return await repo.state(device_id)
 
     async def _device(self, device_id: UUID):
-        async with self._controller.device_repository() as repo:
+        async with self._controller.platform.device_repository(self._controller) as repo:
             device = await repo.get(device_id)
         return self._controller.device_type.model_validate(device) if device else None
 
@@ -156,7 +157,7 @@ class _CliSession:
 
     async def control(self, device_id: UUID, parameter_id: UUID, value: object) -> str:
         command = DeviceCommand(device_id=device_id, parameter_id=parameter_id, value=value)
-        async with self._controller.device_repository() as repo:
+        async with self._controller.platform.device_repository(self._controller) as repo:
             device = await repo.get(command.device_id)
             if not device:
                 return f"No device {device_id}"
@@ -233,7 +234,7 @@ class _CliControllerOutput(ControllerOutput):
 
     async def controller_did_connect_device(self, controller, device_id):
         _print(f"[connected] {device_id}")
-        async with controller.device_repository() as repo:
+        async with controller.platform.device_repository(controller) as repo:
             if device := await repo.get(device_id):
                 device.last_seen = datetime.now()
                 device.available = True
@@ -241,7 +242,7 @@ class _CliControllerOutput(ControllerOutput):
 
     async def controller_did_lose_device(self, controller, device_id):
         _print(f"[lost] {device_id}")
-        async with controller.device_repository() as repo:
+        async with controller.platform.device_repository(controller) as repo:
             if device := await repo.get(device_id):
                 device.available = False
                 device.last_error = f"Device is no longer connected to the {controller.name} network"
@@ -249,7 +250,7 @@ class _CliControllerOutput(ControllerOutput):
 
     async def controller_did_receive_events(self, controller, events):
         events = list(events)
-        async with controller.device_repository() as repo:
+        async with controller.platform.device_repository(controller) as repo:
             for event in events:
                 if not isinstance(event, DeviceParameterChange):
                     continue
@@ -288,7 +289,7 @@ async def run_cli(
     """Start what ``integration`` exports (its ``peripherals``: the controller and the servers it needs) under the
     runtime, or only its controller with the ``peripherals`` you bind, with a local repository and drop into an
     interactive prompt. ``platform`` overrides
-    fields of `Platform` (``context``); ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`).
+    fields of `Platform` (``region``); ``runtime_peripherals`` and ``pinned`` go to the runtime (`build_runtime`).
     ``db_path`` file-backs the repository so paired devices survive restarts; omit it for in-memory. ``exit`` / Ctrl-D
     leaves the prompt and stops everything cleanly."""
     # Capture all logs + warnings into a buffer for the duration of the session so they don't break
@@ -304,9 +305,9 @@ async def run_cli(
 
     loop = asyncio.get_running_loop()
 
-    # Identity is class-level, so the repository/documents folder are scoped before construction;
-    # the output also persists state.
-    base = build_platform(storage_root=storage_root, db_path=db_path, output=_CliControllerOutput()).copy(**platform)
+    # The output also persists state.
+    base = build_platform(storage_root=storage_root, db_path=db_path, output=_CliControllerOutput())
+    base = replace(base, **platform)
     runner = _runner(integration(base), storage_root, peripherals, runtime_peripherals, pinned)
     controller = runner.controller
     session = _CliSession(controller, runner.runtime)

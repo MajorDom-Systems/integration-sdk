@@ -3,12 +3,12 @@ call builds new ones, so no two runtimes share a peripheral.
 
 Under the Hub, hardware first (the order given is the order of preference)::
 
-    Runtime(data, [Pinned(*mine), FixedPeripherals(*soldered), *default_peripherals(), *integrations], context=...)
+    Runtime(data, [Pinned(*mine), FixedPeripherals(*soldered), *default_peripherals(), *integrations], platform=...)
 
 In library mode, one integration with what it needs::
 
-    Runtime(data, [*default_peripherals(), HueController(platform)])
-    Runtime(data, [HostNetwork(), ZeroconfDiscoveryService(), HueController(platform)])
+    Runtime(data, [*default_peripherals(), HueController(platform)], platform=platform)
+    Runtime(data, [HostNetwork(), ZeroconfDiscoveryService(), HueController(platform)], platform=platform)
 """
 
 from __future__ import annotations

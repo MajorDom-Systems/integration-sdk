@@ -174,7 +174,7 @@ class UsbScanner(Peripheral):
         return list(self._radios)
 
     async def start(self):
-        self._known = read_json(self.data / "sticks.json")
+        self._known = read_json(self.platform.documents_folder(self) / "sticks.json")
         await self._scan()
         self._spawn(self._watch())
 
@@ -234,12 +234,12 @@ class UsbScanner(Peripheral):
             driver = radio.driver.name if radio.driver else None
             known = {"driver": driver, "firmware": radio.firmware, "has_bluetooth": radio.has_bluetooth}
             self._known[radio.name] = known | {"is_claimed": radio.is_claimed}
-        write_json(self.data / "sticks.json", self._known)
+        write_json(self.platform.documents_folder(self) / "sticks.json", self._known)
 
     async def forget(self, radio: Radio):
         """Forget what ``radio`` is, and look at it again as a stick plugged in anew."""
         self._known.pop(radio.name, None)
-        write_json(self.data / "sticks.json", self._known)
+        write_json(self.platform.documents_folder(self) / "sticks.json", self._known)
         await self._rescan()
 
     async def _watch(self):

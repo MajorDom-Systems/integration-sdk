@@ -28,13 +28,13 @@ _CHANNEL, _EXTENDED_PAN_ID, _ACTIVE_TIMESTAMP, _PENDING_TIMESTAMP, _DELAY_TIMER 
 
 
 class _BorderRouter[S: BaseModel = Any](Service[S]):
-    """On the hub's Thread network, ``context.thread_dataset``: set up over its REST API to join it, or to form one when
-    there is none yet; it tells the network it has once it serves. The network is never rendered into its container,
-    so learning it recreates nothing."""
+    """On the hub's Thread network, ``platform.thread_dataset``: set up over its REST API to join it, or to form one
+    when there is none yet; it tells the network it has once it serves. The network is never rendered into its
+    container, so learning it recreates nothing."""
 
     async def provision(self, endpoint: Endpoint):
         if endpoint.dialect == _OTBR_REST.dialect:
-            await join_network(endpoint.url, self.runtime.context.thread_dataset, FORM_PATIENCE)
+            await join_network(endpoint.url, self.platform.thread_dataset, FORM_PATIENCE)
 
     async def start(self):
         await super().start()

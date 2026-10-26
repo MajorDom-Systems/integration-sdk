@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from majordom_integration_sdk import Context, Endpoint, Peripherals, Service
+from majordom_integration_sdk import Endpoint, Peripherals, Service
 from majordom_integration_sdk.runtime.peripherals.services import builtin as services
 from majordom_integration_sdk.runtime.peripherals.services.builtin import (
     active_dataset,
@@ -16,7 +16,7 @@ from majordom_integration_sdk.runtime.peripherals.services.builtin import (
     otbr,
     silabs_multiprotocol,
 )
-from majordom_integration_sdk.testing import RecordingPeripheralOutput
+from majordom_integration_sdk.testing import RecordingPeripheralOutput, build_test_platform
 
 
 def dataset(network: str, channel: int = 15) -> str:
@@ -114,8 +114,8 @@ async def test_a_border_router_is_provisioned_onto_the_hubs_thread_network(borde
     url, state = border_router
     monkeypatch.setattr(services, "FORM_PATIENCE", 0)
     state["dataset"] = formed  # the multiprotocol container forms one of its own, as it warms the radio up
-    service, output = router(), RecordingPeripheralOutput()
-    service.runtime, output.context = output, Context(thread_dataset=HUB)  # learned from the stick before
+    service = router()
+    service.platform = build_test_platform(thread_dataset=HUB)  # learned from the stick before
     await asyncio.wait_for(service.provision(Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999")), 1)
     await asyncio.wait_for(service.provision(rest(url)), 3)
     assert await active_dataset(url) == HUB
@@ -125,11 +125,11 @@ async def test_a_border_router_is_provisioned_onto_the_hubs_thread_network(borde
 async def test_a_multiprotocol_router_moves_the_network_it_joins_to_zigbees_channel(border_router):
     url, state = border_router
     state["dataset"] = dataset("0123456789abcdef", channel=15)  # its container formed it on Zigbee's channel
-    service, output = silabs_multiprotocol(), RecordingPeripheralOutput()
-    service.runtime, output.context = output, Context(thread_dataset=dataset("dead00beef00cafe", channel=20))
+    service = silabs_multiprotocol()
+    service.platform = build_test_platform(thread_dataset=dataset("dead00beef00cafe", channel=20))
     await asyncio.wait_for(service.provision(rest(url)), 3)
 
-    assert state["dataset"] == output.context.thread_dataset  # joined
+    assert state["dataset"] == service.platform.thread_dataset  # joined
     pending = state["pending"]  # the devices on it follow: a new active and a pending timestamp, and a delay
     assert "000300000f" in pending and "0208dead00beef00cafe" in pending and "3308" in pending and "3404" in pending
 
@@ -137,8 +137,8 @@ async def test_a_multiprotocol_router_moves_the_network_it_joins_to_zigbees_chan
 async def test_a_standalone_router_keeps_the_channel_of_the_network_it_joins(border_router):
     url, state = border_router
     state["dataset"] = dataset("0123456789abcdef", channel=15)
-    service, output = otbr(), RecordingPeripheralOutput()
-    service.runtime, output.context = output, Context(thread_dataset=dataset("dead00beef00cafe", channel=20))
+    service = otbr()
+    service.platform = build_test_platform(thread_dataset=dataset("dead00beef00cafe", channel=20))
     await asyncio.wait_for(service.provision(rest(url)), 3)
     assert state["pending"] == ""
 

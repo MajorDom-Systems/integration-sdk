@@ -87,6 +87,7 @@ def runner(tmp_path, router: FakeBLERouter, pinned=()) -> tuple[Runner, _Recordi
         tmp_path / "runtime",
         runtime_peripherals=[router, FakeSSDP()],
         pinned=pinned,
+        platform=controller.platform,
     )
     return Runner(controller, runtime), controller, runtime
 
@@ -104,9 +105,9 @@ def test_build_platform_defaults_to_memory_and_logging_output(tmp_path):
     assert isinstance(build_platform(storage_root=tmp_path).output, LoggingControllerOutput)
 
 
-def test_build_platform_roots_every_integrations_documents_folder(tmp_path):
+def test_build_platform_roots_every_peripherals_documents_folder(tmp_path):
     platform = build_platform(storage_root=tmp_path)
-    assert platform.documents_folder == tmp_path and tmp_path.is_dir()
+    assert platform.documents_root == tmp_path and tmp_path.is_dir()
 
 
 def test_build_platform_honors_custom_output(tmp_path):
@@ -202,7 +203,7 @@ async def test_run_controller_with_peripherals_given_runs_without_the_runtime(tm
     controller = _RecordingController.instances[-1]
     assert controller.started and controller.stopped
     assert controller.peripherals.endpoint("zwave") == ZWAVE
-    assert controller.documents_folder == tmp_path / "dev-example"  # under the platform's, as by the Hub
+    assert controller.platform.documents_folder(controller) == tmp_path / "dev-example"  # by its key, as by the Hub
     assert not (tmp_path / "runtime").exists()
 
 
@@ -219,6 +220,7 @@ async def test_run_controller_starts_and_stops_cleanly_under_the_runtime(tmp_pat
             storage_root=tmp_path,
             runtime_peripherals=[FakeSSDP()],
             pinned=[ZWAVE],
+            region="Europe",
         )
     )
 
@@ -232,3 +234,4 @@ async def test_run_controller_starts_and_stops_cleanly_under_the_runtime(tmp_pat
     controller = _RecordingController.instances[-1]
     assert controller.started and controller.stopped
     assert controller.peripherals.endpoint("zwave") == ZWAVE  # bound by the runtime
+    assert controller.platform.region == "Europe"  # the platform it was given, its overrides too

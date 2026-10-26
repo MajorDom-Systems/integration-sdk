@@ -8,17 +8,14 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from contextlib import AbstractAsyncContextManager
-from pathlib import Path
 from typing import Any, cast, final
 from uuid import UUID, uuid5
 
 from pydantic import BaseModel
 from slugify import slugify
 
-from majordom_integration_sdk.controller.platform import Context, Platform
+from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.peripherals import Need, Peripheral, PeripheralChange
-from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtocol
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 
@@ -49,7 +46,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
     Defines the interface the Hub uses to interact with an integration — the Hub instantiates the subclass and drives it by calling these methods.
 
     A controller is a `Peripheral` like any other: the runtime starts it once its required needs are bound to what
-    runs, stops it when one is lost, and hands moved needs, settings and context over to its hooks. Its integration
+    runs, stops it when one is lost, and hands moved needs, settings and platform facts over to its hooks. Its integration
     package exports it next to the servers it needs, which run while it does, given the platform the Hub builds for
     the integration::
 
@@ -58,9 +55,9 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
 
     It holds:
 
-    - ``self.platform``: the app's services (output, device repository, documents folder, context), the same for every
-      integration, given to its constructor: ``self.device_repository()`` and ``self.documents_folder`` scope them to
-      it;
+    - ``self.platform``: the host, the same for every peripheral, given to its constructor: its facts (``region``,
+      ``wifi``, ``thread_dataset``), its device repository and a documents folder, scoped to the controller
+      (``self.platform.device_repository(self)``, ``self.platform.documents_folder(self)``), and the output;
     - ``self.settings``: its validated ``Settings``, declared as a nested ``class Settings(BaseModel)`` named as the
       last type parameter, ``AbstractController[Device, Parameter, "HueController.Settings"]``; `NoSettings` without;
     - ``self.peripherals``: the endpoints its needs are bound to (``endpoint()``, ``endpoints()``, ``instance()``).
@@ -76,8 +73,6 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
         # Auto-derive `name` from the class name unless the subclass set one explicitly.
         if "name" not in cls.__dict__:
             cls.name = _titleize(cls.__name__)
-
-    platform: Platform
 
     def __init__(self, platform: Platform, *, settings: TSettings | None = None):
         """``settings`` hold until the user changes them (the runtime keeps them): the defaults of ``Settings`` without.
@@ -110,8 +105,8 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
             name = "ZigBee"
 
     It identifies the integration, so it's a constant of the class rather than per-instance
-    state: the Hub scopes the integration's devices and documents folder by it and `slug()`,
-    and the runtime knows the controller by its slug, its ``key``.
+    state: its `slug()` is the controller's ``key``, which the runtime knows it by and the
+    platform scopes its devices (``Device.integration``) and documents folder by.
     """
 
     @property
@@ -142,8 +137,8 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
         """
         return False
 
-    async def context_did_change(self, before: Context) -> bool:
-        """Hub-wide facts changed (region, Wi-Fi, Thread network); ``platform.context`` holds the new ones.
+    async def platform_facts_did_change(self, before: Platform) -> bool:
+        """The host's facts changed (region, Wi-Fi, Thread network); ``self.platform`` holds the new ones.
 
         Return True (the default) when they don't concern it or were applied in place; False restarts the
         integration. One that reads them only when it acts (pairing a device) needs no override.
@@ -268,22 +263,6 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
     def parameter_uuid(self, device_uuid: UUID, parameter_id: str) -> UUID:
         """uuid of the parameter based on an arbitrary string identifier"""
         return uuid5(device_uuid, parameter_id)
-
-    @final
-    @property
-    def documents_folder(self) -> Path:
-        """Its own folder for files that don't belong in the device database: by its slug, under the platform's."""
-        folder = self.platform.documents_folder / self.name_slug
-        folder.mkdir(parents=True, exist_ok=True)
-        return folder
-
-    @final
-    def device_repository(self) -> AbstractAsyncContextManager[DeviceRepositoryProtocol]:
-        """One unit of work on the device repository, scoped to its own devices::
-
-        async with self.device_repository() as repository: ...
-        """
-        return self.platform.make_device_repository(self.name)
 
     # def add_service_coroutine(self, coroutine: Callable[[], Awaitable]): ... # FUTURE
 

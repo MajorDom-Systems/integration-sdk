@@ -12,7 +12,7 @@ from majordom_integration_sdk.peripherals.need import Need
 from majordom_integration_sdk.peripherals.peripheral import NoSettings, Peripheral
 
 if TYPE_CHECKING:
-    from majordom_integration_sdk.controller.platform import Context
+    from majordom_integration_sdk.controller.platform import Platform
 
 
 class ServiceHost(Protocol):
@@ -42,10 +42,11 @@ class Service[S: BaseModel = Any](Peripheral[S]):
     `Need`s what it provides.
 
     ``compose`` is its Docker Compose service definition (image, environment, volumes, …); its strings may hold
-    ``{data}`` (its own data folder), ``{peripherals.<family>.url}``, ``{settings.<field>}``, ``{context.<field>}``,
-    ``{host.interface|uid|gid}`` and ``{ports.<name>}``. A format spec turns a value into text: ``{x:!text}`` renders
-    ``text`` when ``x`` is empty, ``{x:?text}`` when it isn't; a list item that renders empty is left out, so
-    ``"volumes": ["{peripherals.ble.url:?/run/dbus:/run/dbus:ro}"]`` mounts D-Bus only while an adapter is bound.
+    ``{data}`` (its own documents folder), ``{peripherals.<family>.url}``, ``{settings.<field>}``,
+    ``{platform.<fact>}`` (``{platform.region}``), ``{host.interface|uid|gid}`` and ``{ports.<name>}``. A format spec
+    turns a value into text: ``{x:!text}`` renders ``text`` when ``x`` is empty, ``{x:?text}`` when it isn't; a list
+    item that renders empty is left out, so ``"volumes": ["{peripherals.ble.url:?/run/dbus:/run/dbus:ro}"]`` mounts
+    D-Bus only while an adapter is bound.
     The ``params`` of the ``provides`` endpoints render the same way, which is how a consumer learns what its service
     got: ``params={"adapter": "{peripherals.ble.url}"}``. ``settings`` is the model of its options, its ``Settings``.
 
@@ -98,7 +99,7 @@ class Service[S: BaseModel = Any](Peripheral[S]):
         if self.host:
             await self.host.down(self)
 
-    async def context_did_change(self, before: Context) -> bool:
+    async def platform_facts_did_change(self, before: Platform) -> bool:
         """Its container is recreated only when it would render otherwise now."""
         return self.host.is_current(self) if self.host else True
 

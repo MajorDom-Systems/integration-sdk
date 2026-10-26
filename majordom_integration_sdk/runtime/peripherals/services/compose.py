@@ -28,11 +28,11 @@ READY_POLL = 1  # seconds between checks of whether a container is up, its setup
 
 class Compose(Peripheral):
     """Docker Compose as the container host every `Service` needs (``container/compose``): the containers of the
-    services that run, as one ``majordom`` project in ``compose.json`` of its data folder, each service with its own
-    data folder as ``{data}``. Each gets the host ports it prefers when free, kept across restarts. A service's start
-    returns once compose reports its container running, its ports answer, its `Service.provision` finished and it is
-    healthy. It runs while a service does; while Docker isn't reachable its start fails, and the services wait, saying
-    so."""
+    services that run, as one ``majordom`` project in ``compose.json`` of its documents folder, each service with its
+    own documents folder as ``{data}`` (created when it renders, before Docker would create it as root). Each gets the
+    host ports it prefers when free, kept across restarts. A service's start returns once compose reports its container
+    running, its ports answer, its `Service.provision` finished and it is healthy. It runs while a service does; while
+    Docker isn't reachable its start fails, and the services wait, saying so."""
 
     name = "compose"
     is_on_demand = True
@@ -51,7 +51,7 @@ class Compose(Peripheral):
     @functools.cached_property
     def ports(self) -> dict[str, dict[str, int]]:
         """The host ports each service keeps, by its name."""
-        return read_json(self.data / "ports.json")
+        return read_json(self.platform.documents_folder(self) / "ports.json")
 
     async def start(self):
         try:
@@ -99,10 +99,10 @@ class Compose(Peripheral):
     def _values(self, service: Service) -> dict[str, Any]:
         """What its compose and the params it provides render with."""
         return {
-            "data": service.data,
+            "data": service.platform.documents_folder(service),
             "peripherals": _Peripherals(service.peripherals.bound),
             "settings": service.settings,
-            "context": self.runtime.context,
+            "platform": service.platform,
             "host": _Host(),
             "ports": SimpleNamespace(**self._ports(service)),
         }
@@ -132,7 +132,7 @@ class Compose(Peripheral):
             self._tentative[service.name] = {name: port for name, port in ports.items() if not _is_listening(port)}
             ports = self._ports(service)
         self.ports[service.name] = ports
-        write_json(self.data / "ports.json", self.ports)
+        write_json(self.platform.documents_folder(self) / "ports.json", self.ports)
 
     async def _apply(self):
         """Have docker take what runs now. Applies run in turn, each to its end even when its caller is cancelled:
@@ -141,16 +141,17 @@ class Compose(Peripheral):
 
     async def _apply_in_turn(self):
         async with self._lock:
-            for service in self._running.values():
-                service.data.mkdir(parents=True, exist_ok=True)
-            compose = {"name": "majordom", "services": dict(self._rendered)}
+            compose, path = {"name": "majordom", "services": dict(self._rendered)}, self._path()
             if compose == self._applied:
                 return
-            write_json(self.data / "compose.json", compose)
+            write_json(path, compose)
             self._applied = None  # unknown until docker took it all
             args = ["up", "-d", "--remove-orphans"] if self._rendered else ["down"]
-            await self._docker("compose", "-f", str(self.data / "compose.json"), *args)
+            await self._docker("compose", "-f", str(path), *args)
             self._applied = compose  # only what actually runs: a failure is tried again
+
+    def _path(self) -> Path:
+        return self.platform.documents_folder(self) / "compose.json"
 
     async def _is_up(self, service: Service) -> bool:
         ports = self.ports.get(service.name, {}).values()

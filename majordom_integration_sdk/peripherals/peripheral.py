@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -13,7 +12,7 @@ from majordom_integration_sdk.peripherals.endpoint import Bound, Endpoint, Perip
 from majordom_integration_sdk.peripherals.need import Need
 
 if TYPE_CHECKING:
-    from majordom_integration_sdk.controller.platform import Context
+    from majordom_integration_sdk.controller.platform import Platform
 
 START_TIMEOUT = 600  # seconds a start may take to serve by default, else it failed
 
@@ -32,18 +31,13 @@ class PeripheralOutput(Protocol):
     inside ``start``, ``stop`` or a hook it returns at once: the runtime acts when that call returns.
     """
 
-    @property
-    def context(self) -> Context:
-        """The Hub-wide facts as they are now: region, Wi-Fi, the Thread network."""
-        ...
-
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
         """Its ``provides`` or the peripherals it brings along changed."""
         ...
 
     async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
-        """`Context` fields it read from what it runs or talks to, e.g. a border router's Thread network: the context
-        takes them, and every peripheral that runs hears it changed."""
+        """`Platform` facts it read from what it runs or talks to, e.g. a border router's Thread network: they replace
+        the platform's, and every peripheral that runs hears it (``platform_facts_did_change``)."""
         ...
 
     async def peripheral_did_stop(self, peripheral: Peripheral):
@@ -60,12 +54,6 @@ class PeripheralOutput(Protocol):
 
 class _NoRuntime:
     """Nothing runs the peripheral: library mode, a test."""
-
-    @property
-    def context(self) -> Context:
-        from majordom_integration_sdk.controller.platform import Context  # the controller package needs this one
-
-        return Context()
 
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
         pass
@@ -119,8 +107,9 @@ class Peripheral[S: BaseModel = Any](Protocol):
     required need that can't be bound keeps it waiting, with the reason; one lost later stops it until it is back. An
     optional need is handed over once its provider runs, as it appears.
 
-    Subclass it for the defaults. The runtime sets ``runtime``, ``peripherals``, ``data``, ``contributor`` and
-    ``settings``, its options validated by its ``Settings``. Declare them as a nested ``class Settings(BaseModel)``
+    Subclass it for the defaults. The runtime sets ``platform`` (the host, the same for every peripheral: its facts,
+    and a documents folder per peripheral), ``runtime``, ``peripherals``, ``contributor`` and ``settings``, its options
+    validated by its ``Settings``. Declare them as a nested ``class Settings(BaseModel)``
     named as the type parameter, which types ``settings``: ``class Radio(Peripheral["Radio.Settings"])``. Without,
     they are `NoSettings`; a bare ``Peripheral`` is one of any settings. A field marked read-only in its JSON schema,
     ``channel: int = Field(11, json_schema_extra={"readOnly": True})``, shows what the peripheral fills in itself
@@ -133,9 +122,9 @@ class Peripheral[S: BaseModel = Any](Protocol):
     is_on_demand: bool = False  # runs only while something that runs binds it: containers, in-process providers
     start_timeout: float = START_TIMEOUT
     settings: S
+    platform: Platform  # the host it runs on
     runtime: PeripheralOutput = _NoRuntime()  # what runs it
     peripherals: Peripherals = Peripherals()  # what its needs are bound to
-    data: Path  # a folder of its own, created once it writes there: what it keeps across restarts
 
     @property
     def Settings(self) -> type[S]:
@@ -175,7 +164,7 @@ class Peripheral[S: BaseModel = Any](Protocol):
         """Its ``settings`` changed while it runs. True when applied in place; False, the default, restarts it."""
         return False
 
-    async def context_did_change(self, before: Context) -> bool:
-        """Hub-wide facts changed (region, Wi-Fi, Thread network) while it runs. True, the default, when they don't
-        concern it or were applied in place; False restarts it."""
+    async def platform_facts_did_change(self, before: Platform) -> bool:
+        """The host's facts changed (region, Wi-Fi, Thread network) while it runs; ``platform`` holds the new ones.
+        True, the default, when they don't concern it or were applied in place; False restarts it."""
         return True

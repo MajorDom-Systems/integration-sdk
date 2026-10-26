@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
@@ -13,6 +14,8 @@ from majordom_integration_sdk.schemas.notification import Notification
 
 if TYPE_CHECKING:
     from majordom_integration_sdk.controller.abstract_controller import AbstractController
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -74,3 +77,35 @@ class ControllerOutput(Protocol):
         (info/warning/error), delivery ``priority``, and ``ttl`` (seconds before auto-dismiss).
         """
         ...
+
+
+class LoggingControllerOutput(ControllerOutput):
+    """A ``ControllerOutput`` that logs every callback: the Hub's stand-in for dev runs and library mode."""
+
+    async def controller_did_receive_discovery(self, controller: AbstractController, discovery: Discovery):
+        logger.info(f"discovered {discovery.device_name} ({discovery.transport}) id={discovery.id}")
+
+    async def controller_did_update_discovery(self, controller: AbstractController, discovery: Discovery):
+        logger.info(f"updated discovery {discovery.id}")
+
+    async def controller_did_lose_discovery(self, controller: AbstractController, discovery_id: UUID):
+        logger.info(f"lost discovery {discovery_id}")
+
+    async def controller_did_connect_device(self, controller: AbstractController, device_id: UUID):
+        logger.info(f"connected device {device_id}")
+
+    async def controller_did_lose_device(self, controller: AbstractController, device_id: UUID):
+        logger.info(f"lost device {device_id}")
+
+    async def controller_did_receive_events(self, controller: AbstractController, events: Iterable[Event]):
+        for event in events:
+            logger.info(f"event {type(event).__name__}: {event!r}")
+
+    async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError):
+        logger.error(f"integration error {error.id}: {error.message}")
+
+    async def controller_did_resolve_error(self, controller: AbstractController, error_id: str):
+        logger.info(f"integration error {error_id} resolved")
+
+    async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):
+        logger.info(f"notification [{notification.type.value}/{notification.priority.value}]: {notification.message}")

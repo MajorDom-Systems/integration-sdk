@@ -98,7 +98,8 @@ async def test_an_integration_is_kept_by_its_slug_and_shown_by_its_name(tmp_path
     await runtime.disable(echo)
 
     assert (echo.key, echo.name) == ("z-wave-js", "Z-Wave JS")
-    assert store.is_disabled("z-wave-js") and echo.data == tmp_path / "data" / "peripherals" / "z-wave-js"
+    documents = tmp_path / "data" / "peripherals" / "z-wave-js"
+    assert store.is_disabled("z-wave-js") and echo.platform.documents_folder(echo) == documents
     assert json.loads((tmp_path / "data" / "state.json").read_text())["settings"]["z-wave-js"] == {"is_loud": True}
     assert runtime.peripheral("z-wave-js") is echo
 

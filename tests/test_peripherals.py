@@ -6,7 +6,6 @@ from pydantic import BaseModel, ValidationError
 
 from majordom_integration_sdk import (
     AbstractController,
-    Context,
     Endpoint,
     Need,
     NoSettings,
@@ -45,7 +44,7 @@ async def test_a_peripheral_needs_provides_and_is_bound_nothing_by_default():
     await host.runtime.peripheral_did_change_provided(host)  # nothing runs it: told no one
     assert await host.needed_peripheral_did_change(PeripheralChange("ip", None, None)) is False  # restart it
     assert await host.settings_did_change(NoSettings()) is False
-    assert await host.context_did_change(Context()) is True  # the context concerns few
+    assert await host.platform_facts_did_change(build_test_platform()) is True  # the facts concern few
 
 
 def test_peripherals_hand_out_one_endpoint_many_or_an_instance():
@@ -150,7 +149,7 @@ async def test_a_controller_is_a_peripheral_with_its_settings_and_its_peripheral
     assert controller.peripherals.endpoint("example").url == "ws://x"
     assert not controller.is_on_demand and controller.provides == ()
     assert await controller.needed_peripheral_did_change(PeripheralChange("example", None, None)) is False
-    assert await controller.context_did_change(Context()) is True  # the context concerns few: it reads it when it does
+    assert await controller.platform_facts_did_change(build_test_platform()) is True  # it reads them when it does
 
 
 def test_a_controller_without_settings_takes_none():

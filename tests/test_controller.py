@@ -5,7 +5,7 @@ from uuid import UUID
 import pytest
 from factories import make_device_state
 
-from majordom_integration_sdk import Context, NoSettings
+from majordom_integration_sdk import NoSettings
 from majordom_integration_sdk.controller import AbstractController
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
@@ -52,15 +52,15 @@ def test_name_slug_and_uuid_helpers():
 
 
 def test_its_documents_folder_is_its_own_under_the_platforms(tmp_path):
-    controller = _MinimalController(build_test_platform(documents_folder=tmp_path))
-    assert controller.documents_folder == tmp_path / "example-protocol"
-    assert controller.documents_folder.is_dir()
+    controller = _MinimalController(build_test_platform(documents_root=tmp_path))
+    assert controller.platform.documents_folder(controller) == tmp_path / "example-protocol"
+    assert (tmp_path / "example-protocol").is_dir()
 
 
 async def test_its_device_repository_holds_only_its_own_devices():
     controller = _MinimalController(build_test_platform())
-    device = make_device_state(integration=controller.name)
-    async with controller.device_repository() as repo:
+    device = make_device_state(integration=controller.key)  # its slug, "example-protocol"
+    async with controller.platform.device_repository(controller) as repo:
         await repo.save(device)
         stored = await repo.state(device.id)
         assert stored is not None and stored.id == device.id
@@ -104,7 +104,7 @@ async def test_the_pairing_window_opens_without_credentials():
     await controller.start_pairing_window(5)
 
 
-async def test_changed_settings_restart_it_unless_handled_and_the_context_doesnt():
+async def test_changed_settings_restart_it_unless_handled_and_the_platform_facts_dont():
     controller = _MinimalController(build_test_platform())
     assert await controller.settings_did_change(NoSettings()) is False
-    assert await controller.context_did_change(Context()) is True
+    assert await controller.platform_facts_did_change(build_test_platform(region="Europe")) is True

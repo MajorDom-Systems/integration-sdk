@@ -7,7 +7,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from time import monotonic
@@ -16,7 +16,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ValidationError
 from pydantic_core import InitErrorDetails
 
-from majordom_integration_sdk.controller.platform import Context
+from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.peripherals import (
     Bound,
     Endpoint,
@@ -74,8 +74,8 @@ class RuntimeOutput(Protocol):
     def peripheral_did_change_status(self, peripheral: Peripheral, status: PeripheralStatus): ...
 
     def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
-        """`Context` fields it read from what it runs (a border router's Thread network): merge them into the context
-        the runtime is given, then tell it (`Runtime.context_did_change`)."""
+        """`Platform` facts it read from what it runs (a border router's Thread network), which the runtime's platform
+        takes now (`Runtime.update_platform`): keep them for the next boot."""
         ...
 
     def peripheral_did_disappear(self, peripheral: Peripheral):
@@ -124,7 +124,7 @@ class _Entry:
     stopped_with: _Identity | None = None  # what it was bound to when it stopped by itself: it waits for a change
     told_failure: str = ""  # while starting
     is_stopping_itself: bool = False  # told while starting
-    context_before: Context | None = None  # what the context was when it changed while starting: told once it runs
+    platform_before: Platform | None = None  # what the platform was when it changed while starting: told once it runs
     settings_before: BaseModel | None = None  # the same of its settings
     task: asyncio.Task | None = None  # its start
     reported: PeripheralStatus | None = None
@@ -147,10 +147,11 @@ class Runtime:
 
     ``peripherals`` bind in the order given, what each brings along right after it: one given first wins a single-use
     endpoint (the Bluetooth router takes every adapter before the containers) and serves a need first: `Pinned`,
-    then the hardware, the defaults and the integrations. ``context`` gives the Hub-wide facts, which peripherals read
-    and containers render; ``output`` hears every change of status, what is learned and what is gone; ``disabled``
-    keeps what the user disabled (in memory by default). Its own state, the settings, goes to ``data``; every peripheral
-    gets a folder there, ``peripherals/<key>``.
+    then the hardware, the defaults and the integrations. ``platform`` is the host every peripheral runs on, its
+    ``self.platform``: the facts peripherals read and containers render, a documents folder per peripheral (by default
+    under ``data/peripherals``) and the device repository; `update_platform` replaces it. ``output`` hears every change
+    of status, what is learned and what is gone; ``disabled`` keeps what the user disabled (in memory by default). Its
+    own state, the settings, goes to ``data``.
 
     A peripheral that isn't disabled or failed runs while something that runs binds it if it ``is_on_demand``, while
     what brought it along runs, and once every required need is bound to a provider that runs. Only a waiting one
@@ -165,11 +166,12 @@ class Runtime:
         data: Path,
         peripherals: Sequence[Peripheral] = (),
         *,
-        context: Callable[[], Context] = Context,
+        platform: Platform | None = None,
         output: RuntimeOutput | None = None,
         disabled: DisabledStore | None = None,
     ):
-        self.data, self.given, self._context, self.output = data, list(peripherals), context, output
+        self.data, self.given, self.output = data, list(peripherals), output
+        self.platform = platform or Platform(documents_root=data / "peripherals")
         self.disabled = disabled or MemoryDisabledStore()
         self.state: dict[str, Any] = {"settings": {}}
         saved = read_json(data / "state.json")
@@ -371,32 +373,39 @@ class Runtime:
         await self._act(apply)
         return peripheral.settings
 
-    async def context_did_change(self, before: Context):
-        """The Hub-wide facts changed: every peripheral that runs hears it (`Peripheral.context_did_change`); one
-        still starting may have read the ones before, so it hears it once it runs."""
+    async def update_platform(self, platform: Platform):
+        """The host's facts changed: every peripheral reads ``platform`` from now on, built from the one there was
+        (``dataclasses.replace(runtime.platform, region="Europe")``); one that runs hears it
+        (`Peripheral.platform_facts_did_change`), one still starting may have read the ones before, so it hears it once
+        it runs."""
+        before, self.platform = self.platform, platform
+        for entry in [*self._entries.values(), *self._clashes]:
+            entry.peripheral.platform = platform
+        if platform == before:
+            return
+        started = [entry for entry in self._entries.values() if entry.is_started]  # the ones that read the ones before
 
         async def apply():
-            for entry in list(self._entries.values()):
+            for entry in started:
                 if entry.state == PeripheralState.RUNNING:
-                    await self._ask(entry, entry.peripheral.context_did_change(before))
-                elif entry.state == PeripheralState.STARTING and entry.context_before is None:
-                    entry.context_before = before
+                    await self._ask(entry, entry.peripheral.platform_facts_did_change(before))
+                elif entry.state == PeripheralState.STARTING and entry.platform_before is None:
+                    entry.platform_before = before
 
         await self._act(apply)
 
     # PeripheralOutput
 
-    @property
-    def context(self) -> Context:
-        return self._context()
-
     async def peripheral_did_change_provided(self, peripheral: Peripheral):
         await self._settle()
 
     async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
-        if self.output and self._find(peripheral) is not None:
+        if self._find(peripheral) is None:
+            return
+        if self.output:
             with _logged(f"Reporting what {peripheral.name} learned"):
                 self.output.peripheral_did_learn(peripheral, facts)
+        await self.update_platform(replace(self.platform, **facts))
 
     async def peripheral_did_stop(self, peripheral: Peripheral):
         if (entry := self._find(peripheral)) is None:
@@ -536,7 +545,7 @@ class Runtime:
 
     def _adopt(self, peripheral: Peripheral) -> _Entry:
         key = peripheral.key
-        peripheral.runtime, peripheral.data = self, self.data / "peripherals" / key
+        peripheral.runtime, peripheral.platform = self, self.platform
         status = _waiting()
         if key in self._failed:
             status = PeripheralStatus(PeripheralState.FAILED, StatusKind.GAVE_UP, self._failed[key])
@@ -676,7 +685,7 @@ class Runtime:
     def _start(self, entry: _Entry):
         entry.state, entry.kind, entry.detail = PeripheralState.STARTING, None, ""
         entry.bindings, entry.told_failure, entry.is_stopping_itself = self._handed(entry), "", False
-        entry.context_before = entry.settings_before = None
+        entry.platform_before = entry.settings_before = None
         self._bind_view(entry, entry.bindings)
         entry.task = self._spawn(self._run_start(entry))
 
@@ -708,9 +717,9 @@ class Runtime:
 
     async def _tell_missed(self, entry: _Entry):
         """Tell one that just started what changed while it started, from what it may have read."""
-        context, settings = entry.context_before, entry.settings_before
-        entry.context_before = entry.settings_before = None
-        if context is not None and not await self._ask(entry, entry.peripheral.context_did_change(context)):
+        platform, settings = entry.platform_before, entry.settings_before
+        entry.platform_before = entry.settings_before = None
+        if platform is not None and not await self._ask(entry, entry.peripheral.platform_facts_did_change(platform)):
             return  # restarted: it reads the settings anew
         if settings is not None:
             await self._ask(entry, entry.peripheral.settings_did_change(settings))

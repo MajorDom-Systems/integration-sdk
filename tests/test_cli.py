@@ -77,11 +77,11 @@ class FakeController(AbstractController):
             name=discovery.device_name,
             room_id=uuid4(),
             transport=discovery.transport,
-            integration=self.name,
+            integration=self.key,
             manufacturer=None,
             parameters=[_param(self._param_role)],
         )
-        async with self.device_repository() as repo:
+        async with self.platform.device_repository(self) as repo:
             await repo.save(state)
         self.paired.append(device_id)
         return device_id
@@ -200,7 +200,7 @@ async def test_output_delegate_persists_event_values():
         controller, [DeviceParameterChange(device_id=device_id, parameter_id=parameter.id, value=True)]
     )
 
-    async with controller.device_repository() as repo:
+    async with controller.platform.device_repository(controller) as repo:
         stored = await repo.get_parameter_state(device_id, parameter.id)
     assert stored is not None
     assert stored.value  # a (non-empty, encoded) value was written back by the event

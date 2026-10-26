@@ -1,7 +1,8 @@
 """The device-repository interface a controller talks to.
 
 A controller never touches a database directly — it goes through this protocol, obtained
-from its ``device_repository()`` (an async context manager scoping one unit of work). The
+from its platform's ``device_repository(self)`` (an async context manager scoping one unit of
+work). The
 Hub backs it with its shared SQLAlchemy database; the SDK ships two first-class
 implementations for standalone/dev use — :class:`DeviceRepositoryMemory` and
 :class:`SqliteDeviceRepository`.
@@ -16,7 +17,7 @@ access (the Hub's own higher-level use).
 ``DeviceState[MyData, MyParameterData]`` (or a subclass), so ``integration_data`` comes back
 typed instead of a bare dict::
 
-    async with self.device_repository() as repo:
+    async with self.platform.device_repository(self) as repo:
         device = await repo.get(device_id, as_=MyDevice)  # class MyDevice(Device[MyData])
 
 **Not here on purpose:** ``delete`` and ``update_parameter_visibility`` are Hub-internal

@@ -14,9 +14,9 @@ instead of reinventing them, so every integration is exercised through the same 
   Bluetooth router to hear through (``router.add_source(source)``), :class:`FakeBLERouter`,
   :class:`FakeZeroconf` (the ``discovery`` extra) and :class:`FakeSSDP`. Each provides itself as
   ``.endpoint``, to bind as the controller's peripherals: ``Peripherals({"ble": router.endpoint})``.
-- :func:`build_test_platform` — assembles a controller ``Platform`` wired with the recording
-  output, an in-memory device repository and temp-dir storage, so a test can drive a controller
-  exactly as the Hub would.
+- :func:`build_test_platform` — assembles a ``Platform`` wired with the recording output, an
+  in-memory device repository and temp-dir storage, and the facts you give, so a test can drive
+  a controller (or any peripheral) exactly as the Hub would.
 """
 
 from __future__ import annotations
@@ -31,12 +31,12 @@ from pydantic import BaseModel
 
 from majordom_integration_sdk.capabilities.ble import BLEConnection, OnAdvertisement
 from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
-from majordom_integration_sdk.controller.platform import Context, Platform
+from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.peripherals import Endpoint, Need, NoSettings, Peripheral, PeripheralChange, Service
-from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
 from majordom_integration_sdk.runtime.peripherals.services.compose import Compose
+from majordom_integration_sdk.schemas.credentials import WifiCredentials
 from majordom_integration_sdk.schemas.device import Discovery
 from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
@@ -111,7 +111,7 @@ class FakePeripheral(Peripheral):
         self.failures, self.answer = failures, answer
         self.settings_model = settings
         self.calls: list[str] = []
-        self.changes: list[PeripheralChange | tuple[str, Any]] = []  # needs moved; ("settings"|"context", before)
+        self.changes: list[PeripheralChange | tuple[str, Any]] = []  # needs moved; ("settings"|"platform", before)
 
     @property
     def Settings(self) -> type[BaseModel]:
@@ -138,8 +138,8 @@ class FakePeripheral(Peripheral):
         self.changes.append(("settings", before))
         return self._answer()
 
-    async def context_did_change(self, before: Any) -> bool:
-        self.changes.append(("context", before))
+    async def platform_facts_did_change(self, before: Any) -> bool:
+        self.changes.append(("platform", before))
         return self._answer()
 
     def _answer(self) -> bool:
@@ -152,11 +152,9 @@ class FakePeripheral(Peripheral):
 
 
 class RecordingPeripheralOutput:
-    """Captures what peripherals report to whatever runs them: set it as a peripheral's ``runtime``. It hands over
-    ``context``, set it as a test needs."""
+    """Captures what peripherals report to whatever runs them: set it as a peripheral's ``runtime``."""
 
     def __init__(self):
-        self.context = Context()
         self.changed: list[Peripheral] = []
         self.learned: list[tuple[Peripheral, Mapping[str, Any]]] = []
         self.stopped: list[Peripheral] = []
@@ -303,18 +301,25 @@ class FakeBLESource:
         self.on_advertisement(BLEDevice(address, local_name, self.name), adv)  # details: the radio
 
 
-def build_test_platform(documents_folder: Path | None = None) -> Platform:
-    """Assemble a controller ``Platform`` wired entirely with offline test doubles, as the Hub gives it to every
-    integration: an in-memory repository each controller sees only its own devices of, scoped by its name.
+def build_test_platform(
+    documents_root: Path | None = None,
+    *,
+    region: str | None = None,
+    wifi: WifiCredentials | None = None,
+    thread_dataset: str | None = None,
+) -> Platform:
+    """Assemble a ``Platform`` wired entirely with offline test doubles, as the Hub gives it to every peripheral: an
+    in-memory repository each controller sees only its own devices of, scoped by its key, and the facts given.
 
-    Pass ``documents_folder`` as the root of the controllers' folders; a fresh temp dir is used otherwise. The
+    Pass ``documents_root`` as the root of the peripherals' folders; a fresh temp dir is used otherwise. The
     recording output is reachable as ``platform.output``.
     """
-    store: dict = {}  # shared by the repositories of every integration
     return Platform(
+        documents_root=documents_root or Path(tempfile.mkdtemp(prefix="majordom-sdk-test-")),
         output=RecordingControllerOutput(),
-        make_device_repository=lambda integration: DeviceRepositoryMemory(integration, store).session(),
-        documents_folder=documents_folder or Path(tempfile.mkdtemp(prefix="majordom-sdk-test-")),
+        region=region,
+        wifi=wifi,
+        thread_dataset=thread_dataset,
     )
 
 
