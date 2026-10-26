@@ -8,7 +8,7 @@ import contextlib
 import copy
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
 from pathlib import Path
 from time import monotonic
@@ -37,6 +37,7 @@ STABLE_RUN = 300  # seconds of running that clear the failures in a row
 HOOK_TIMEOUT = 30  # seconds a hook may take: it runs while the runtime waits
 STOP_TIMEOUT = 15  # a stop stuck on a vanished radio (zigpy awaiting its dead I/O thread) is abandoned
 _PASSES = 10  # bound on the passes one change takes to settle: each may change what the next one binds
+_FACTS = {f.name for f in fields(Platform)} - {"documents_root", "make_device_repository"}  # never its resources
 
 
 class PeripheralState(StrEnum):
@@ -426,10 +427,14 @@ class Runtime:
     async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
         if self._find(peripheral) is None:
             return
+        if unknown := sorted(facts.keys() - _FACTS):  # a newer peripheral's: neither kept nor in the way of the others
+            log.warning(f"{peripheral.key} learned what the platform holds no fact of, left out: {', '.join(unknown)}")
+        if not (known := {name: value for name, value in facts.items() if name in _FACTS}):
+            return
         if self.output:
             with _logged(f"Reporting what {peripheral.name} learned"):
-                self.output.peripheral_did_learn(peripheral, facts)
-        await self.update_platform(replace(self.platform, **facts))
+                self.output.peripheral_did_learn(peripheral, known)
+        await self.update_platform(replace(self.platform, **known))
 
     async def peripheral_did_stop(self, peripheral: Peripheral):
         if (entry := self._find(peripheral)) is None:

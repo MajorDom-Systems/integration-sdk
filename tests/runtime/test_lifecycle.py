@@ -1037,6 +1037,22 @@ async def test_any_peripheral_reads_the_facts_and_what_it_learned_replaces_the_p
     assert matter.changes == [("platform", europe)]  # nothing changed
 
 
+async def test_only_the_facts_a_platform_holds_are_learned(tmp_path):
+    output, router = RecordingRuntimeOutput(), FakePeripheral("my-border-router")
+    runtime = await run(tmp_path, router, output=output)
+    root = runtime.platform.documents_root
+
+    learned = {"thread_dataset": "0e08", "thread_channel": 25, "documents_root": tmp_path / "elsewhere"}
+    await router.output.peripheral_did_learn(router, learned)  # a newer peripheral's, and a resource: no facts
+    await settle(runtime)
+    assert output.learned == [("my-border-router", {"thread_dataset": "0e08"})]
+    assert (runtime.platform.thread_dataset, runtime.platform.documents_root) == ("0e08", root)
+
+    await router.output.peripheral_did_learn(router, {"thread_channel": 26})
+    await settle(runtime)
+    assert len(output.learned) == 1
+
+
 async def test_one_added_while_it_runs_runs_and_one_removed_is_gone(tmp_path):
     output, hue = RecordingRuntimeOutput(), FakePeripheral("hue")
     runtime = await run(tmp_path, FakePeripheral("host"), output=output)

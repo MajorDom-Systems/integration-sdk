@@ -42,7 +42,8 @@ class PeripheralOutput(Protocol):
 
     async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
         """`Platform` facts it read from what it runs or talks to, e.g. a border router's Thread network: they replace
-        the platform's, and every peripheral that runs hears it (``platform_facts_did_change``)."""
+        the platform's, and every peripheral that runs hears it (``platform_facts_did_change``). A name the platform
+        holds no fact of is left out (logged)."""
         ...
 
     async def peripheral_did_stop(self, peripheral: Peripheral):
