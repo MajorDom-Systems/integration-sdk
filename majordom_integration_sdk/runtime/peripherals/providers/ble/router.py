@@ -148,8 +148,12 @@ class BLEService(Peripheral):
             await self._start_source(source.name)
 
     async def remove_source(self, name: str):
+        """Stop listening with a radio; one that fails to stop (its node went away) is let go of all the same."""
         if source := self._sources.pop(name, None):
-            await source.stop()
+            try:
+                await source.stop()
+            except Exception as e:
+                logger.warning(f"BLE source {name} failed to stop: {e}")
 
     async def start(self):
         await self._follow_bound()

@@ -306,6 +306,20 @@ async def test_a_listener_registered_later_hears_devices_already_around(radios):
     assert [i.device.address for i in listener.found] == ["AA"]
 
 
+async def test_a_radio_that_fails_to_stop_is_let_go_of_all_the_same(radios):
+    ble, near, _ = radios
+
+    class Gone(FakeBLESource):
+        async def stop(self):
+            raise ConnectionError("its node went away")
+
+    await ble.add_source(Gone("proxy"))
+    await ble.remove_source("proxy")
+    near.advertise("AA", service_uuids=[str(MATTER)])
+    await settle()
+    assert ble.devices()[0].source == "near" and "proxy" not in ble._candidates("AA")
+
+
 async def test_a_silent_radio_is_restarted(radios):
     ble, near, far = radios
     near.on_advertisement = None  # bluetoothd restarted: the scanner is gone without a word
