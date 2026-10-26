@@ -44,9 +44,9 @@ class _MinimalController(AbstractController[Device, Parameter]):
         pass
 
 
-def test_name_slug_and_uuid_helpers():
+def test_key_and_uuid_helpers():
     controller = _MinimalController(build_test_platform())
-    assert controller.name_slug == "example-protocol"
+    assert controller.key == "example-protocol"
     # Deterministic, namespaced, and hierarchical.
     device_uuid = controller.device_uuid("abc")
     assert controller.device_uuid("abc") == device_uuid

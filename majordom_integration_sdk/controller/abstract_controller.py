@@ -245,12 +245,6 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
         return slug
 
     @final
-    @property
-    def name_slug(self) -> str:
-        """Slugified name of the integration"""
-        return type(self).slug()
-
-    @final
     def namespace_uuid(self) -> UUID:
         """Namespace UUID for the integration - used to generate device and parameter UUIDs"""
         return UUID(int=0)  # TODO: consider basing it on hub's mac address
@@ -258,7 +252,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
     @final
     def integration_uuid(self) -> UUID:
         """Unique identifier of the integration"""
-        return uuid5(self.namespace_uuid(), self.name_slug)
+        return uuid5(self.namespace_uuid(), self.key)
 
     @final
     def device_uuid(self, device_id: str) -> UUID:
