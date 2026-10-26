@@ -10,7 +10,7 @@ import pytest
 from pydantic import BaseModel, Field, ValidationError
 from support import changed, run, settle, state, until
 
-from majordom_integration_sdk import Endpoint, Need, NoSettings, PeripheralChange, Platform
+from majordom_integration_sdk import STABLE_RUN, Endpoint, Need, NoSettings, PeripheralChange, Platform
 from majordom_integration_sdk.runtime import MemoryDisabledStore, PeripheralStatus, Runtime
 from majordom_integration_sdk.runtime import PeripheralState as S
 from majordom_integration_sdk.runtime import StatusKind as K
@@ -195,6 +195,11 @@ async def test_a_failure_after_a_stable_run_starts_the_retries_over(tmp_path, mo
     runtime = await run(tmp_path, stick, integration)
     await moves(runtime, stick, integration, len(module.RETRY_DELAYS) + 1)
     assert state(runtime, integration) == S.WAITING
+
+
+def test_an_integration_holds_a_reconnect_as_long_as_the_runtime_holds_a_run():
+    # its outage is over once a reconnect held a stable run: a server that drops every time is reported
+    assert STABLE_RUN == module.STABLE_RUN == 300
 
 
 # starting: retries

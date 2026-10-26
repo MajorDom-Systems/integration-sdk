@@ -10,7 +10,13 @@ hand in library mode) binds every `Need` to an endpoint and hands it over as the
 from majordom_integration_sdk.peripherals.ble_proxy import BLEProxy
 from majordom_integration_sdk.peripherals.endpoint import Bound, Endpoint, PeripheralChange
 from majordom_integration_sdk.peripherals.need import Need
-from majordom_integration_sdk.peripherals.peripheral import NoSettings, Peripheral, PeripheralOutput, Peripherals
+from majordom_integration_sdk.peripherals.peripheral import (
+    STABLE_RUN,
+    NoSettings,
+    Peripheral,
+    PeripheralOutput,
+    Peripherals,
+)
 from majordom_integration_sdk.peripherals.service import Service, ServiceHost
 from majordom_integration_sdk.peripherals.usb import USB_DRIVER, UsbDriver
 
@@ -28,4 +34,5 @@ __all__ = [
     "UsbDriver",
     "USB_DRIVER",
     "BLEProxy",
+    "STABLE_RUN",
 ]

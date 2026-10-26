@@ -23,6 +23,7 @@ from importlib.metadata import version
 from majordom_integration_sdk.controller import AbstractController, ControllerOutput, IntegrationError
 from majordom_integration_sdk.errors import MissingCredentialsError
 from majordom_integration_sdk.peripherals import (
+    STABLE_RUN,
     Endpoint,
     Need,
     NoSettings,
@@ -72,4 +73,5 @@ __all__ = [
     "UsbDriver",
     "PeripheralChange",
     "WifiCredentials",
+    "STABLE_RUN",
 ]

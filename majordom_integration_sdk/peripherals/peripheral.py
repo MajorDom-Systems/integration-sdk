@@ -18,6 +18,9 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 START_TIMEOUT = 600  # seconds a start may take to serve by default, else it failed
+# seconds of running that clear a peripheral's failures in a row; an integration's outage ends once a reconnect held as
+# long (a server that sends its nodes and drops every time is reported)
+STABLE_RUN = 300
 
 
 class NoSettings(BaseModel):

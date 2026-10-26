@@ -21,6 +21,7 @@ from pydantic_core import InitErrorDetails
 from majordom_integration_sdk.controller.output import ControllerOutput, LoggingControllerOutput
 from majordom_integration_sdk.files import read_json, write_json
 from majordom_integration_sdk.peripherals import (
+    STABLE_RUN,
     Bound,
     Endpoint,
     Need,
@@ -34,7 +35,6 @@ from majordom_integration_sdk.runtime.output import HostOutput
 log = logging.getLogger(__name__)
 
 RETRY_DELAYS = (5, 30, 120)  # seconds before each new start of a peripheral that failed, then it is given up on
-STABLE_RUN = 300  # seconds of running that clear the failures in a row
 HOOK_TIMEOUT = 30  # seconds a hook may take: it runs while the runtime waits
 STOP_TIMEOUT = 15  # a stop stuck on a vanished radio (zigpy awaiting its dead I/O thread) is abandoned
 _PASSES = 10  # bound on the passes one change takes to settle: each may change what the next one binds
