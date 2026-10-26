@@ -8,6 +8,7 @@ cleanly.
 """
 
 import asyncio
+from dataclasses import replace
 from uuid import UUID
 
 import pytest
@@ -21,7 +22,7 @@ from majordom_integration_sdk.runtime import Pinned, Runtime
 from majordom_integration_sdk.runtime.output import HostOutput
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
-from majordom_integration_sdk.testing import FakeBLERouter, FakeSSDP
+from majordom_integration_sdk.testing import FakeBLERouter, FakePeripheral, FakeSSDP
 
 ZWAVE = Endpoint("zwave", "zwave-js-server", "ws://127.0.0.1:3000", is_shared=True)
 
@@ -228,3 +229,16 @@ async def test_run_controller_starts_and_stops_cleanly_under_the_runtime(tmp_pat
     assert controller.platform.region == "Europe"  # the platform it was given, its overrides too
     output = controller.output  # the runtime's, which logs what it reports
     assert isinstance(output, HostOutput) and isinstance(output.controller_output, LoggingControllerOutput)
+
+
+async def test_what_a_peripheral_learns_reaches_the_controllers_platform(tmp_path, router):
+    border_router = FakePeripheral("my-border-router")
+    controller = _RecordingController(replace(build_platform(storage_root=tmp_path), region="Europe"))
+    runtime = build_runtime(
+        [controller], tmp_path / "runtime", runtime_peripherals=[border_router], platform=controller.platform
+    )
+    await runtime.start()
+
+    await border_router.output.peripheral_did_learn(border_router, {"thread_dataset": "0e08"})
+    assert (controller.platform.region, controller.platform.thread_dataset) == ("Europe", "0e08")
+    await runtime.stop()

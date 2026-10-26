@@ -7,6 +7,7 @@ from factories import make_device_state
 
 from majordom_integration_sdk import NoSettings
 from majordom_integration_sdk.controller import AbstractController
+from majordom_integration_sdk.repository import DeviceRepositoryMemory
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.schemas.event import DeviceParameterChange
@@ -106,3 +107,15 @@ async def test_changed_settings_restart_it_unless_handled_and_the_platform_facts
     controller = _MinimalController(build_test_platform())
     assert await controller.settings_did_change(NoSettings()) is False
     assert await controller.platform_facts_did_change(build_test_platform(region="Europe")) is True
+
+
+async def test_a_test_platform_holds_the_facts_given_and_its_store_every_device():
+    store: dict = {}
+    platform = build_test_platform(region="Europe", thread_dataset="0e08", store=store)
+    controller = _MinimalController(platform)
+    async with platform.device_repository(controller) as repo:
+        await repo.save(make_device_state(integration=controller.key))
+
+    assert (platform.region, platform.wifi, platform.thread_dataset) == ("Europe", None, "0e08")
+    async with DeviceRepositoryMemory(store=store).session() as everything:
+        assert [device.integration for device in await everything.get_all()] == ["example-protocol"]
