@@ -36,7 +36,7 @@ async def test_a_many_need_binds_every_free_matching_endpoint(tmp_path):
     assert sniffer.peripherals.endpoints("ble") == ADAPTERS
     with pytest.raises(TypeError, match="endpoints"):
         sniffer.peripherals.endpoint("ble")
-    assert runtime.providers(sniffer) == {"ble": "bluetooth-adapters, bluetooth-adapters"}
+    assert runtime.providers(sniffer) == {"ble": ["bluetooth-adapters", "bluetooth-adapters"]}  # one per endpoint
 
 
 async def test_a_many_need_that_finds_nothing_is_unbound(tmp_path):

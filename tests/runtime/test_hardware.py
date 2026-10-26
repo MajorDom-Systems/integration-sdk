@@ -297,7 +297,7 @@ async def test_a_driver_an_integration_brings_along_recognises_what_the_others_d
     await until(runtime, lambda: state(runtime, integration) == PeripheralState.RUNNING)
     assert integration.peripherals.endpoint("zigbee") == Endpoint("zigbee", "deconz", "/dev/serial/by-id/conbee")
     assert zigpy.opened == ["conbee"]
-    assert runtime.providers(scanner) == {"usb-driver": "zigpy"}
+    assert runtime.providers(scanner) == {"usb-driver": ["zigpy"]}
 
     await runtime.stop()
     sdk, again, integration = Driver(), Zigpy("zigpy", conbee="deconz"), FakePeripheral("zigbee", [Need("zigbee")])

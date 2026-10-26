@@ -248,10 +248,12 @@ class Runtime:
         (or would have) in ``peripherals``: an optional need only once its provider runs."""
         return _view(peripheral, self._held(self._entry(peripheral)))
 
-    def providers(self, peripheral: Peripheral) -> dict[str, str]:
-        """Who serves each bound need, by family; several, comma-separated, for an ``is_many`` need."""
+    def providers(self, peripheral: Peripheral) -> dict[str, str | list[str]]:
+        """Who serves each bound need, by family: its key, a list of them for an ``is_many`` need (one per endpoint, as
+        `bound` lists them)."""
+        many = {need.family for need in peripheral.needs if need.is_many}
         bound = self._held(self._entry(peripheral))
-        return {family: ", ".join(p.key for p, _ in bindings) for family, bindings in bound.items()}
+        return {family: [p.key for p, _ in b] if family in many else b[0][0].key for family, b in bound.items()}
 
     def unbound(self, peripheral: Peripheral) -> dict[str, str]:
         """Why each need isn't bound, by family: for the user, with what to do when there is something, e.g.

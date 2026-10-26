@@ -189,7 +189,8 @@ class _CliSession:
                 urls = ", ".join(
                     e.url or e.dialect for e in (endpoints if isinstance(endpoints, list) else [endpoints])
                 )
-                rows.append(f"{wanted}  -> {urls}  by {providers.get(need.family, 'you')}")
+                by = providers.get(need.family, "you")
+                rows.append(f"{wanted}  -> {urls}  by {', '.join(by) if isinstance(by, list) else by}")
             else:
                 rows.append(f"{wanted}  unbound: {unbound.get(need.family, 'not given')}")
         return rows
