@@ -29,8 +29,8 @@ from typing import TYPE_CHECKING, Any
 
 from majordom_integration_sdk.controller.abstract_controller import AbstractController
 from majordom_integration_sdk.controller.output import ControllerOutput, LoggingControllerOutput
-from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.peripherals import Bound, Endpoint, Peripheral, Peripherals
+from majordom_integration_sdk.platform import Platform
 from majordom_integration_sdk.repository.sqlite import SqliteDeviceRepository
 
 if TYPE_CHECKING:

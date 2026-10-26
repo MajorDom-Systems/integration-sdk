@@ -13,7 +13,7 @@ from majordom_integration_sdk.peripherals.endpoint import Bound, Endpoint, Perip
 from majordom_integration_sdk.peripherals.need import Need
 
 if TYPE_CHECKING:
-    from majordom_integration_sdk.controller.platform import Platform
+    from majordom_integration_sdk.platform import Platform
 
 log = logging.getLogger(__name__)
 

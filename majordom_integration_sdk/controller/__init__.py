@@ -5,6 +5,5 @@ from .output import ControllerOutput, IntegrationError, LoggingControllerOutput
 
 # isort: split
 from .abstract_controller import AbstractController
-from .platform import Platform
 
-__all__ = ["AbstractController", "ControllerOutput", "IntegrationError", "LoggingControllerOutput", "Platform"]
+__all__ = ["AbstractController", "ControllerOutput", "IntegrationError", "LoggingControllerOutput"]

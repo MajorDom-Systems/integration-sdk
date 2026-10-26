@@ -12,7 +12,7 @@ from majordom_integration_sdk.peripherals.need import Need
 from majordom_integration_sdk.peripherals.peripheral import NoSettings, Peripheral
 
 if TYPE_CHECKING:
-    from majordom_integration_sdk.controller.platform import Platform
+    from majordom_integration_sdk.platform import Platform
 
 
 class ServiceHost(Protocol):

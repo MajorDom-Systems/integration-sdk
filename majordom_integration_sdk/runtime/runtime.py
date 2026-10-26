@@ -18,7 +18,6 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import InitErrorDetails
 
 from majordom_integration_sdk.controller.output import ControllerOutput, LoggingControllerOutput
-from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.peripherals import (
     Bound,
     Endpoint,
@@ -27,6 +26,7 @@ from majordom_integration_sdk.peripherals import (
     PeripheralChange,
     Peripherals,
 )
+from majordom_integration_sdk.platform import Platform
 from majordom_integration_sdk.runtime.files import read_json, write_json
 from majordom_integration_sdk.runtime.output import HostOutput
 

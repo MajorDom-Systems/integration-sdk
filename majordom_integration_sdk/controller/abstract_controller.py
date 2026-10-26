@@ -15,8 +15,8 @@ from pydantic import BaseModel
 from slugify import slugify
 
 from majordom_integration_sdk.controller.output import ControllerOutput, LoggingControllerOutput
-from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.peripherals import Need, Peripheral, PeripheralChange
+from majordom_integration_sdk.platform import Platform
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 

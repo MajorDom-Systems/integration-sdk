@@ -31,8 +31,8 @@ from pydantic import BaseModel
 
 from majordom_integration_sdk.capabilities.ble import BLEConnection, BLEDiscoveryListener, BLEMatcher, OnAdvertisement
 from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
-from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.peripherals import Endpoint, Need, NoSettings, Peripheral, PeripheralChange, Service
+from majordom_integration_sdk.platform import Platform
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService

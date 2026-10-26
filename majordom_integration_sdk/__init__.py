@@ -3,7 +3,8 @@
 Public submodules:
 
 - ``majordom_integration_sdk.schemas``       — the wire protocol (pydantic models shared with the Hub)
-- ``majordom_integration_sdk.controller``    — ``AbstractController``, its ``Platform`` + ``ControllerOutput``
+- ``majordom_integration_sdk.controller``    — ``AbstractController`` + its ``ControllerOutput``
+- ``majordom_integration_sdk.platform``      — ``Platform``: the host every peripheral runs on, as ``self.platform``
 - ``majordom_integration_sdk.peripherals``   — ``Peripheral``, ``Need``/``Endpoint``, ``Service``: what runs around it
 - ``majordom_integration_sdk.capabilities``  — the contracts of in-process peripherals: BLE router, DNS-SD, SSDP
 - ``majordom_integration_sdk.repository``    — ``DeviceRepositoryProtocol`` + in-memory / SQLite implementations
@@ -18,12 +19,7 @@ The names an integration author reaches for most are re-exported here for conven
 
 from importlib.metadata import version
 
-from majordom_integration_sdk.controller import (
-    AbstractController,
-    ControllerOutput,
-    IntegrationError,
-    Platform,
-)
+from majordom_integration_sdk.controller import AbstractController, ControllerOutput, IntegrationError
 from majordom_integration_sdk.errors import MissingCredentialsError
 from majordom_integration_sdk.peripherals import (
     Endpoint,
@@ -36,6 +32,7 @@ from majordom_integration_sdk.peripherals import (
     Service,
     UsbDriver,
 )
+from majordom_integration_sdk.platform import Platform
 from majordom_integration_sdk.repository import (
     DeviceRepositoryMemory,
     DeviceRepositoryProtocol,
