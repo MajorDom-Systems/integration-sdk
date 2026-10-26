@@ -312,7 +312,7 @@ def build_test_platform(
     region: str | None = None,
     wifi: WifiCredentials | None = None,
     thread_dataset: str | None = None,
-    store: dict | None = None,
+    store: dict[UUID, dict[str, Any]] | None = None,
 ) -> Platform:
     """Assemble a ``Platform`` wired entirely with offline test doubles, as the Hub gives it to every peripheral: an
     in-memory repository each controller sees only its own devices of, scoped by its key, and the facts given.

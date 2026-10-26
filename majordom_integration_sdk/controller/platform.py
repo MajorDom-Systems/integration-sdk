@@ -6,7 +6,8 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtocol
@@ -19,7 +20,7 @@ type MakeDeviceRepository = Callable[[str], AbstractAsyncContextManager[DeviceRe
 
 
 def _in_memory() -> MakeDeviceRepository:
-    store: dict = {}  # shared by the repositories of every peripheral
+    store: dict[UUID, dict[str, Any]] = {}  # shared by the repositories of every peripheral
     return lambda key: DeviceRepositoryMemory(key, store).session()
 
 

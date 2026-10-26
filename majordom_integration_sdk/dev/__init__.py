@@ -38,15 +38,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("majordom_integration_sdk.dev")
 
+STORAGE_ROOT = Path(".majordom-dev")  # where a standalone run keeps what it stores, unless told otherwise
+
 
 def build_platform(*, storage_root: Path | None = None, db_path: str | Path | None = None) -> Platform:
     """Assemble the host for a standalone run, as the Hub gives it to every peripheral.
 
     ``db_path`` selects a file-backed :class:`SqliteDeviceRepository` (state survives
     restarts); omit it for an in-memory repository. The storage root, where each peripheral
-    gets its documents folder, defaults to ``./.majordom-dev``.
+    gets its documents folder, defaults to `STORAGE_ROOT`.
     """
-    root = Path(storage_root) if storage_root is not None else Path(".majordom-dev")
+    root = Path(storage_root) if storage_root is not None else STORAGE_ROOT
     root.mkdir(parents=True, exist_ok=True)
     platform = Platform(documents_root=root)
     if db_path is not None:
@@ -169,7 +171,7 @@ def _runner(
     controllers = [peripheral for peripheral in exported if isinstance(peripheral, AbstractController)]
     if len(controllers) != 1:
         raise ValueError(f"An integration exports one controller, not {len(controllers)}: {list(exported)}")
-    controller, root = controllers[0], Path(storage_root) if storage_root is not None else Path(".majordom-dev")
+    controller, root = controllers[0], Path(storage_root) if storage_root is not None else STORAGE_ROOT
     if peripherals is not None:
         controller.peripherals, controller.output = Peripherals(peripherals), controller_output
         return Runner(controller)
