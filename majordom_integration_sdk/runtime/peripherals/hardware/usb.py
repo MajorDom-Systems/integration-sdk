@@ -36,10 +36,14 @@ FIRMWARE_CACHE = Path(tempfile.gettempdir()) / "majordom-firmware"  # downloads 
 UNSEEN = "another program"  # one that locked a port: whether it let go shows only by opening it
 
 
+class RadioBusy(RuntimeError):
+    """The radio is being flashed or probed already: ask again once that is done."""
+
+
 class Radio(Peripheral["Radio.Settings"]):
     """A radio, a USB stick or soldered on the board: it serves what its firmware does once a driver identified it, and
     nothing while another program holds it or it is being flashed. Flashing, probing and forgetting it are the user's
-    to ask for."""
+    to ask for, one at a time: asked while one runs, they raise `RadioBusy`."""
 
     class Settings(BaseModel):
         firmware_channel: Literal["stable", "dev"] = Field(
@@ -63,7 +67,7 @@ class Radio(Peripheral["Radio.Settings"]):
         self.node = os.path.realpath(path)  # a container keeps the node it was created with: follow a re-enumeration
         self.held_by: str | None = None  # another program that has it open: left alone until probed
         self.is_claimed = False  # the user probed it: opened whoever holds it or whatever its USB id
-        self.is_busy = False  # being flashed or probed
+        self.lock = asyncio.Lock()  # held while it is flashed, probed or identified: one opens its port at a time
         self.has_bluetooth = False  # its multiprotocol firmware serves Bluetooth too
         self.settings = self.Settings()
         self._asked: list[UsbDriver] = []  # the drivers that didn't recognise it
@@ -76,6 +80,11 @@ class Radio(Peripheral["Radio.Settings"]):
         if self.has_bluetooth:  # the multiprotocol container attaches it and tells its hciN
             endpoints.append(Endpoint("ble", "silabs-cpc-hci", self.node, params={"hci": None}))
         return endpoints
+
+    @property
+    def is_busy(self) -> bool:
+        """Being flashed, probed or identified."""
+        return self.lock.locked()
 
     @property
     def options(self) -> list[str]:
@@ -133,12 +142,13 @@ class Radio(Peripheral["Radio.Settings"]):
 
     @contextlib.asynccontextmanager
     async def _busy(self):
-        self.is_busy = True
-        await self.output.peripheral_did_change_provided(self)  # returns once what used it let go of it
+        if self.lock.locked():
+            raise RadioBusy(f"{self.name} is being flashed or probed: ask again once that is done")
         try:
-            yield
+            async with self.lock:
+                await self.output.peripheral_did_change_provided(self)  # returns once what used it let go of it
+                yield
         finally:
-            self.is_busy = False
             await self.output.peripheral_did_change_provided(self)
 
     async def check_bluetooth(self):
@@ -222,7 +232,8 @@ class UsbScanner(Peripheral):
                 if not radio.is_claimed and not radio.is_busy:
                     radio.held_by = _holder(path, is_opening_allowed=is_trusted and radio.driver is None)
                 if is_trusted and radio.driver is None and not radio.held_by and not radio.is_busy:
-                    await radio.recognise()
+                    async with radio.lock:
+                        await radio.recognise()
                 radios[name] = radio
             self._radios = [radios[name] for name in sorted(found)]
         self.remember(*[radio for radio in self._radios if radio.driver or radio.is_claimed])

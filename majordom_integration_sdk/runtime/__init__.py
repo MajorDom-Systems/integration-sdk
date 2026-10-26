@@ -9,7 +9,7 @@ from majordom_integration_sdk.runtime.defaults import default_peripherals
 from majordom_integration_sdk.runtime.peripherals.hardware.drivers import Silabs, ZWave, default_usb_drivers
 from majordom_integration_sdk.runtime.peripherals.hardware.fixed import FixedPeripherals, FixedRadio
 from majordom_integration_sdk.runtime.peripherals.hardware.host import BluetoothAdapters, HostNetwork
-from majordom_integration_sdk.runtime.peripherals.hardware.usb import Radio, UsbScanner
+from majordom_integration_sdk.runtime.peripherals.hardware.usb import Radio, RadioBusy, UsbScanner
 from majordom_integration_sdk.runtime.peripherals.pinned import Pinned
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
@@ -38,6 +38,7 @@ __all__ = [
     "RETRY_DELAYS",
     "UsbScanner",
     "Radio",
+    "RadioBusy",
     "default_usb_drivers",
     "otbr",
     "silabs_multiprotocol",

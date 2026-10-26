@@ -18,6 +18,7 @@ from majordom_integration_sdk.runtime import (
     PeripheralState,
     Pinned,
     Radio,
+    RadioBusy,
     Silabs,
     UsbScanner,
 )
@@ -328,6 +329,33 @@ async def test_a_radio_is_released_before_it_is_flashed_and_used_again_after(tmp
     await settle(runtime)
     assert seen_while_flashed == [PeripheralState.WAITING]  # it let go of the stick first
     assert (state(runtime, integration), state(runtime, multipan)) == (PeripheralState.WAITING, PeripheralState.RUNNING)
+
+
+async def test_a_radio_being_flashed_refuses_another_flash_probe_or_forget(tmp_path, sticks):
+    gate = asyncio.Event()
+
+    class Flashing(Driver):
+        def flashable(self, path: str, channel: str) -> list[str]:
+            return ["zigbee-ncp", "multipan-rcp"]
+
+        async def flash(self, path: str, firmware: str, channel: str, cache: Path):
+            await gate.wait()
+            self.recognised["sky"] = firmware
+
+    plug(sticks, "sky")
+    scanner = UsbScanner([Flashing(sky="zigbee-ncp")])
+    runtime = await run(tmp_path, scanner, zigbee())
+    [radio] = scanner.radios
+    flashing = asyncio.create_task(radio.flash("multipan-rcp"))
+    await until(runtime, lambda: radio.is_busy, settled=False)
+
+    for again in (radio.flash("zigbee-ncp"), radio.probe(), radio.forget()):  # a double tap, a second app
+        with pytest.raises(RadioBusy):
+            await again
+    gate.set()
+    await flashing
+    await settle(runtime)
+    assert (radio.is_busy, radio.firmware) == (False, "multipan-rcp")
 
 
 async def test_a_radio_whose_flash_failed_serves_what_it_runs_now(tmp_path, sticks):
