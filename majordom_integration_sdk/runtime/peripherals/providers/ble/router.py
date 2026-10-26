@@ -368,9 +368,12 @@ class BLEService(Peripheral):
 
     async def _revive_silent(self):
         """Restarts sources that heard nothing for a while: their radio went away under them without a word
-        (bluetoothd restarted, the adapter reset) and they won't come back by themselves."""
+        (bluetoothd restarted, the adapter reset) and they won't come back by themselves. One whose loss is reported
+        otherwise (``is_loss_reported``) may just hear no one, and a restart would drop the links it proxies."""
         for name, source in list(self._sources.items()):
-            if monotonic() - self._heard_at.get(name, 0) > self._silence_sec and not self._is_leased(name):
+            if getattr(source, "is_loss_reported", False) or self._is_leased(name):
+                continue
+            if monotonic() - self._heard_at.get(name, 0) > self._silence_sec:
                 logger.info(f"BLE source {name} heard nothing for {self._silence_sec:.0f} s, restarting it")
                 with contextlib.suppress(Exception):
                     await source.stop()

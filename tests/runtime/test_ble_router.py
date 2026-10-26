@@ -380,6 +380,19 @@ async def test_a_silent_radio_is_restarted(radios):
     assert near.on_advertisement is not None  # listening again
 
 
+async def test_a_silent_radio_whose_loss_is_reported_otherwise_is_never_restarted():
+    proxy = FakeBLESource("esphome:aa", is_loss_reported=True)  # the node's API connection tells when it goes
+    ble = BLEService(sources=[proxy])
+    await ble.start()
+    hearing = proxy.on_advertisement
+
+    ble._silence_sec = 0.01
+    await asyncio.sleep(0.02)  # no Bluetooth device around it
+    await ble._revive_silent()
+    assert proxy.on_advertisement is hearing  # still subscribed: a restart would drop the links it proxies
+    await ble.stop()
+
+
 async def test_a_local_adapter_stops_scanning_while_it_connects(monkeypatch):
     from majordom_integration_sdk.runtime.peripherals.providers.ble import bluez as module
     from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import LocalAdapter

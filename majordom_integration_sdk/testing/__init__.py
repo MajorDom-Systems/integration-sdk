@@ -272,11 +272,13 @@ class FakeBLESource:
         connection: BLEConnection | None = None,
         is_pairable: bool = False,
         free_slots: int | None = None,
+        is_loss_reported: bool = False,
     ):
         self.name = name
         self.connection = connection
         self.is_pairable = is_pairable
         self.free_slots = free_slots
+        self.is_loss_reported = is_loss_reported
         self.on_advertisement: OnAdvertisement | None = None
         self.connected: list[str] = []
 

@@ -107,8 +107,10 @@ class PairableBLEConnection(BLEConnection, Protocol):
 
 class BLESource(Protocol):
     """A radio that hears advertisements and can connect to devices: a local adapter or a proxy. Optional
-    attributes the router reads: a true ``is_pairable`` when its connections are `PairableBLEConnection`s, and
-    ``free_slots``, the connections it can still open (a proxy has a few), None when it can't tell."""
+    attributes the router reads: a true ``is_pairable`` when its connections are `PairableBLEConnection`s,
+    ``free_slots``, the connections it can still open (a proxy has a few), None when it can't tell, and a true
+    ``is_loss_reported`` when its radio going away is reported otherwise (an ESPHome node's API connection drops, and
+    the integration takes the source away): the router then never restarts it for hearing nothing for a while."""
 
     name: str
 
