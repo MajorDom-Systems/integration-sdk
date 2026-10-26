@@ -931,10 +931,28 @@ async def test_invalid_stored_settings_fail_only_their_peripheral(tmp_path):
         K.INVALID_SETTINGS,
         "Invalid settings: channel: Input should be a valid integer, unable to parse string as an integer",
     )
+    assert runtime.stored_settings(integration) == {"channel": "eleven"}  # what the Hub shows with the failure
+
+    await runtime.restart(integration)  # the user tries again: they still don't validate
+    await settle(runtime)
+    assert runtime.status(integration).kind == K.INVALID_SETTINGS and integration.calls == []
 
     await runtime.update_settings(integration, {"channel": 15})
     await settle(runtime)
     assert state(runtime, integration) == S.RUNNING and integration.settings == Channel(channel=15)
+    assert runtime.stored_settings(integration) == {"channel": 15}
+
+
+async def test_one_disabled_with_invalid_stored_settings_fails_once_enabled(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "state.json").write_text(json.dumps({"settings": {"zigbee": {"channel": "eleven"}}}))
+    integration = FakePeripheral("zigbee", settings=Channel)
+    runtime = await run(tmp_path, integration, disabled=MemoryDisabledStore(["zigbee"]))
+    assert state(runtime, integration) == S.DISABLED
+
+    await runtime.enable(integration)
+    await settle(runtime)
+    assert runtime.status(integration).kind == K.INVALID_SETTINGS and integration.calls == []
 
 
 async def test_stored_settings_it_no_longer_has_are_dropped(tmp_path):

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -250,6 +251,10 @@ class Runtime:
         'need ble/bluez: every provider taken by ble-router — use Need("ble", ["router"])'."""
         return dict(self._unbound.get(self._entry(peripheral).key, {}))
 
+    def stored_settings(self, peripheral: Peripheral) -> dict[str, Any]:
+        """Its settings as kept, raw: what to show with an invalid-settings failure, where they don't validate."""
+        return copy.deepcopy(self.state["settings"].get(self._entry(peripheral).key, {}))
+
     def users(self, peripheral: Peripheral) -> list[str]:
         """Every peripheral that runs on it, directly or through others: a radio's integrations and their containers."""
         users: list[str] = []
@@ -324,6 +329,7 @@ class Runtime:
             if entry.state == PeripheralState.DISABLED:
                 entry.state = PeripheralState.WAITING
                 self._revive(entry)
+                self._check_settings(entry)
 
         await self._act(apply)
 
@@ -335,7 +341,8 @@ class Runtime:
 
     async def restart(self, peripheral: Peripheral):
         """Stop it if it runs and start it again, a failed one or one that stopped by itself too: its retries start
-        over. Called from inside a peripheral's own start, stop or hook, it happens once that call returns."""
+        over, and its kept settings are read again (still invalid, it stays failed until they are updated). Called from
+        inside a peripheral's own start, stop or hook, it happens once that call returns."""
         entry = self._entry(peripheral)
         if entry.state == PeripheralState.DISABLED:
             raise ValueError(f"{entry.key} is disabled: enable it")
@@ -343,6 +350,7 @@ class Runtime:
         async def apply():
             await self._stop(entry, _waiting())
             self._revive(entry)
+            self._check_settings(entry)
 
         await self._act(apply)
 
@@ -559,16 +567,24 @@ class Runtime:
         status = _waiting()
         if key in self._failed:
             status = PeripheralStatus(PeripheralState.FAILED, StatusKind.GAVE_UP, self._failed[key])
+        status = self._invalid_settings(peripheral, key) or status
+        if self.disabled.is_disabled(key):
+            status = PeripheralStatus(PeripheralState.DISABLED)
+        return _Entry(peripheral, key, status.state, status.kind, status.detail)
+
+    def _invalid_settings(self, peripheral: Peripheral, key: str) -> PeripheralStatus | None:
+        """Load its settings: the failure of one whose kept ones don't validate, which keeps them as they are."""
         try:
             self._load_settings(peripheral, key)
         except ValidationError as error:
             invalid = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
-            status = PeripheralStatus(
-                PeripheralState.FAILED, StatusKind.INVALID_SETTINGS, f"Invalid settings: {invalid}"
-            )
-        if self.disabled.is_disabled(key):
-            status = PeripheralStatus(PeripheralState.DISABLED)
-        return _Entry(peripheral, key, status.state, status.kind, status.detail)
+            return PeripheralStatus(PeripheralState.FAILED, StatusKind.INVALID_SETTINGS, f"Invalid settings: {invalid}")
+        return None
+
+    def _check_settings(self, entry: _Entry):
+        """Read its kept settings again as it is let start: one whose don't validate stays failed until updated."""
+        if status := self._invalid_settings(entry.peripheral, entry.key):
+            entry.state, entry.kind, entry.detail = status.state, status.kind, status.detail
 
     def _load_settings(self, peripheral: Peripheral, key: str):
         """The ones kept, else the ones it was given or the defaults, kept from now on; kept ones it no longer has (its
