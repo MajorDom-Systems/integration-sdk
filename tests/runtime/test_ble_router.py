@@ -9,7 +9,7 @@ import pytest
 from majordom_integration_sdk.capabilities import BLEBusyError, BLEConnection, BLEDiscoveryInfo, BLEMatcher
 from majordom_integration_sdk.peripherals import Endpoint, Peripherals
 from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
-from majordom_integration_sdk.testing import FakeBLESource
+from majordom_integration_sdk.testing import FakeBLERouter, FakeBLESource
 
 MATTER = UUID("0000fff6-0000-1000-8000-00805f9b34fb")
 APPLE = 0x004C
@@ -325,6 +325,18 @@ async def test_a_listener_registered_later_hears_devices_already_around(radios):
     ble.register(listener, {MATTER})
     await settle()
     assert [i.device.address for i in listener.found] == ["AA"]
+
+
+def test_a_fake_router_shows_who_registered_for_what():
+    router = FakeBLERouter()
+    cancel = router.register(listener := Listener(), [MATTER])
+    registered = [(listener, [BLEMatcher(service_uuid=MATTER)])]
+    assert router.registrations == registered
+
+    router.registrations.clear()  # a copy: reading it changes nothing
+    assert router.registrations == registered
+    cancel()
+    assert router.registrations == []
 
 
 async def test_a_radio_that_fails_to_stop_is_let_go_of_all_the_same(radios):

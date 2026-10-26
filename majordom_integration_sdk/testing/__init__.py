@@ -29,7 +29,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from majordom_integration_sdk.capabilities.ble import BLEConnection, OnAdvertisement
+from majordom_integration_sdk.capabilities.ble import BLEConnection, BLEDiscoveryListener, BLEMatcher, OnAdvertisement
 from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
 from majordom_integration_sdk.controller.platform import Platform
 from majordom_integration_sdk.peripherals import Endpoint, Need, NoSettings, Peripheral, PeripheralChange, Service
@@ -228,6 +228,11 @@ class FakeSSDP(SSDPDiscoveryService):
 
 class FakeBLERouter(BLEService):
     """A router with no radio unless given `FakeBLESource`s; ``start``/``stop`` run no background tasks."""
+
+    @property
+    def registrations(self) -> list[tuple[BLEDiscoveryListener, list[BLEMatcher]]]:
+        """Every listener registered (and not cancelled) with what it listens for, as a copy."""
+        return [(listener, list(matchers)) for listener, matchers in self._listeners]
 
     async def start(self):
         await self._follow_bound()
