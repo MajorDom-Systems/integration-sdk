@@ -56,7 +56,6 @@ class StatusKind(StrEnum):
     STOPPED_ITSELF = "stopped-itself"  # waiting: until its needs change or the user restarts it
     GAVE_UP = "gave-up"  # failed: its retries are spent
     INVALID_SETTINGS = "invalid-settings"  # failed: its stored settings don't validate
-    KEY_TAKEN = "key-taken"  # failed: another peripheral has its key
 
 
 @dataclass(frozen=True)
@@ -182,7 +181,7 @@ class Runtime:
         saved = read_json(data / "state.json")
         self.state |= {key: saved[key] for key in saved.keys() & self.state.keys()}  # older keys start fresh
         self._entries: dict[str, _Entry] = {}  # in binding order
-        self._clashes: list[_Entry] = []  # failed: another took their key
+        self._duplicates: list[Peripheral] = []  # left out: another has their key
         self._gone: list[_Entry] = []  # to report
         self._failed: dict[str, str] = {}  # key -> why, for the session: one brought along anew stays failed
         self._wanted: set[str] = set()  # the ones that should run
@@ -227,9 +226,9 @@ class Runtime:
 
     @property
     def peripherals(self) -> list[Peripheral]:
-        """Every peripheral it runs, in binding order: what it was given and what those brought along; then the ones
-        that failed as another took their key."""
-        return [entry.peripheral for entry in [*self._entries.values(), *self._clashes]]
+        """Every peripheral it runs, in binding order: what it was given and what those brought along. One whose key
+        another one before it has is left out, and logged."""
+        return [entry.peripheral for entry in self._entries.values()]
 
     def peripheral(self, key: str) -> Peripheral:
         return self._entries[key].peripheral
@@ -305,7 +304,10 @@ class Runtime:
     # What the Hub (or you) changes
 
     async def add(self, peripheral: Peripheral):
-        """Run ``peripheral`` too, as if given last: an integration installed while the hub runs."""
+        """Run ``peripheral`` too, as if given last: an integration installed while the hub runs. ValueError when
+        another peripheral has its key."""
+        if any(other.key == peripheral.key for other in [*self.given, *self.peripherals]):
+            raise ValueError(f"Can't add {peripheral.name}: another peripheral has the key {peripheral.key}")
         self.given.append(peripheral)
         await self._settle()
 
@@ -384,7 +386,7 @@ class Runtime:
         (`Peripheral.platform_facts_did_change`), one still starting may have read the ones before, so it hears it once
         it runs."""
         before, self.platform = self.platform, platform
-        for entry in [*self._entries.values(), *self._clashes]:
+        for entry in self._entries.values():
             entry.peripheral.platform = platform
         if platform == before:
             return
@@ -447,7 +449,7 @@ class Runtime:
         return entry
 
     def _find(self, peripheral: Peripheral) -> _Entry | None:
-        return next((e for e in [*self._entries.values(), *self._clashes] if e.peripheral is peripheral), None)
+        return next((entry for entry in self._entries.values() if entry.peripheral is peripheral), None)
 
     async def _act(self, change: Callable[[], Awaitable[Any]]):
         """Make a change and settle."""
@@ -522,16 +524,15 @@ class Runtime:
         """Every peripheral given, and what the ones that run brought along, in binding order; the ones gone are
         returned."""
         entries: dict[str, _Entry] = {}
-        clashes: list[_Entry] = []
+        duplicates: list[Peripheral] = []
         gone: list[_Entry] = []
-        known = {id(entry.peripheral): entry for entry in [*self._entries.values(), *self._clashes]}
 
         def walk(peripheral: Peripheral, contributor: Peripheral | None):
             peripheral.contributor = contributor
             key = peripheral.key
             if (seen := entries.get(key)) is not None:
                 if seen.peripheral is not peripheral:
-                    clashes.append(known.get(id(peripheral)) or self._clash(peripheral))
+                    duplicates.append(peripheral)
                 return
             entry = self._entries.get(key)
             if entry is None or entry.peripheral is not peripheral:
@@ -546,8 +547,10 @@ class Runtime:
         for peripheral in self.given:
             walk(peripheral, None)
         gone += [entry for key, entry in self._entries.items() if key not in entries]
-        self._gone += [clash for clash in self._clashes if all(clash is not c for c in clashes)]
-        self._entries, self._clashes = entries, clashes
+        for duplicate in duplicates:
+            if all(duplicate is not known for known in self._duplicates):
+                log.error(f"Another peripheral has the key {duplicate.key}: {duplicate.name} is left out")
+        self._entries, self._duplicates = entries, duplicates
         return gone
 
     def _adopt(self, peripheral: Peripheral) -> _Entry:
@@ -566,11 +569,6 @@ class Runtime:
         if self.disabled.is_disabled(key):
             status = PeripheralStatus(PeripheralState.DISABLED)
         return _Entry(peripheral, key, status.state, status.kind, status.detail)
-
-    def _clash(self, peripheral: Peripheral) -> _Entry:
-        log.error(f"Two peripherals have the key {peripheral.key}: the second fails")
-        detail = f"another peripheral has the key {peripheral.key}"
-        return _Entry(peripheral, peripheral.key, PeripheralState.FAILED, StatusKind.KEY_TAKEN, detail)
 
     def _load_settings(self, peripheral: Peripheral, key: str):
         """The ones kept, else the ones it was given or the defaults, kept from now on; kept ones it no longer has (its
@@ -809,7 +807,7 @@ class Runtime:
             if self.output and entry.reported is not None:
                 with _logged(f"Reporting {entry.key} gone"):
                     self.output.peripheral_did_disappear(entry.peripheral)
-        for entry in [*self._entries.values(), *self._clashes]:
+        for entry in self._entries.values():
             if entry.reported != (status := entry.status):
                 entry.reported = status
                 if self.output:

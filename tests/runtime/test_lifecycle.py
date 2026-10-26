@@ -583,18 +583,43 @@ async def test_one_that_failed_stays_failed_when_brought_along_anew(tmp_path):
     assert state(runtime, again) == S.RUNNING
 
 
-async def test_a_second_one_of_a_key_fails_saying_why(tmp_path):
+async def test_a_second_one_of_a_key_is_left_out_and_logged_once(tmp_path, caplog):
     first = FakePeripheral("mqtt", provides=[Endpoint("mqtt", "a", "x", is_shared=True)], is_on_demand=True)
     second = FakePeripheral("mqtt", provides=[Endpoint("mqtt", "b", "y", is_shared=True)], is_on_demand=True)
     one, two = FakePeripheral("one", [Need("mqtt", ["a"])]), FakePeripheral("two", [Need("mqtt", ["b"])])
-    runtime = await run(tmp_path, first, one, second, two)
+    output = RecordingRuntimeOutput()
+    runtime = await run(tmp_path, first, one, second, two, output=output)
+    await runtime.refresh()
 
-    assert runtime.status(second) == PeripheralStatus(S.FAILED, K.KEY_TAKEN, "another peripheral has the key mqtt")
-    assert second in runtime.peripherals
+    assert runtime.peripherals == [first, one, two] and runtime.peripheral("mqtt") is first
+    with pytest.raises(LookupError):
+        runtime.status(second)  # nothing the Hub keys by its key: no status, no settings, never gone
+    assert output.last("mqtt") == PeripheralStatus(S.RUNNING) and second.calls == []
     assert (state(runtime, one), runtime.status(two)) == (
         S.RUNNING,
         PeripheralStatus(S.WAITING, K.NEEDS_UNBOUND, "need mqtt/b: nothing offers it"),
     )
+    assert caplog.text.count("Another peripheral has the key mqtt") == 1
+
+
+async def test_one_brought_along_under_a_taken_key_is_left_out(tmp_path):
+    proxy, again = FakePeripheral("aa"), FakePeripheral("aa")
+    runtime = await run(tmp_path, FakePeripheral("esphome", provides=[proxy, again]))
+    assert runtime.peripheral("esphome/aa") is proxy and again not in runtime.peripherals
+    assert (proxy.calls, again.calls) == (["start"], [])
+
+
+async def test_adding_one_whose_key_is_taken_raises(tmp_path):
+    output, original = RecordingRuntimeOutput(), FakePeripheral("zigbee")
+    runtime = await run(tmp_path, original, output=output)
+    fork = FakePeripheral("zigbee")  # e.g. a fork installed beside the original
+
+    with pytest.raises(ValueError, match="another peripheral has the key zigbee"):
+        await runtime.add(fork)
+    await settle(runtime)
+    assert runtime.peripherals == [original] and output.last("zigbee") == PeripheralStatus(S.RUNNING)
+    await runtime.remove(fork)  # never added: nothing goes
+    assert output.disappeared == [] and state(runtime, original) == S.RUNNING
 
 
 async def test_what_uses_a_provider_stops_before_it(tmp_path):
