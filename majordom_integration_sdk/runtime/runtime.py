@@ -377,8 +377,7 @@ class Runtime:
         settings = model.model_validate(current | dict(values))
         before = live if live is not None else settings
         peripheral.settings = settings
-        self.state["settings"][entry.key] = peripheral.settings.model_dump(mode="json")
-        self._save()
+        self._keep_settings(entry.key, settings)
 
         async def apply():
             if entry.state in (PeripheralState.FAILED, PeripheralState.WAITING):
@@ -599,12 +598,16 @@ class Runtime:
             peripheral.settings = model.model_validate({k: v for k, v in stored.items() if k in model.model_fields})
         elif not isinstance(getattr(peripheral, "settings", None), model):
             peripheral.settings = model()
-        if (dumped := peripheral.settings.model_dump(mode="json")) != (stored or {}):  # freeze generated defaults
-            if dumped:
-                self.state["settings"][key] = dumped
-            else:
-                del self.state["settings"][key]
-            self._save()
+        if peripheral.settings.model_dump(mode="json") != (stored or {}):  # freeze generated defaults
+            self._keep_settings(key, peripheral.settings)
+
+    def _keep_settings(self, key: str, settings: BaseModel):
+        """Keep ``settings`` from now on; nothing for a peripheral without any."""
+        if dumped := settings.model_dump(mode="json"):
+            self.state["settings"][key] = dumped
+        else:
+            self.state["settings"].pop(key, None)
+        self._save()
 
     def _resolve(self):
         """The ones that should run: from the ones alive that run anyway, down through what they bind, binding in order

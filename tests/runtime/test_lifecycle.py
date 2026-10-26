@@ -904,6 +904,7 @@ async def test_one_without_settings_takes_none(tmp_path):
     assert host.settings == NoSettings()
     with pytest.raises(ValidationError):
         await runtime.update_settings(host, {"x": 1})
+    await runtime.update_settings(host, {})
     assert runtime.state["settings"] == {}  # nothing kept for it
 
 
