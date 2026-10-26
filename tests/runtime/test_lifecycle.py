@@ -2,7 +2,9 @@
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from typing import Any
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
@@ -417,6 +419,70 @@ async def test_a_call_scheduled_by_a_status_callback_returns_once_acted_on(tmp_p
     assert seen == [S.DISABLED]
 
 
+class Keeper(FakePeripheral):
+    """Keeps a connection in a task of its own, which tells the runtime it can't go on; its stop cancels that task
+    and waits for it, as a controller's does."""
+
+    def __init__(self, tell: Callable[[FakePeripheral], Awaitable[Any]]):
+        super().__init__("keeper")
+        self.tell = tell
+
+    async def start(self):
+        await super().start()
+        self.keeper = asyncio.create_task(self.keep())
+
+    async def keep(self):
+        await asyncio.sleep(0)
+        if len(self.calls) == 1:
+            await self.tell(self)
+
+    async def stop(self):
+        await super().stop()
+        self.keeper.cancel()
+        await asyncio.wait([self.keeper])
+
+
+@pytest.mark.parametrize(
+    ("tell", "status"),
+    [
+        (lambda p: p.output.peripheral_did_fail(p, "Lost the server."), PeripheralStatus(S.WAITING, K.RETRYING)),
+        (lambda p: p.output.peripheral_did_stop(p), PeripheralStatus(S.WAITING, K.STOPPED_ITSELF)),
+    ],
+)
+async def test_one_that_tells_from_its_own_task_is_stopped_in_the_runtimes(tmp_path, tell, status):
+    keeper = Keeper(tell)
+    runtime = await run(tmp_path, keeper)
+    await asyncio.wait([keeper.keeper])
+    await settle(runtime)
+    assert (keeper.calls, runtime.status(keeper).state, runtime.status(keeper).kind) == (
+        ["start", "stop"],
+        status.state,
+        status.kind,
+    )
+    assert keeper.keeper.cancelled()  # its stop ended the task that told
+
+
+async def test_a_pass_a_call_set_off_goes_on_when_the_caller_is_cancelled(tmp_path):
+    heard, release = asyncio.Event(), asyncio.Event()
+
+    class Slow(FakePeripheral):
+        async def needed_peripheral_did_change(self, change):
+            heard.set()
+            await release.wait()
+            return await super().needed_peripheral_did_change(change)
+
+    stick, integration = radio(ZIGBEE), Slow("zigbee", [Need("zigbee")], answer=True)
+    runtime = await run(tmp_path, stick, integration)
+    stick.provided = [MOVED]
+    caller = asyncio.create_task(stick.output.peripheral_did_change_provided(stick))  # e.g. a node's connection
+    await heard.wait()
+    caller.cancel()  # e.g. the node was unpaired meanwhile
+    release.set()
+    await settle(runtime)
+    assert integration.changes == [PeripheralChange("zigbee", ZIGBEE, MOVED)]  # the hook ran to its end
+    assert (state(runtime, integration), integration.calls) == (S.RUNNING, ["start"])
+
+
 # a server next to what needs it, and what a peripheral brings along while it runs
 
 
@@ -782,8 +848,9 @@ async def test_new_settings_reach_one_still_starting_once_it_runs(tmp_path):
     for slow in (handles, restarts):
         await runtime.update_settings(slow, {"channel": 15})  # it may have read the ones before
         await runtime.update_settings(slow, {"channel": 20})
-        slow.gate.set()
     assert handles.changes == restarts.changes == []
+    handles.gate.set()
+    restarts.gate.set()
     await settle(runtime)
     assert handles.changes == restarts.changes == [("settings", Channel())]  # once, since what it read
     assert (handles.calls, restarts.calls) == (["start"], ["start", "stop", "start"])

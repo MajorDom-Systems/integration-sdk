@@ -450,11 +450,8 @@ class Runtime:
         return next((e for e in [*self._entries.values(), *self._clashes] if e.peripheral is peripheral), None)
 
     async def _act(self, change: Callable[[], Awaitable[Any]]):
-        """Make a change and settle; from inside a call the runtime waits on, once that returns."""
-        if self._is_driving():
-            self._spawn(self._act_unlocked(change))
-            return
-        await self._act_unlocked(change)
+        """Make a change and settle."""
+        await self._in_own_task(self._act_unlocked(change))
 
     async def _act_unlocked(self, change: Callable[[], Awaitable[Any]]):
         async with self._locked():
@@ -462,11 +459,16 @@ class Runtime:
         await self.refresh()
 
     async def _settle(self):
-        """Bind and run anew: now, or from inside a call the runtime waits on, once that returns."""
-        if self._is_driving():
-            self._spawn(self.refresh())
-        else:
-            await self.refresh()
+        """Bind and run anew."""
+        await self._in_own_task(self.refresh())
+
+    async def _in_own_task(self, work: Awaitable[Any]):
+        """Do ``work`` in a task of the runtime's own, never in the caller's: a stop it brings may cancel the caller (a
+        peripheral telling from its own task), and a caller cancelled meanwhile only stops waiting. The caller waits
+        for it, unless the runtime waits on the caller: then it happens once that call returns."""
+        task = self._spawn(work)
+        if not self._is_driving():
+            await asyncio.shield(task)
 
     def _is_driving(self) -> bool:
         """Whether the runtime waits on the current task: it holds the lock, or it is a start. Waiting in it for the

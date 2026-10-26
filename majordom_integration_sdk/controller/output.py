@@ -65,7 +65,8 @@ class ControllerOutput(Protocol):
 
         A controller that can't go on reports an error that isn't ``is_still_running``: it is stopped,
         started again after each of the runtime's retry delays (5, 30, 120 s), then failed until the
-        user restarts it, ``error.message`` saying why. One that can't start raises from ``start``.
+        user restarts it, ``error.message`` saying why: report it right from the task that found it (the runtime
+        stops the controller in a task of its own). One that can't start raises from ``start``.
         """
         ...
 
