@@ -176,6 +176,23 @@ async def test_a_typed_state_without_data_holds_its_own_model_and_keeps_the_stor
         assert typed is not None and typed.integration_data.token == "t"
 
 
+async def test_data_filled_in_place_on_a_device_saved_without_any_is_kept(repository):
+    """Read back from a record without data, a typed device holds its own model, unset; filled in place (a pairing on
+    the record the Hub seeded), it is saved: the record has no data to keep."""
+    seeded = Device(
+        id=uuid4(), name="Lamp", room_id=uuid4(), transport="wifi", integration="example", manufacturer=None
+    )
+    async with repository.session() as repo:
+        await repo.save(seeded)
+        device = await repo.get(seeded.id, as_=Device[_Learned])
+        assert device is not None
+        device.integration_data.firmware = "1.2"
+        await repo.save(device)
+
+        kept = await repo.get(seeded.id, as_=Device[_Learned])
+        assert kept is not None and kept.integration_data.firmware == "1.2"
+
+
 def test_optional_data_is_none_until_paired(device_state):
     """`Device[X | None]`: unset, or the `{}` the Hub stores a device with before pairing, is None."""
     optional = DeviceState[_PairingData | None]
