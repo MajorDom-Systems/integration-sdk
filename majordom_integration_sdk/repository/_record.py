@@ -31,8 +31,9 @@ def dump(device: BaseModel, exclude: set[str] | None = None) -> Record:
 
 def merge(base: Record | None, device: Device | DeviceState) -> Record:
     """Merge a device into an existing record without clobbering the other view's fields: an unset
-    ``integration_data`` (its default) only where the record has none, so that filling the default in place counts."""
-    unset = {"integration_data"} - device.model_fields_set if base and "integration_data" in base else set()
+    ``integration_data`` (its default) only where the record has none (the ``{}`` or null the Hub stores a device with
+    before pairing is none), so that filling the default in place counts."""
+    unset = {"integration_data"} - device.model_fields_set if base and base.get("integration_data") else set()
     return {**(base or {}), **dump(device, exclude=unset)}
 
 

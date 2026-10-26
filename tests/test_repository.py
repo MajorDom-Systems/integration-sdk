@@ -193,6 +193,24 @@ async def test_data_filled_in_place_on_a_device_saved_without_any_is_kept(reposi
         assert kept is not None and kept.integration_data.firmware == "1.2"
 
 
+@pytest.mark.parametrize("stored", [{}, None])
+async def test_data_filled_in_place_on_a_state_saved_onto_a_record_holding_none_is_kept(repository, stored):
+    """The `{}` (or null) the Hub stores a device with before pairing is no data to keep: a typed state built without
+    any and filled in place (a pairing) is saved, as the Hub's own repository does."""
+    seeded = Device(
+        id=uuid4(), name="Lamp", room_id=uuid4(), transport="wifi", integration="example", manufacturer=None,
+        integration_data=stored,
+    )  # fmt: skip
+    async with repository.session() as repo:
+        await repo.save(seeded)
+        state = DeviceState[_Learned](**seeded.model_dump(exclude={"integration_data"}), parameters=[])
+        state.integration_data.firmware = "1.2"
+        await repo.save(state)
+
+        kept = await repo.get(seeded.id, as_=Device[_Learned])
+        assert kept is not None and kept.integration_data.firmware == "1.2"
+
+
 def test_optional_data_is_none_until_paired(device_state):
     """`Device[X | None]`: unset, or the `{}` the Hub stores a device with before pairing, is None."""
     optional = DeviceState[_PairingData | None]
