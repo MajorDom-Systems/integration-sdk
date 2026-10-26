@@ -59,7 +59,7 @@ def border_router():
             pass
 
     server = ThreadingTCPServer(("127.0.0.1", 0), Handler)  # HTTPServer would resolve the host name first
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever, args=(0.01,), daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}", state
     server.shutdown()
     server.server_close()
@@ -106,7 +106,7 @@ async def test_forms_only_once(border_router):
     await asyncio.wait_for(join_network(url, None, patience=0), 3)
     assert len(state["puts"]) == 2  # one dataset, one enable
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(active_dataset(url), 2)
+        await asyncio.wait_for(active_dataset(url), 0.2)
 
 
 @pytest.mark.parametrize(("router", "formed"), [(otbr, ""), (silabs_multiprotocol, OTHER)])
@@ -148,7 +148,7 @@ async def test_learns_the_network_only_once_a_channel_move_landed(border_router)
     moved = dataset("dead00beef00cafe", channel=15)
     state["dataset"], state["pending"] = dataset("dead00beef00cafe", channel=20), moved
     learning = asyncio.create_task(active_dataset(url))
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(0.2)
     assert not learning.done()  # Matter would commission devices onto the channel it leaves
 
     state["dataset"], state["pending"] = moved, ""

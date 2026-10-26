@@ -23,6 +23,7 @@ class ThreadRadio(BaseModel):
 
 _OTBR_REST = Endpoint("thread", "otbr-rest", "http://127.0.0.1:{ports.rest}", is_shared=True)
 FORM_PATIENCE = 15  # seconds a border router answers without a network before one is formed on it
+POLL = 1  # seconds between asks of a border router that isn't there yet
 MOVE_DELAY = 10_000  # ms before a network moves to another channel, so its devices move along, as the entrypoints do
 _CHANNEL, _EXTENDED_PAN_ID, _ACTIVE_TIMESTAMP, _PENDING_TIMESTAMP, _DELAY_TIMER = 0, 2, 14, 51, 52  # dataset TLVs
 
@@ -154,7 +155,7 @@ async def active_dataset(url: str) -> str:
             active, pending = await asyncio.to_thread(_datasets, url)
             if active and not pending:
                 return active
-        await asyncio.sleep(1)
+        await asyncio.sleep(POLL)
 
 
 async def network_channel(url: str) -> int:
@@ -164,7 +165,7 @@ async def network_channel(url: str) -> int:
             active, pending = await asyncio.to_thread(_datasets, url)
             if active:
                 return _channel(pending or active)
-        await asyncio.sleep(1)
+        await asyncio.sleep(POLL)
 
 
 async def move_channel(url: str, channel: int):
@@ -177,7 +178,7 @@ async def move_channel(url: str, channel: int):
                 await asyncio.to_thread(_call, url, "PUT", "/node/dataset/pending", _moved(active, channel))
             return
         except OSError:  # not up, or not attached yet: a pending dataset needs a network to go to
-            await asyncio.sleep(1)
+            await asyncio.sleep(POLL)
 
 
 async def join_network(url: str, dataset: str | None, patience: float = FORM_PATIENCE):
@@ -201,13 +202,13 @@ async def join_network(url: str, dataset: str | None, patience: float = FORM_PAT
                 if dataset and _tlvs(active)[_EXTENDED_PAN_ID] != _tlvs(dataset)[_EXTENDED_PAN_ID]:
                     await asyncio.to_thread(put, True)
                 return
-            answered += 1
+            answered += POLL
             if answered > patience:
                 await asyncio.to_thread(put, False)
                 return
         except OSError:
             pass  # not up yet
-        await asyncio.sleep(1)
+        await asyncio.sleep(POLL)
 
 
 def _tlvs(dataset: str) -> dict[int, bytes]:
