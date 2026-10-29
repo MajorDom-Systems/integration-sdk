@@ -98,7 +98,7 @@ class Peripherals:
     def endpoints(self, family: str) -> list[Endpoint]:
         """Every endpoint bound to the need of ``family``; empty while it is unbound."""
         bound = self.bound.get(family, [])
-        return bound if isinstance(bound, list) else [bound]
+        return [bound] if isinstance(bound, Endpoint) else bound
 
     def instance[T](self, need: Need[T]) -> T | None:
         """The in-process peripheral bound to ``need``, typed by it, e.g. the Bluetooth router; None while unbound."""

@@ -240,7 +240,7 @@ class _Peripherals(dict):
 
     def __getattr__(self, family: str) -> Endpoint:
         bound: Bound = self.get(family, Endpoint(""))
-        endpoint = (bound or [Endpoint("")])[0] if isinstance(bound, list) else bound
+        endpoint = bound if isinstance(bound, Endpoint) else (bound or [Endpoint("")])[0]
         return replace(endpoint, params=_Params(endpoint.params))
 
 

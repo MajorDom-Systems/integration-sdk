@@ -80,7 +80,7 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
             cls.name = _titleize(cls.__name__)
 
     # A controller reports through the controller calls alone: the runtime's output answers the peripheral ones too
-    output: ControllerOutput = LoggingControllerOutput()  # ty: ignore[invalid-attribute-override]
+    output: ControllerOutput = LoggingControllerOutput()
 
     def __init__(self, platform: Platform, *, settings: TSettings | None = None):
         """``settings`` hold until the user changes them (the runtime keeps them): the defaults of ``Settings`` without.

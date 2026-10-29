@@ -187,7 +187,7 @@ class _CliSession:
             wanted += "" if need.is_required else " (optional)"
             if (endpoints := bound.get(need.family)) is not None:
                 urls = ", ".join(
-                    e.url or e.dialect for e in (endpoints if isinstance(endpoints, list) else [endpoints])
+                    e.url or e.dialect for e in ([endpoints] if isinstance(endpoints, Endpoint) else endpoints)
                 )
                 by = providers.get(need.family, "you")
                 rows.append(f"{wanted}  -> {urls}  by {', '.join(by) if isinstance(by, list) else by}")

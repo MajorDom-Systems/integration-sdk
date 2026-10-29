@@ -8,7 +8,12 @@ from uuid import UUID
 from pydantic import Field, SerializeAsAny, field_validator
 
 from .base import Base, NonEmptyStr
-from .credentials import CredentialsOption, CredentialsType, CredentialsValue, ProvidedCredentials  # noqa: F401  (they lived here)
+from .credentials import (  # noqa: F401  (they lived here)
+    CredentialsOption,
+    CredentialsType,
+    CredentialsValue,
+    ProvidedCredentials,
+)
 from .parameter import Parameter, ParameterState
 
 # TODO: split the file

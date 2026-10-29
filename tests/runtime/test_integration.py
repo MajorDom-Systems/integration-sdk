@@ -1,6 +1,7 @@
 """An integration controller run by the runtime like any peripheral: its platform, settings and peripherals."""
 
 import json
+from typing import cast
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
@@ -78,7 +79,7 @@ def integration() -> tuple[Service[Greeting], EchoController]:
     """What the integration exports, given its platform as by the Hub."""
     server, echo = peripherals(build_test_platform())
     assert isinstance(server, Service) and isinstance(echo, EchoController)
-    return server, echo
+    return cast(Service[Greeting], server), echo
 
 
 async def test_an_integration_runs_once_the_server_it_provides_serves(tmp_path):

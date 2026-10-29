@@ -95,7 +95,7 @@ class Service[S: BaseModel = Any](Peripheral[S]):
     """
 
     is_on_demand = True
-    start_timeout = 30 * 60  # its first start pulls its image
+    start_timeout: float = 30 * 60  # its first start pulls its image
 
     def __init__(
         self,
