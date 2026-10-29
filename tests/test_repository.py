@@ -3,7 +3,7 @@
 from uuid import uuid4
 
 import pytest
-from conftest import make_device_state
+from factories import make_device_state
 
 from majordom_integration_sdk.repository import (
     DeviceRepositoryMemory,
@@ -11,7 +11,7 @@ from majordom_integration_sdk.repository import (
     SqliteDeviceRepository,
 )
 from majordom_integration_sdk.schemas.base import Base
-from majordom_integration_sdk.schemas.device import Device
+from majordom_integration_sdk.schemas.device import Device, DeviceState
 from majordom_integration_sdk.schemas.parameter import ParameterVisibility
 
 
@@ -21,8 +21,20 @@ class _PairingData(Base):
     token: str
 
 
-class _MyDevice(Device):
-    integration_data: _PairingData
+class _Endpoint(Base):
+    """A parameter's own typed `integration_data`."""
+
+    endpoint: int
+
+
+class _Learned(Base):
+    """Typed `integration_data` an unpaired device can hold: every field has a default."""
+
+    firmware: str | None = None
+
+
+class _MyDevice(Device[_PairingData]):
+    pass
 
 
 def make_my_device(device_id=None, token: str = "secret", integration: str = "example") -> _MyDevice:
@@ -118,9 +130,22 @@ async def test_typed_read_returns_typed_integration_data(repository):
         assert [d.integration_data.token for d in listed] == ["secret"]
 
 
+async def test_a_typed_state_reads_the_data_of_the_device_and_its_parameters(repository, device_state):
+    device_state.parameters[0].integration_data = {"endpoint": 1}
+    async with repository.session() as repo:
+        await repo.save(device_state)
+        await repo.save(make_my_device(device_id=device_state.id, integration=device_state.integration))
+
+        state = await repo.state(device_state.id, as_=DeviceState[_PairingData, _Endpoint])
+        assert state is not None and state.integration_data.token == "secret"
+        assert state.parameters[0].integration_data.endpoint == 1
+        untyped = await repo.state(device_state.id)  # a bare name means any data
+        assert untyped is not None and untyped.parameters[0].integration_data == {"endpoint": 1}
+
+
 async def test_device_and_state_views_merge(repository, device_state):
-    """Device carries integration_data, DeviceState carries parameters — they're siblings, so
-    saving one must not clobber the other's half of the record."""
+    """Device carries integration_data, DeviceState parameters too — saving one must not clobber the other's half of
+    the record, nor a DeviceState that wasn't given integration_data the stored one."""
     device = make_my_device(device_id=device_state.id, token="t", integration=device_state.integration)
     async with repository.session() as repo:
         await repo.save(device_state)  # info + parameters
@@ -136,6 +161,61 @@ async def test_device_and_state_views_merge(repository, device_state):
         typed_again = await repo.get(device_state.id, as_=_MyDevice)
         assert typed_again is not None, "integration_data must survive a DeviceState save"
         assert typed_again.integration_data.token == "t"
+
+
+async def test_a_typed_state_without_data_holds_its_own_model_and_keeps_the_stored_one(repository, device_state):
+    """Built without `integration_data`, a typed device holds its own model validated from `{}`; the field stays unset,
+    so saving it leaves the stored data as it is."""
+    state = DeviceState[_Learned](**device_state.model_dump(exclude={"integration_data"}))
+    assert isinstance(state.integration_data, _Learned)
+    async with repository.session() as repo:
+        await repo.save(make_my_device(device_id=state.id, token="t", integration=state.integration))
+        await repo.save(state)
+
+        typed = await repo.get(state.id, as_=_MyDevice)
+        assert typed is not None and typed.integration_data.token == "t"
+
+
+async def test_data_filled_in_place_on_a_device_saved_without_any_is_kept(repository):
+    """Read back from a record without data, a typed device holds its own model, unset; filled in place (a pairing on
+    the record the Hub seeded), it is saved: the record has no data to keep."""
+    seeded = Device(
+        id=uuid4(), name="Lamp", room_id=uuid4(), transport="wifi", integration="example", manufacturer=None
+    )
+    async with repository.session() as repo:
+        await repo.save(seeded)
+        device = await repo.get(seeded.id, as_=Device[_Learned])
+        assert device is not None
+        device.integration_data.firmware = "1.2"
+        await repo.save(device)
+
+        kept = await repo.get(seeded.id, as_=Device[_Learned])
+        assert kept is not None and kept.integration_data.firmware == "1.2"
+
+
+@pytest.mark.parametrize("stored", [{}, None])
+async def test_data_filled_in_place_on_a_state_saved_onto_a_record_holding_none_is_kept(repository, stored):
+    """The `{}` (or null) the Hub stores a device with before pairing is no data to keep: a typed state built without
+    any and filled in place (a pairing) is saved, as the Hub's own repository does."""
+    seeded = Device(
+        id=uuid4(), name="Lamp", room_id=uuid4(), transport="wifi", integration="example", manufacturer=None,
+        integration_data=stored,
+    )  # fmt: skip
+    async with repository.session() as repo:
+        await repo.save(seeded)
+        state = DeviceState[_Learned](**seeded.model_dump(exclude={"integration_data"}), parameters=[])
+        state.integration_data.firmware = "1.2"
+        await repo.save(state)
+
+        kept = await repo.get(seeded.id, as_=Device[_Learned])
+        assert kept is not None and kept.integration_data.firmware == "1.2"
+
+
+def test_optional_data_is_none_until_paired(device_state):
+    """`Device[X | None]`: unset, or the `{}` the Hub stores a device with before pairing, is None."""
+    optional = DeviceState[_PairingData | None]
+    assert optional(**device_state.model_dump(exclude={"integration_data"})).integration_data is None
+    assert optional(**device_state.model_dump()).integration_data is None
 
 
 @pytest.fixture(params=["memory", "sqlite"])

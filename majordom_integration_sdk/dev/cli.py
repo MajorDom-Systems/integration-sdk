@@ -1,8 +1,9 @@
 """Interactive REPL for running one integration standalone — the ``majordom-integration-sdk[cli]`` extra.
 
-Ported from the MajorDom Hub's operator CLI and scoped to a single controller: start it with real
-discovery services and a local repository, then pair / control / inspect devices from a prompt.
-Where :func:`run_controller` just *watches*, this lets you *drive* the integration by hand.
+Ported from the MajorDom Hub's operator CLI and scoped to a single controller: start it under the
+runtime (its needs bound as under the Hub) with a local repository, then pair / control / inspect
+devices, and see or pin what its needs are bound to, from a prompt. Where :func:`run_controller`
+just *watches*, this lets you *drive* the integration by hand.
 
 Needs the ``cli`` extra (typer-shell + rich)::
 
@@ -10,9 +11,9 @@ Needs the ``cli`` extra (typer-shell + rich)::
 
     import asyncio
     from majordom_integration_sdk.dev import run_cli
-    from majordom_matter import MatterController  # your integration
+    import majordom_matter  # your integration
 
-    asyncio.run(run_cli(MatterController, db_path="devices.db"))
+    asyncio.run(run_cli(majordom_matter.peripherals, db_path="devices.db"))
 """
 
 from __future__ import annotations
@@ -23,20 +24,27 @@ import json
 import logging
 import shutil
 import sys
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import rich
 from typer_shell import make_typer_shell
 
-from ..controller.abstract_controller import AbstractController, ControllerOutput
+from ..controller.abstract_controller import AbstractController
+from ..controller.output import ControllerOutput
+from ..peripherals import Bound, Endpoint, Peripheral
 from ..schemas.command import DeviceCommand
-from ..schemas.device import CredentialsType, ProvidedCredentials
+from ..schemas.credentials import CredentialsType, ProvidedCredentials
 from ..schemas.event import DeviceParameterChange
 from ..schemas.parameter import ParameterRole
-from . import build_dependencies
+from . import Integration, _runner, build_platform
+
+if TYPE_CHECKING:
+    from ..runtime import Pinned, Runtime
 
 logger = logging.getLogger("majordom_integration_sdk.dev")
 
@@ -49,16 +57,17 @@ logger = logging.getLogger("majordom_integration_sdk.dev")
 # isn't a TTY (pipes, tests, logs to a file) where the escape codes would just be noise.
 
 
-def _println(msg: object) -> None:
+def _println(msg: object):
+    console = rich.get_console()  # markup off: the prefixes ("[error]") are text, not tags
     if not sys.stdout.isatty():
-        rich.print(msg)
+        console.print(msg, markup=False)
         return
     builtins.print("\x1b[s\x1b[1A\x1b[999D\x1b[1S\x1b[L", end="", flush=True)  # save, up, home, scroll, insert-line
-    rich.print(msg, end="", flush=True)
+    console.print(msg, end="", markup=False)
     builtins.print("\x1b[u", end="", flush=True)  # restore cursor to the prompt
 
 
-def _print(*values: object, sep: str = "  ") -> None:
+def _print(*values: object, sep: str = "  "):
     """Prompt-safe print: wrap to the terminal width and emit each line via :func:`_println`."""
     columns, _ = shutil.get_terminal_size((80, 20))
     for line in sep.join(str(v) for v in values).split("\n"):
@@ -78,10 +87,10 @@ class _CapturingHandler(logging.Handler):
         super().__init__()
         self.records: list[logging.LogRecord] = []
 
-    def emit(self, record: logging.LogRecord) -> None:
+    def emit(self, record: logging.LogRecord):
         self.records.append(record)
 
-    def dump(self) -> None:
+    def dump(self):
         if not self.records:
             return
         builtins.print("\n--- captured logs (CLI session) ---", file=sys.stderr, flush=True)
@@ -98,9 +107,9 @@ class _CliSession:
     resolution (``repo.get`` + ``get_parameter_state`` + ``model_validate`` into the controller's
     ``device_type`` / ``parameter_type``)."""
 
-    def __init__(self, controller: AbstractController):
+    def __init__(self, controller: AbstractController, runtime: Runtime | None = None):
         self._controller = controller
-        self._deps = controller.dependencies
+        self._runtime = runtime
 
     @property
     def discoveries(self):
@@ -113,19 +122,19 @@ class _CliSession:
         credentials = ProvidedCredentials(type=CredentialsType(credentials_type), value=credentials_value or None)
         return await self._controller.pair_device(discovery, credentials)
 
-    async def pair_window(self, seconds: int) -> None:
+    async def pair_window(self, seconds: int):
         await self._controller.start_pairing_window(seconds)
 
     async def list_devices(self):
-        async with self._deps.make_device_repository() as repo:
+        async with self._controller.platform.device_repository(self._controller) as repo:
             return await repo.get_all()
 
     async def device_state(self, device_id: UUID):
-        async with self._deps.make_device_repository() as repo:
+        async with self._controller.platform.device_repository(self._controller) as repo:
             return await repo.state(device_id)
 
     async def _device(self, device_id: UUID):
-        async with self._deps.make_device_repository() as repo:
+        async with self._controller.platform.device_repository(self._controller) as repo:
             device = await repo.get(device_id)
         return self._controller.device_type.model_validate(device) if device else None
 
@@ -149,7 +158,7 @@ class _CliSession:
 
     async def control(self, device_id: UUID, parameter_id: UUID, value: object) -> str:
         command = DeviceCommand(device_id=device_id, parameter_id=parameter_id, value=value)
-        async with self._deps.make_device_repository() as repo:
+        async with self._controller.platform.device_repository(self._controller) as repo:
             device = await repo.get(command.device_id)
             if not device:
                 return f"No device {device_id}"
@@ -165,15 +174,56 @@ class _CliSession:
             )
         return "Command sent"
 
+    # needs
+
+    def needs(self) -> list[str]:
+        """Each need: what it is bound to and who provides it, or why it isn't bound."""
+        controller, runtime, rows = self._controller, self._runtime, []
+        bound = runtime.bound(controller) if runtime else controller.peripherals.bound
+        providers = runtime.providers(controller) if runtime else {}
+        unbound = runtime.unbound(controller) if runtime else {}
+        for need in controller.needs:
+            wanted = f"{need.family}/{'|'.join(need.dialects) or '*'}{' (many)' if need.is_many else ''}"
+            wanted += "" if need.is_required else " (optional)"
+            if (endpoints := bound.get(need.family)) is not None:
+                urls = ", ".join(
+                    e.url or e.dialect for e in ([endpoints] if isinstance(endpoints, Endpoint) else endpoints)
+                )
+                by = providers.get(need.family, "you")
+                rows.append(f"{wanted}  -> {urls}  by {', '.join(by) if isinstance(by, list) else by}")
+            else:
+                rows.append(f"{wanted}  unbound: {unbound.get(need.family, 'not given')}")
+        return rows
+
+    async def pin(self, family: str, url: str, dialect: str = ""):
+        """Provide an endpoint yourself, e.g. ``zigbee socket://192.168.1.5:6638 ezsp``."""
+        dialect = dialect or next(
+            (n.dialects[0] for n in self._controller.needs if n.family == family and n.dialects), ""
+        )
+        await self._pinned().pin(Endpoint(family, dialect, url, is_shared=True))
+
+    async def unpin(self, family: str):
+        await self._pinned().unpin(family)
+
+    async def resolve(self):
+        await self._require_runtime().refresh()
+
+    def _require_runtime(self) -> Runtime:
+        if self._runtime is None:
+            raise RuntimeError("No runtime here: the peripherals were given by hand")
+        return self._runtime
+
+    def _pinned(self) -> Pinned:
+        from ..runtime import Pinned
+
+        return next(p for p in self._require_runtime().peripherals if isinstance(p, Pinned))
+
 
 class _CliControllerOutput(ControllerOutput):
     """The CLI's own output delegate — a different approach from the logging one: it shows each
     callback through the prompt-safe printer (intentional TUI content, not logs) *and* persists
     state to the repository, so ``devices`` / ``device`` reflect live availability and values. A
     single-controller stand-in for the Hub relay's output side."""
-
-    def __init__(self, make_device_repository):
-        self._make_device_repository = make_device_repository
 
     async def controller_did_receive_discovery(self, controller, discovery):
         _print(f"[discovered] {discovery.id}  {discovery.device_name}  ({discovery.transport})")
@@ -186,7 +236,7 @@ class _CliControllerOutput(ControllerOutput):
 
     async def controller_did_connect_device(self, controller, device_id):
         _print(f"[connected] {device_id}")
-        async with self._make_device_repository() as repo:
+        async with controller.platform.device_repository(controller) as repo:
             if device := await repo.get(device_id):
                 device.last_seen = datetime.now()
                 device.available = True
@@ -194,7 +244,7 @@ class _CliControllerOutput(ControllerOutput):
 
     async def controller_did_lose_device(self, controller, device_id):
         _print(f"[lost] {device_id}")
-        async with self._make_device_repository() as repo:
+        async with controller.platform.device_repository(controller) as repo:
             if device := await repo.get(device_id):
                 device.available = False
                 device.last_error = f"Device is no longer connected to the {controller.name} network"
@@ -202,7 +252,7 @@ class _CliControllerOutput(ControllerOutput):
 
     async def controller_did_receive_events(self, controller, events):
         events = list(events)
-        async with self._make_device_repository() as repo:
+        async with controller.platform.device_repository(controller) as repo:
             for event in events:
                 if not isinstance(event, DeviceParameterChange):
                     continue
@@ -215,21 +265,35 @@ class _CliControllerOutput(ControllerOutput):
         for event in events:
             _print(f"[event] {type(event).__name__}: {event!r}")
 
+    async def controller_did_encounter_error(self, controller, error):
+        _print(f"[error] {error.id}: {error.message}")
+
+    async def controller_did_resolve_error(self, controller, error_id):
+        _print(f"[error resolved] {error_id}")
+
+    async def controller_did_emit_notification(self, controller, notification):
+        _print(f"[notification] {notification.type.value}/{notification.priority.value}: {notification.message}")
+
 
 # --- the REPL ----------------------------------------------------------------------------------
 
 
 async def run_cli(
-    controller_type: type[AbstractController],
+    integration: Integration,
     *,
     storage_root: Path | None = None,
     db_path: str | Path | None = None,
-    **dependencies: Any,
-) -> None:
-    """Start ``controller_type`` (with real discovery + a local repository) and drop into an
-    interactive prompt. ``dependencies`` override fields of `AbstractController.Dependencies`
-    (``links``, ``settings``, ``context``). ``db_path`` file-backs the repository so paired devices survive restarts;
-    omit it for in-memory. ``exit`` / Ctrl-D leaves the prompt and stops everything cleanly."""
+    peripherals: Mapping[str, Bound] | None = None,
+    runtime_peripherals: Sequence[Peripheral] | None = None,
+    pinned: Sequence[Endpoint] = (),
+    **platform: Any,
+):
+    """Start what ``integration`` exports (its ``peripherals``: the controller and the servers it needs) under the
+    runtime, or only its controller with the ``peripherals`` you bind, with a local repository and drop into an
+    interactive prompt. ``platform`` overrides fields of `Platform` (``region``); ``runtime_peripherals`` and
+    ``pinned`` go to the runtime (`build_runtime`).
+    ``db_path`` file-backs the repository so paired devices survive restarts; omit it for in-memory. ``exit`` / Ctrl-D
+    leaves the prompt and stops everything cleanly."""
     # Capture all logs + warnings into a buffer for the duration of the session so they don't break
     # the interactive TUI; the buffer is dumped to stderr on exit/crash (see the finally block).
     # The CLI's own discovery/event/command output (via _print) stays visible and prompt-safe.
@@ -243,23 +307,15 @@ async def run_cli(
 
     loop = asyncio.get_running_loop()
 
-    # Identity is class-level, so the repository/documents folder are scoped before construction;
-    # then swap in an output that also persists state.
-    deps = build_dependencies(
-        storage_root=storage_root,
-        db_path=db_path,
-        integration=controller_type.name,
-        slug=controller_type.slug(),
-    )
-    deps = deps.copy(output=_CliControllerOutput(deps.make_device_repository), **dependencies)
-    controller = controller_type(deps)
-    session = _CliSession(controller)
+    base = replace(build_platform(storage_root=storage_root, db_path=db_path), **platform)
+    # The output also persists state.
+    runner = _runner(integration(base), storage_root, peripherals, runtime_peripherals, pinned, _CliControllerOutput())
+    controller = runner.controller
+    session = _CliSession(controller, runner.runtime)
 
-    await deps.zeroconf_discovery_service.start()
-    await deps.ssdp_discovery_service.start()
-    await deps.ble_discovery_service.start()
-    await controller.start()
-    _print(f"{controller.name} started — discovering. Type 'help' for commands, 'exit' to quit.")
+    await runner.start()
+    state = "started" if runner.is_running else "waiting for its needs (see `needs`)"
+    _print(f"{controller.name} {state}. Type 'help' for commands, 'exit' to quit.")
 
     # Shell commands run in a worker thread (typer-shell blocks); hop back onto this loop to call
     # the controller's async API.
@@ -345,6 +401,31 @@ async def run_cli(
             parsed = value
         _print(call(session.control(UUID(device_id), UUID(parameter_id), parsed)))
 
+    @app.command()
+    def needs():
+        """List the integration's needs: what each is bound to and by whom, or why it isn't bound."""
+        for row in session.needs():
+            _print(row)
+
+    @app.command()
+    def pin(family: str, url: str, dialect: str = ""):
+        """Provide an endpoint for a need yourself, e.g. `pin zigbee socket://192.168.1.5:6638 ezsp` or
+        `pin matter ws://127.0.0.1:5580` (dialect defaults to the need's first)."""
+        call(session.pin(family, url, dialect))
+        _print("\n".join(session.needs()))
+
+    @app.command()
+    def unpin(family: str):
+        """Drop an endpoint you pinned: the runtime binds the need again."""
+        call(session.unpin(family))
+        _print("\n".join(session.needs()))
+
+    @app.command()
+    def resolve():
+        """Look for radios again and bind every need anew."""
+        call(session.resolve())
+        _print("\n".join(session.needs()))
+
     # typer-shell parses sys.argv on start; clear it so a bare `run_cli()` doesn't inherit flags.
     sys.argv = sys.argv[:1]
     try:
@@ -352,10 +433,7 @@ async def run_cli(
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
-        await controller.stop()
-        await deps.ble_discovery_service.stop()
-        await deps.ssdp_discovery_service.stop()
-        await deps.zeroconf_discovery_service.stop()
+        await runner.stop()
         _print(f"{controller.name} stopped.")
         # restore logging and dump everything captured during the session for debugging
         logging.captureWarnings(False)

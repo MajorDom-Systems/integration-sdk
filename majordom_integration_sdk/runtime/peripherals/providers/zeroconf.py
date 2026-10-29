@@ -1,13 +1,18 @@
+"""The runtime's ``mdns/zeroconf``: one zeroconf browser shared by every integration that needs DNS-SD (the
+``discovery`` extra). See `majordom_integration_sdk.capabilities.zeroconf` for the contract."""
+
 import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import cast
 
 from zeroconf import BadTypeInNameException, ServiceListener, Zeroconf, current_time_millis
 from zeroconf._dns import DNSPointer
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
 from zeroconf.const import _CLASS_IN, _TYPE_A, _TYPE_AAAA, _TYPE_PTR
+
+from majordom_integration_sdk.capabilities.zeroconf import ZeroconfDiscoveryInfo, ZeroconfDiscoveryListener
+from majordom_integration_sdk.peripherals import Endpoint, Peripheral
 
 logger = logging.getLogger(__name__)
 
@@ -17,73 +22,20 @@ _CACHE_POLL_INTERVAL = 30  # seconds — how often to reconcile our state agains
 _EVICT_GRACE_MS = 10_000  # ms — grace window after A/AAAA expiry before probing; allows zeroconf to renew
 
 
-@dataclass
-class ZeroconfDiscoveryInfo:
-    """
-    * `type_`: fully qualified service type name
-    * `name`: fully qualified service name
-    * `port`: port that the service runs on
-    * `weight`: weight of the service
-    * `priority`: priority of the service
-    * `properties`: dictionary of properties as raw bytes. Keys with `None` values are value-less attributes.
-    * `decoded_properties`: `properties` decoded to `str` — use this for most integrations.
-    * `text`: raw TXT record bytes — use only if you need to parse the record manually.
-    * `server`: fully qualified name for service host (defaults to name)
-    * `host_ttl`: ttl used for A/SRV records
-    * `other_ttl`: ttl used for PTR/TXT records
-    * `addresses` and `parsed_addresses`: List of IP addresses (either as bytes, network byte order,
-        or in parsed form as text; at most one of those parameters can be provided)
-    * interface_index: scope_id or zone_id for IPv6 link-local addresses i.e. an identifier of the interface
-        where the peer is connected to
-    """
+class ZeroconfDiscoveryService(Peripheral):
+    """A `Zeroconf`, on demand."""
 
-    type_: str
-    name: str
-    server: str | None
-    port: int | None
-    addresses: list[bytes] | None
-    parsed_addresses: list[str] | None
-    weight: int | None
-    priority: int | None
-    properties: dict[bytes, bytes | None]
-    decoded_properties: dict[str, str | None]
-    text: bytes
-    host_ttl: int | None
-    other_ttl: int | None
-    interface_index: int | None
+    name = "zeroconf"
+    is_on_demand = True
 
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, ZeroconfDiscoveryInfo):
-            return NotImplemented
-        # exclude host_ttl / other_ttl — they change on every re-announcement
-        return (
-            self.type_ == other.type_
-            and self.name == other.name
-            and self.server == other.server
-            and self.port == other.port
-            and self.addresses == other.addresses
-            and self.parsed_addresses == other.parsed_addresses
-            and self.weight == other.weight
-            and self.priority == other.priority
-            and self.properties == other.properties
-            and self.text == other.text
-            and self.interface_index == other.interface_index
-        )
+    @property
+    def endpoint(self) -> Endpoint:
+        return Endpoint("mdns", "zeroconf", "zeroconf", is_shared=True, instance=self)
 
+    @property
+    def provides(self) -> list[Endpoint]:
+        return [self.endpoint]
 
-class ZeroconfDiscoveryListener(Protocol):
-    async def zeroconf_did_discover_service(
-        self, zeroconf: "ZeroconfDiscoveryService", info: ZeroconfDiscoveryInfo
-    ): ...
-    async def zeroconf_did_update_service(self, zeroconf: "ZeroconfDiscoveryService", info: ZeroconfDiscoveryInfo): ...
-    async def zeroconf_did_remove_service(self, zeroconf: "ZeroconfDiscoveryService", type_: str, name: str):
-        """Fired on mDNS goodbye packets (TTL=0) or when a silent departure is confirmed:
-        A/AAAA records expired (~120s TTL) and a follow-up async_request got no response.
-        For faster detection, implement liveness checks at the pairing/connection layer."""
-        ...
-
-
-class ZeroconfDiscoveryService:
     @property
     def async_zeroconf(self) -> AsyncZeroconf | None:
         return self._async_zeroconf
@@ -115,6 +67,8 @@ class ZeroconfDiscoveryService:
         browser, adapter = self._make_browser(services, listener)
 
         def cancel():
+            if adapter not in self._adapters:  # it stopped since, cancelling it already
+                return
             adapter.cancel_all_pending()
             self._browsers.discard(browser)
             self._adapters.remove(adapter)

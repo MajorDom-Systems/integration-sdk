@@ -17,10 +17,10 @@ jobs:
     uses: ParkerIndustries/workflows/.github/workflows/release.yml@v1
     with:
       pypi-package-name: majordom-integration-sdk
-      python-version: "3.12"
+      python-version: "3.13"
       stable-branch: master
-      # Override the QA matrix (defaults to the team standard):
-      # python-versions: '["3.12", "3.13"]'
+      # The QA matrix, in place of the team standard ["3.12", "3.13"]: the SDK needs 3.13.
+      python-versions: '["3.13"]'
       # For compiled/Cython extensions, build a wheel per version (default is one
       # pure-Python wheel — leave this off unless you have compiled extensions):
       # matrix-build: true

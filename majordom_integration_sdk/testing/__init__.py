@@ -4,35 +4,48 @@ Both the Hub's own integration tests and third-party ``integration-*`` packages 
 instead of reinventing them, so every integration is exercised through the same harness:
 
 - :class:`RecordingControllerOutput` — a spy implementing every ``ControllerOutput``
-  callback, capturing what a controller reports back to the Hub.
-- Offline discovery-service doubles (no radios/sockets touched).
-- :func:`build_test_dependencies` — assembles an ``AbstractController.Dependencies`` wired
-  with the recording output, an in-memory device repository, temp-dir storage, and the
-  discovery doubles, so a test can drive a controller exactly as the Hub would.
+  callback, capturing what a controller reports back to the Hub: set it as its ``output``.
+- :class:`FakePeripheral` — a peripheral that records how it is run: what it needs and provides (endpoints
+  and the peripherals it brings along) is set per test, its starts can fail, its hooks answer as told.
+- :class:`RecordingPeripheralOutput` — what any other peripheral tells the runtime, as its ``output``;
+  :class:`RecordingRuntimeOutput` — what the runtime reports to the Hub.
+- :class:`FakeCompose` — the container host without Docker, for the services an integration provides.
+- Offline doubles of every capability (no radios/sockets touched): :class:`FakeBLESource` for the
+  Bluetooth router to hear through (``router.add_source(source)``), :class:`FakeBLERouter`,
+  :class:`FakeZeroconf` (the ``discovery`` extra) and :class:`FakeSSDP`. Each provides itself as
+  ``.endpoint``, to bind as the controller's peripherals: ``Peripherals({"ble": router.endpoint})``.
+- :func:`build_test_platform` — assembles a ``Platform`` with an in-memory device repository
+  (its ``store`` yours to read), temp-dir storage and the facts you give, so a test can drive a
+  controller (or any peripheral) exactly as the Hub would.
 """
 
 from __future__ import annotations
 
+import functools
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData
+from pydantic import BaseModel
 
-from majordom_integration_sdk.controller.abstract_controller import AbstractController, ControllerOutput
-from majordom_integration_sdk.discovery.ble_discovery import BLEConnection, BLEDiscoveryService, OnAdvertisement
-from majordom_integration_sdk.discovery.ssdp_discovery import SSDPDiscoveryService
-from majordom_integration_sdk.discovery.zeroconf_discovery import ZeroconfDiscoveryService
+from majordom_integration_sdk.capabilities.ble import BLEConnection, BLEDiscoveryListener, BLEMatcher, OnAdvertisement
+from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
+from majordom_integration_sdk.peripherals import Endpoint, Need, NoSettings, Peripheral, PeripheralChange, Service
+from majordom_integration_sdk.platform import Platform
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
+from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
+from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
+from majordom_integration_sdk.runtime.peripherals.services.compose import Compose
+from majordom_integration_sdk.schemas.credentials import WifiCredentials
 from majordom_integration_sdk.schemas.device import Discovery
 from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
 
 if TYPE_CHECKING:
     from majordom_integration_sdk.controller.abstract_controller import AbstractController as _Controller
+    from majordom_integration_sdk.runtime import PeripheralStatus
 
 
 class RecordingControllerOutput(ControllerOutput):
@@ -45,8 +58,10 @@ class RecordingControllerOutput(ControllerOutput):
         self.connected_devices: list[UUID] = []
         self.lost_devices: list[UUID] = []
         self.events: list[Event] = []
-        self.errors: list[tuple[str, bool]] = []  # (message, still_running)
+        self.errors: dict[str, IntegrationError] = {}  # the active ones, by id
+        self.error_log: list[IntegrationError | str] = []  # every report, and the id of every resolve
         self.notifications: list[Notification] = []
+        self.provided_changes: list[_Controller] = []  # every time one said what it provides changed
 
     async def controller_did_receive_discovery(self, controller: _Controller, discovery: Discovery):
         self.received_discoveries.append(discovery)
@@ -66,14 +81,143 @@ class RecordingControllerOutput(ControllerOutput):
     async def controller_did_receive_events(self, controller: _Controller, events: Iterable[Event]):
         self.events.extend(events)
 
-    async def controller_did_encounter_error(self, controller: _Controller, message: str, still_running: bool):
-        self.errors.append((message, still_running))
+    async def controller_did_encounter_error(self, controller: _Controller, error: IntegrationError):
+        self.errors[error.id] = error
+        self.error_log.append(error)
+
+    async def controller_did_resolve_error(self, controller: _Controller, error_id: str):
+        self.errors.pop(error_id, None)
+        self.error_log.append(error_id)
 
     async def controller_did_emit_notification(self, controller: _Controller, notification: Notification):
         self.notifications.append(notification)
 
+    async def controller_did_change_provided(self, controller: _Controller):
+        self.provided_changes.append(controller)
 
-class FakeZeroconfDiscoveryService(ZeroconfDiscoveryService):
+
+class FakePeripheral(Peripheral):
+    """A peripheral that records how it is run (``calls``: "start", "stop") and the changes it hears. Its first
+    ``failures`` starts raise; ``answer`` is what its hooks return, or an exception they raise. Change ``provided``,
+    then tell ``output``, as a real one does when a stick is plugged in."""
+
+    def __init__(
+        self,
+        name: str,
+        needs: Sequence[Need] = (),
+        provides: Sequence[Endpoint | Peripheral] = (),
+        *,
+        is_on_demand: bool = False,
+        failures: int = 0,
+        answer: bool | Exception = False,
+        settings: type[BaseModel] = NoSettings,
+    ):
+        self.name, self.needs, self.provided = name, list(needs), list(provides)
+        self.is_on_demand = is_on_demand
+        self.failures, self.answer = failures, answer
+        self.settings_model = settings
+        self.calls: list[str] = []
+        self.changes: list[PeripheralChange | tuple[str, Any]] = []  # needs moved; ("settings"|"platform", before)
+
+    @property
+    def Settings(self) -> type[BaseModel]:
+        return self.settings_model
+
+    @property
+    def provides(self) -> Sequence[Endpoint | Peripheral]:
+        return self.provided
+
+    async def start(self):
+        self.calls.append("start")
+        if self.failures:
+            self.failures -= 1
+            raise RuntimeError(f"{self.name} broke")
+
+    async def stop(self):
+        self.calls.append("stop")
+
+    async def needed_peripheral_did_change(self, change: PeripheralChange) -> bool:
+        self.changes.append(change)
+        return self._answer()
+
+    async def settings_did_change(self, before: Any) -> bool:
+        self.changes.append(("settings", before))
+        return self._answer()
+
+    async def platform_facts_did_change(self, before: Any) -> bool:
+        self.changes.append(("platform", before))
+        return self._answer()
+
+    def _answer(self) -> bool:
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+    def __repr__(self) -> str:
+        return f"FakePeripheral({self.name!r})"
+
+
+class RecordingPeripheralOutput:
+    """Captures what peripherals report to whatever runs them: set it as a peripheral's ``output``."""
+
+    def __init__(self):
+        self.changed: list[Peripheral] = []
+        self.learned: list[tuple[Peripheral, Mapping[str, Any]]] = []
+        self.stopped: list[Peripheral] = []
+        self.failed: list[tuple[Peripheral, str]] = []
+
+    async def peripheral_did_change_provided(self, peripheral: Peripheral):
+        self.changed.append(peripheral)
+
+    async def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+        self.learned.append((peripheral, facts))
+
+    async def peripheral_did_stop(self, peripheral: Peripheral):
+        self.stopped.append(peripheral)
+
+    async def peripheral_did_fail(self, peripheral: Peripheral, reason: str):
+        self.failed.append((peripheral, reason))
+
+
+class RecordingRuntimeOutput:
+    """Captures what a runtime reports to the Hub: every status in order, the last one by key, what was learned, the
+    ones gone."""
+
+    def __init__(self):
+        self.statuses: list[tuple[str, PeripheralStatus]] = []
+        self.learned: list[tuple[str, Mapping[str, Any]]] = []
+        self.disappeared: list[Peripheral] = []
+
+    def peripheral_did_change_status(self, peripheral: Peripheral, status: PeripheralStatus):
+        self.statuses.append((peripheral.key, status))
+
+    def peripheral_did_learn(self, peripheral: Peripheral, facts: Mapping[str, Any]):
+        self.learned.append((peripheral.key, facts))
+
+    def peripheral_did_disappear(self, peripheral: Peripheral):
+        self.disappeared.append(peripheral)
+
+    def last(self, key: str) -> PeripheralStatus | None:
+        return next((status for k, status in reversed(self.statuses) if k == key), None)
+
+
+class FakeCompose(Compose):
+    """Docker Compose without Docker: it renders, keeps ports and writes ``compose.json`` as the real one, and a
+    container runs and answers once applied. ``calls`` are the docker commands it would have run."""
+
+    def __init__(self, listen_address: str = "127.0.0.1"):
+        super().__init__(listen_address)
+        self.calls: list[tuple[str, ...]] = []
+
+    async def _docker(self, *args: str) -> str:
+        self.calls.append(args)
+        return "\n".join(self._running) if "ps" in args else ""
+
+    async def _is_up(self, service: Service) -> bool:
+        return service.name in self._running
+
+
+class FakeSSDP(SSDPDiscoveryService):
     """Real registration bookkeeping, but ``start``/``stop`` touch no network."""
 
     async def start(self):
@@ -83,29 +227,59 @@ class FakeZeroconfDiscoveryService(ZeroconfDiscoveryService):
         pass
 
 
-class FakeSSDPDiscoveryService(SSDPDiscoveryService):
+class FakeBLERouter(BLEService):
+    """A router with no radio unless given `FakeBLESource`s; ``start``/``stop`` run no background tasks."""
+
+    @property
+    def registrations(self) -> list[tuple[BLEDiscoveryListener, list[BLEMatcher]]]:
+        """Every listener registered (and not cancelled) with what it listens for, as a copy."""
+        return [(listener, list(matchers)) for listener, matchers in self._listeners]
+
     async def start(self):
-        pass
+        await self._follow_bound()
+        self._is_running = True
+        await self._start_sources()
 
     async def stop(self):
-        pass
+        self._is_running = False
+        await self._stop_sources()
 
 
-class FakeBLEDiscoveryService(BLEDiscoveryService):
-    async def start(self):
-        pass
+def __getattr__(name: str):
+    if name == "FakeZeroconf":  # the discovery extra (zeroconf): only for the suites that use it
+        from majordom_integration_sdk.runtime.peripherals.providers.zeroconf import ZeroconfDiscoveryService
 
-    async def stop(self):
-        pass
+        class FakeZeroconf(ZeroconfDiscoveryService):
+            """Real registration bookkeeping, but ``start``/``stop`` touch no network."""
+
+            async def start(self):
+                pass
+
+            async def stop(self):
+                pass
+
+        globals()[name] = FakeZeroconf
+        return FakeZeroconf
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class FakeBLESource:
     """A Bluetooth radio for tests: ``advertise`` feeds the service it serves, ``connect`` returns
     ``connection`` (or fails when there is none). Use with ``BLEService(sources=[...])``."""
 
-    def __init__(self, name: str = "fake", connection: BLEConnection | None = None):
+    def __init__(
+        self,
+        name: str = "fake",
+        connection: BLEConnection | None = None,
+        is_pairable: bool = False,
+        free_slots: int | None = None,
+        is_loss_reported: bool = False,
+    ):
         self.name = name
         self.connection = connection
+        self.is_pairable = is_pairable
+        self.free_slots = free_slots
+        self.is_loss_reported = is_loss_reported
         self.on_advertisement: OnAdvertisement | None = None
         self.connected: list[str] = []
 
@@ -130,6 +304,9 @@ class FakeBLESource:
         service_data: dict[str, bytes] | None = None,
         manufacturer_data: dict[int, bytes] | None = None,
     ):
+        from bleak.backends.device import BLEDevice  # the ble extra
+        from bleak.backends.scanner import AdvertisementData
+
         assert self.on_advertisement, f"{self.name} isn't listening"
         adv = AdvertisementData(
             local_name, manufacturer_data or {}, service_data or {}, service_uuids or [], None, rssi, ()
@@ -137,35 +314,45 @@ class FakeBLESource:
         self.on_advertisement(BLEDevice(address, local_name, self.name), adv)  # details: the radio
 
 
-def build_test_dependencies(
-    documents_folder: Path | None = None,
-    integration: str | None = None,
-) -> AbstractController.Dependencies:
-    """Assemble controller ``Dependencies`` wired entirely with offline test doubles.
+def build_test_platform(
+    documents_root: Path | None = None,
+    *,
+    region: str | None = None,
+    wifi: WifiCredentials | None = None,
+    thread_dataset: str | None = None,
+    store: dict[UUID, dict[str, Any]] | None = None,
+) -> Platform:
+    """Assemble a ``Platform`` wired entirely with offline test doubles, as the Hub gives it to every peripheral: an
+    in-memory repository each controller sees only its own devices of, scoped by its key, and the facts given.
 
-    Pass ``documents_folder`` to control where the controller writes files; a fresh temp dir
-    is used otherwise. Pass ``integration`` to scope the in-memory repository to that
-    integration's devices (access-control guard), mirroring how the Hub injects it. The
-    recording output is reachable as ``deps.output``.
+    Pass ``documents_root`` as the root of the peripherals' folders; a fresh temp folder otherwise, removed when the
+    process ends. Pass ``store`` to see every device kept there: ``DeviceRepositoryMemory(store=store)``.
     """
-    repository = DeviceRepositoryMemory(integration=integration)
-    folder = documents_folder or Path(tempfile.mkdtemp(prefix="majordom-sdk-test-"))
-    folder.mkdir(parents=True, exist_ok=True)
-    return AbstractController.Dependencies(
-        output=RecordingControllerOutput(),
-        make_device_repository=repository.session,
-        documents_folder=folder,
-        zeroconf_discovery_service=FakeZeroconfDiscoveryService(),
-        ssdp_discovery_service=FakeSSDPDiscoveryService(),
-        ble_discovery_service=FakeBLEDiscoveryService(),
+    store = store if store is not None else {}
+    return Platform(
+        documents_root=documents_root or Path(tempfile.mkdtemp(dir=_temp_root().name)),
+        make_device_repository=lambda key: DeviceRepositoryMemory(key, store).session(),
+        region=region,
+        wifi=wifi,
+        thread_dataset=thread_dataset,
     )
+
+
+@functools.cache
+def _temp_root() -> tempfile.TemporaryDirectory[str]:
+    """Where the platforms built without a root keep their folders, one each: removed when the process ends."""
+    return tempfile.TemporaryDirectory(prefix="majordom-sdk-test-")
 
 
 __all__ = [
     "RecordingControllerOutput",
-    "FakeZeroconfDiscoveryService",
-    "FakeSSDPDiscoveryService",
-    "FakeBLEDiscoveryService",
+    "FakePeripheral",
+    "RecordingPeripheralOutput",
+    "RecordingRuntimeOutput",
     "FakeBLESource",
-    "build_test_dependencies",
+    "FakeBLERouter",
+    "FakeZeroconf",
+    "FakeSSDP",
+    "FakeCompose",
+    "build_test_platform",
 ]

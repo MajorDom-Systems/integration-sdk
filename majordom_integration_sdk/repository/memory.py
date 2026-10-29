@@ -7,7 +7,7 @@ when you need it to survive a restart.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from uuid import UUID
 
@@ -28,8 +28,8 @@ class DeviceRepositoryMemory:
         self._store: dict[UUID, Record] = store if store is not None else {}
 
     @asynccontextmanager
-    async def session(self) -> AsyncIterator[DeviceRepositoryMemory]:
-        """Async-context-manager factory to pass as ``make_device_repository``."""
+    async def session(self) -> AsyncGenerator[DeviceRepositoryMemory]:
+        """One unit of work: what ``Platform.make_device_repository`` returns for its integration."""
         yield self
 
     def _in_scope(self, record: Record) -> bool:
@@ -59,13 +59,13 @@ class DeviceRepositoryMemory:
             None,
         )
 
-    async def save(self, device: Device | DeviceState, previous_id: UUID | None = None) -> None:
+    async def save(self, device: Device | DeviceState, previous_id: UUID | None = None):
         if self.integration is not None and device.integration != self.integration:
             raise PermissionError(f"Device {device.id} is outside integration scope {self.integration!r}")
         base = self._store.pop(previous_id, None) if previous_id is not None and previous_id != device.id else None
         self._store[device.id] = merge(base if base is not None else self._store.get(device.id), device)
 
-    async def save_parameter_state(self, device_id: UUID, parameter_state: ParameterState) -> None:
+    async def save_parameter_state(self, device_id: UUID, parameter_state: ParameterState):
         record = self._owned(device_id)
         if not record:
             raise KeyError(f"Unknown or out-of-scope device {device_id}")
@@ -76,7 +76,7 @@ class DeviceRepositoryMemory:
 
     # Hub-internal (not on DeviceRepositoryProtocol); still scope-checked.
 
-    async def update_parameter_visibility(self, parameter_id: UUID, visibility: ParameterVisibility) -> None:
+    async def update_parameter_visibility(self, parameter_id: UUID, visibility: ParameterVisibility):
         for record in self._store.values():
             if not self._in_scope(record):
                 continue
@@ -85,7 +85,7 @@ class DeviceRepositoryMemory:
                     parameter["visibility"] = visibility.value
                     return
 
-    async def delete(self, device_id: UUID) -> None:
+    async def delete(self, device_id: UUID):
         if self._owned(device_id):
             self._store.pop(device_id, None)
 

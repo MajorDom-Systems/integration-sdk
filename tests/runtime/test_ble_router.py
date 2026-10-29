@@ -1,4 +1,4 @@
-"""BLEService: what listeners hear from several radios, and which radio connects."""
+"""The Bluetooth router: what listeners hear from several radios, and which radio connects."""
 
 import asyncio
 from unittest.mock import Mock
@@ -6,9 +6,10 @@ from uuid import UUID
 
 import pytest
 
-from majordom_integration_sdk.discovery import BLEConnection, BLEDiscoveryInfo, BLEMatcher, BLEService
-from majordom_integration_sdk.discovery.ble_discovery import BLEBusyError
-from majordom_integration_sdk.testing import FakeBLESource
+from majordom_integration_sdk.capabilities import BLEBusyError, BLEConnection, BLEDiscoveryInfo, BLEMatcher
+from majordom_integration_sdk.peripherals import Endpoint, Peripherals
+from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BLEService
+from majordom_integration_sdk.testing import FakeBLERouter, FakeBLESource
 
 MATTER = UUID("0000fff6-0000-1000-8000-00805f9b34fb")
 APPLE = 0x004C
@@ -98,6 +99,21 @@ async def test_a_device_is_removed_once_no_radio_hears_it(radios):
     assert ble.devices() == []
 
 
+async def test_a_device_whose_radio_is_leased_stays_until_the_lease_ends(radios):
+    ble, near, far = radios
+    listener = Listener()
+    ble.register(listener, {MATTER})
+    near.advertise("AA", service_uuids=[str(MATTER)])
+    await settle()
+    ble._removal_grace_sec = 0
+
+    async with ble.exclusive("AA", owner="esphome"):  # its radio silenced while the user presses the button
+        await ble.perform_scan()
+        assert listener.removed == [] and len(ble.devices()) == 1
+    await ble.perform_scan()
+    assert [i.device.address for i in listener.removed] == ["AA"]
+
+
 async def test_cancelled_listeners_hear_nothing(radios):
     ble, near, _ = radios
     listener = Listener()
@@ -180,8 +196,40 @@ async def test_a_lease_pauses_a_radio_that_can_pause_instead_of_stopping_it(radi
 
     async with ble.exclusive("AA", owner="matter") as lease:
         assert lease.source == "proxy"
-        assert proxy.calls == ["start", "pause"]
-    assert proxy.calls == ["start", "pause", "resume"]
+        assert proxy.calls == ["start", "resume", "pause"]
+    assert proxy.calls == ["start", "resume", "pause", "resume"]
+
+
+async def test_a_radio_that_can_pause_is_paused_exactly_while_leased_across_a_router_restart(radios):
+    """A lease held across a restart keeps its radio subscribed (its connects go through it) and muted; one that ended
+    while the router was stopped leaves it hearing once the router starts."""
+    ble, _, _ = radios
+    await ble.add_source(proxy := PausableFakeBLESource("proxy"))
+    proxy.advertise("AA", rssi=-10)
+    await settle()
+
+    async with ble.exclusive("AA", owner="matter"):
+        await ble.stop()
+        await ble.start()
+        assert proxy.on_advertisement is not None and proxy.calls[-1] == "pause"
+    assert proxy.calls[-1] == "resume"
+
+    async with ble.exclusive("AA", owner="matter"):
+        await ble.stop()
+    await ble.start()
+    assert proxy.on_advertisement is not None and proxy.calls[-1] == "resume"
+
+
+async def test_a_radio_that_can_pause_added_while_leased_is_started_paused(radios):
+    ble, _, _ = radios
+    await ble.add_source(proxy := PausableFakeBLESource("proxy"))
+    proxy.advertise("AA", rssi=-10)
+    await settle()
+
+    async with ble.exclusive("AA", owner="matter"):
+        await ble.add_source(again := PausableFakeBLESource("proxy"))  # its node reconnected: another source
+        assert again.calls == ["start", "pause"]  # subscribed for the lease's connects, and muted
+    assert again.calls == ["start", "pause", "resume"] and again.on_advertisement is not None
 
 
 async def test_a_second_lease_waits_then_takes_the_next_radio(radios):
@@ -291,6 +339,46 @@ async def test_a_listener_registered_later_hears_devices_already_around(radios):
     assert [i.device.address for i in listener.found] == ["AA"]
 
 
+def test_a_fake_router_shows_who_registered_for_what():
+    router = FakeBLERouter()
+    cancel = router.register(listener := Listener(), [MATTER])
+    registered = [(listener, [BLEMatcher(service_uuid=MATTER)])]
+    assert router.registrations == registered
+
+    router.registrations.clear()  # a copy: reading it changes nothing
+    assert router.registrations == registered
+    cancel()
+    assert router.registrations == []
+
+
+async def test_a_radio_that_fails_to_stop_is_let_go_of_all_the_same(radios):
+    ble, near, _ = radios
+
+    class Gone(FakeBLESource):
+        async def stop(self):
+            raise ConnectionError("its node went away")
+
+    await ble.add_source(Gone("proxy"))
+    await ble.remove_source("proxy")
+    near.advertise("AA", service_uuids=[str(MATTER)])
+    await settle()
+    assert ble.devices()[0].source == "near" and "proxy" not in ble._candidates("AA")
+
+
+async def test_a_stopped_router_lets_go_of_the_radios_it_was_bound_to():
+    proxy, given = FakeBLESource("esphome:aa"), FakeBLESource("given")
+    ble = BLEService(sources=[given])
+    ble.peripherals = Peripherals({"ble": [Endpoint("ble", "esphome-proxy", "esphome:aa", instance=proxy)]})
+    await ble.start()
+    await ble.stop()
+    assert list(ble._sources) == ["given"]  # the runtime binds them anew before its next start
+
+    ble.peripherals = Peripherals({"ble": []})  # the node went meanwhile
+    await ble.start()
+    assert list(ble._sources) == ["given"] and proxy.on_advertisement is None
+    await ble.stop()
+
+
 async def test_a_silent_radio_is_restarted(radios):
     ble, near, far = radios
     near.on_advertisement = None  # bluetoothd restarted: the scanner is gone without a word
@@ -304,9 +392,22 @@ async def test_a_silent_radio_is_restarted(radios):
     assert near.on_advertisement is not None  # listening again
 
 
+async def test_a_silent_radio_whose_loss_is_reported_otherwise_is_never_restarted():
+    proxy = FakeBLESource("esphome:aa", is_loss_reported=True)  # the node's API connection tells when it goes
+    ble = BLEService(sources=[proxy])
+    await ble.start()
+    hearing = proxy.on_advertisement
+
+    ble._silence_sec = 0.01
+    await asyncio.sleep(0.02)  # no Bluetooth device around it
+    await ble._revive_silent()
+    assert proxy.on_advertisement is hearing  # still subscribed: a restart would drop the links it proxies
+    await ble.stop()
+
+
 async def test_a_local_adapter_stops_scanning_while_it_connects(monkeypatch):
-    from majordom_integration_sdk.discovery import LocalAdapter
-    from majordom_integration_sdk.discovery import ble_discovery as module
+    from majordom_integration_sdk.runtime.peripherals.providers.ble import bluez as module
+    from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import LocalAdapter
 
     scanning = []
 
@@ -336,6 +437,18 @@ async def test_a_local_adapter_stops_scanning_while_it_connects(monkeypatch):
     assert scanning == [True, False, True]
 
 
+def test_a_local_connection_reports_the_mtu_bluez_negotiated():
+    from types import SimpleNamespace
+
+    from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import _BleakConnection
+
+    # bleak reports BlueZ's MTU as 23 until it is acquired, while every characteristic already knows the real one
+    characteristics = {1: SimpleNamespace(max_write_without_response_size=244)}
+    client = SimpleNamespace(mtu_size=23, services=SimpleNamespace(characteristics=characteristics))
+
+    assert _BleakConnection(client, "hci0").mtu == 247
+
+
 async def test_a_device_is_seen_as_the_strongest_radio_hears_it(radios):
     ble, near, far = radios
     far.advertise("AA", rssi=-90, service_uuids=[str(MATTER)])
@@ -345,8 +458,7 @@ async def test_a_device_is_seen_as_the_strongest_radio_hears_it(radios):
     info = ble.devices()[0]
     assert (info.source, info.rssi) == ("near", -50)
     assert info.last_seen > 0
-    assert ble.best_device("AA").details == "near"  # bleak's device, for connecting through that radio
-    assert ble.best_device("BB") is None
+    assert info.device.details == "near"  # bleak's device as that radio has it
 
 
 async def test_a_service_data_matcher_needs_the_data(radios):
@@ -363,7 +475,7 @@ async def test_a_service_data_matcher_needs_the_data(radios):
 @pytest.fixture
 def scanners(monkeypatch):
     """The scanners local adapters open: their arguments, in order."""
-    from majordom_integration_sdk.discovery import ble_discovery as module
+    from majordom_integration_sdk.runtime.peripherals.providers.ble import bluez as module
 
     opened: list[dict] = []
 
@@ -394,7 +506,7 @@ async def test_local_adapters_hear_every_advertiser_and_the_matchers_choose(scan
     from bleak.backends.device import BLEDevice
     from bleak.backends.scanner import AdvertisementData
 
-    from majordom_integration_sdk.discovery import LocalAdapter
+    from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import LocalAdapter
 
     ble = BLEService(sources=[LocalAdapter("hci0")])
     matter, everything = Listener(), Listener()
@@ -414,7 +526,7 @@ async def test_local_adapters_hear_every_advertiser_and_the_matchers_choose(scan
 
 
 async def test_local_adapters_scan_passively_and_actively_in_bursts(scanners):
-    from majordom_integration_sdk.discovery import LocalAdapter
+    from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import LocalAdapter
 
     ble = BLEService(sources=[LocalAdapter("hci0")])
     await ble.start()
@@ -428,7 +540,7 @@ async def test_local_adapters_scan_passively_and_actively_in_bursts(scanners):
 
 
 async def test_an_adapter_without_passive_scanning_scans_actively(scanners, caplog):
-    from majordom_integration_sdk.discovery import LocalAdapter
+    from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import LocalAdapter
 
     ble = BLEService(sources=[LocalAdapter("hci0")])
     await ble.start()
@@ -441,8 +553,8 @@ async def test_an_adapter_without_passive_scanning_scans_actively(scanners, capl
 
 
 async def test_a_rescan_waits_until_a_local_adapter_has_connected(scanners, monkeypatch):
-    from majordom_integration_sdk.discovery import LocalAdapter
-    from majordom_integration_sdk.discovery import ble_discovery as module
+    from majordom_integration_sdk.runtime.peripherals.providers.ble import bluez as module
+    from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import LocalAdapter
 
     connecting, connected = asyncio.Event(), asyncio.Event()
 
@@ -468,3 +580,91 @@ async def test_a_rescan_waits_until_a_local_adapter_has_connected(scanners, monk
     await burst
     assert [s["mode"] for s in scanners if s["scanning"]] == ["active"]
     await ble.stop()
+
+
+class ScanModeFakeBLESource(FakeBLESource):
+    def __init__(self, name: str):
+        super().__init__(name)
+        self.modes: list[bool] = []
+
+    async def set_scan_mode(self, is_active: bool):
+        self.modes.append(is_active)
+
+
+async def test_a_pairing_window_switches_every_source_that_can_to_active_scanning():
+    radio = ScanModeFakeBLESource("hci0")
+    ble = BLEService(sources=[radio, FakeBLESource("proxy")])  # one that can't switch is left as it is
+    await ble.start()
+    assert radio.modes == [False]  # passive from the start
+
+    await ble.scan_actively(0.02)
+    assert radio.modes == [False, True]
+    await asyncio.sleep(0.05)
+    assert radio.modes == [False, True, False]
+    await ble.stop()
+
+
+async def test_a_proxy_without_a_free_connection_slot_is_tried_last():
+    full = FakeBLESource("full", connection=Mock(spec=BLEConnection), free_slots=0)
+    free = FakeBLESource("free", connection=Mock(spec=BLEConnection), free_slots=2)
+    ble = BLEService(sources=[full, free])
+    await ble.start()
+    full.advertise("AA", rssi=-40)
+    free.advertise("AA", rssi=-80)
+    await settle()
+
+    await ble.connect("AA")
+    assert (full.connected, free.connected) == ([], ["AA"])
+    await ble.stop()
+
+
+async def test_the_router_hears_through_the_proxies_an_integration_brings_along(tmp_path):
+    from support import changed, run
+
+    from majordom_integration_sdk.peripherals import BLEProxy, Need
+    from majordom_integration_sdk.testing import FakePeripheral
+
+    ble, proxy = BLEService(), FakeBLESource("esphome:aa")
+    esphome = FakePeripheral("esphome", [Need("ble", ["router"], is_required=False)], answer=True)
+    runtime = await run(tmp_path, ble, esphome)
+
+    esphome.provided.append(BLEProxy(proxy, name="aa:bb"))  # a node connected, known by its Bluetooth MAC
+    await changed(runtime, esphome)
+    assert proxy.on_advertisement is not None  # heard through
+    assert runtime.peripheral("esphome/aa:bb") is esphome.provided[0]
+
+    again = FakeBLESource("esphome:aa")  # it reconnected: another source under the same name
+    esphome.provided[:] = [BLEProxy(again)]
+    await changed(runtime, esphome)
+    assert proxy.on_advertisement is None and again.on_advertisement is not None
+
+    esphome.provided.clear()  # gone
+    await changed(runtime, esphome)
+    assert again.on_advertisement is None
+
+
+async def test_a_manufacturer_id_alone_selects_devices_that_advertise_no_service(radios):
+    """Ported from feature/ble-manufacturer-filter: HomeKit (HAP-BLE) accessories advertise Apple manufacturer data
+    and no service UUID."""
+    ble, near, _ = radios
+    by_service, by_manufacturer = Listener(), Listener()
+    ble.register(by_service, {MATTER})
+    ble.register(by_manufacturer, [BLEMatcher(manufacturer_id=APPLE)])
+
+    near.advertise("AA", service_uuids=[str(MATTER)])
+    near.advertise("BB", manufacturer_data={APPLE: b"\x06\x31"})
+    near.advertise("CC", manufacturer_data={0x0059: b"\x01"})
+    await settle()
+    assert [i.device.address for i in by_service.found] == ["AA"]
+    assert [i.device.address for i in by_manufacturer.found] == ["BB"]
+
+
+async def test_changed_manufacturer_data_is_an_update(radios):
+    ble, near, _ = radios
+    listener = Listener()
+    ble.register(listener, [BLEMatcher(manufacturer_id=APPLE)])
+
+    for data in (b"\x06\x31\x01", b"\x06\x31\x01", b"\x06\x31\x02"):
+        near.advertise("BB", manufacturer_data={APPLE: data})
+        await settle()
+    assert (len(listener.found), len(listener.updated)) == (1, 1)

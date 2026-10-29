@@ -18,7 +18,7 @@ class MissingCredentialsError(LookupError):
     WIFI: ClassVar[str] = "wifi"
     THREAD: ClassVar[str] = "thread"
 
-    def __init__(self, type: str = WIFI) -> None:
+    def __init__(self, type: str = WIFI):
         if not _TYPE.fullmatch(type):
             raise ValueError(f"Credentials type must be lower_snake_case, got {type!r}")
         self.type = type

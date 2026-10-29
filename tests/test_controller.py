@@ -1,15 +1,21 @@
 """A minimal concrete controller exercises the framework end to end with test doubles."""
 
+import inspect
+import subprocess
+import sys
+from pathlib import Path
 from uuid import UUID
 
-from conftest import make_device_state
+import pytest
+from factories import make_device_state
 
-from majordom_integration_sdk import Context
-from majordom_integration_sdk.controller import AbstractController
+from majordom_integration_sdk import NoSettings
+from majordom_integration_sdk.controller import AbstractController, ControllerOutput, LoggingControllerOutput
+from majordom_integration_sdk.repository import DeviceRepositoryMemory
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.schemas.event import DeviceParameterChange
-from majordom_integration_sdk.testing import RecordingControllerOutput, build_test_dependencies
+from majordom_integration_sdk.testing import RecordingControllerOutput, build_test_platform
 
 
 class _MinimalController(AbstractController[Device, Parameter]):
@@ -41,37 +47,51 @@ class _MinimalController(AbstractController[Device, Parameter]):
         pass
 
 
-def test_name_slug_and_uuid_helpers():
-    controller = _MinimalController(build_test_dependencies())
-    assert controller.name_slug == "example-protocol"
+def test_key_and_uuid_helpers():
+    controller = _MinimalController(build_test_platform())
+    assert controller.key == "example-protocol"
     # Deterministic, namespaced, and hierarchical.
     device_uuid = controller.device_uuid("abc")
     assert controller.device_uuid("abc") == device_uuid
     assert controller.parameter_uuid(device_uuid, "p1") != device_uuid
 
 
-def test_documents_folder_is_the_injected_path(tmp_path):
-    deps = build_test_dependencies(documents_folder=tmp_path)
-    controller = _MinimalController(deps)
-    assert controller.documents_folder == tmp_path
-    assert controller.documents_folder.exists()
+def test_its_documents_folder_is_its_own_under_the_platforms(tmp_path):
+    controller = _MinimalController(build_test_platform(documents_root=tmp_path))
+    assert controller.platform.documents_folder(controller) == tmp_path / "example-protocol"
+    assert (tmp_path / "example-protocol").is_dir()
 
 
-async def test_controller_can_use_injected_repository():
-    deps = build_test_dependencies()
-    controller = _MinimalController(deps)
-    device = make_device_state(integration=controller.name_slug)
-    async with controller.dependencies.make_device_repository() as repo:
+LEAVES = """
+from majordom_integration_sdk.testing import build_test_platform
+
+for platform in (build_test_platform(), build_test_platform()):
+    (platform.documents_root / "zigbee").mkdir()
+    (platform.documents_root / "zigbee" / "app.db").write_text("devices")
+    print(platform.documents_root)
+"""
+
+
+def test_a_platform_built_without_a_root_leaves_no_folder_behind():
+    # a folder each, never removed, piled up in the temp folder run after run
+    roots = subprocess.run([sys.executable, "-c", LEAVES], capture_output=True, text=True, check=True).stdout.split()
+    assert len(set(roots)) == 2 and not any(Path(root).exists() for root in roots)
+
+
+async def test_its_device_repository_holds_only_its_own_devices():
+    controller = _MinimalController(build_test_platform())
+    device = make_device_state(integration=controller.key)  # its slug, "example-protocol"
+    async with controller.platform.device_repository(controller) as repo:
         await repo.save(device)
         stored = await repo.state(device.id)
         assert stored is not None and stored.id == device.id
+        with pytest.raises(PermissionError):
+            await repo.save(make_device_state(integration="Other"))
 
 
 async def test_recording_output_captures_reports():
-    deps = build_test_dependencies()
-    controller = _MinimalController(deps)
-    output = deps.output
-    assert isinstance(output, RecordingControllerOutput)
+    controller = _MinimalController(build_test_platform())
+    output = controller.output = RecordingControllerOutput()
 
     device = make_device_state()
     change = DeviceParameterChange(device_id=device.id, parameter_id=device.parameters[0].id, value=1)
@@ -99,11 +119,31 @@ def test_name_is_autoderived_from_class_name():
 
 async def test_the_pairing_window_opens_without_credentials():
     # the Hub broadcasts `start_pairing_window(duration)`: credentials are only for the one integration that needs them
-    controller = _MinimalController(build_test_dependencies(integration="minimal"))
+    controller = _MinimalController(build_test_platform())
     await controller.start_pairing_window(5)
 
 
-async def test_changed_settings_and_context_ask_for_a_restart_unless_handled():
-    controller = _MinimalController(build_test_dependencies(integration="minimal"))
-    assert await controller.settings_did_change(None) is False
-    assert await controller.context_did_change(Context()) is False
+async def test_changed_settings_restart_it_unless_handled_and_the_platform_facts_dont():
+    controller = _MinimalController(build_test_platform())
+    assert await controller.settings_did_change(NoSettings()) is False
+    assert await controller.platform_facts_did_change(build_test_platform(region="Europe")) is True
+
+
+async def test_a_test_platform_holds_the_facts_given_and_its_store_every_device():
+    store: dict = {}
+    platform = build_test_platform(region="Europe", thread_dataset="0e08", store=store)
+    controller = _MinimalController(platform)
+    async with platform.device_repository(controller) as repo:
+        await repo.save(make_device_state(integration=controller.key))
+
+    assert (platform.region, platform.wifi, platform.thread_dataset) == ("Europe", None, "0e08")
+    async with DeviceRepositoryMemory(store=store).session() as everything:
+        assert [device.integration for device in await everything.get_all()] == ["example-protocol"]
+
+
+def test_the_output_annotations_evaluate():
+    """A host reads them, e.g. the Hub's null output: each names the controller it hears from."""
+    for output in (ControllerOutput, LoggingControllerOutput):
+        for name, method in inspect.getmembers(output, inspect.isfunction):
+            if name.startswith("controller_did_"):
+                assert inspect.get_annotations(method, eval_str=True)["controller"] is AbstractController, name

@@ -1,3 +1,6 @@
+"""The runtime's ``upnp/ssdp``: one SSDP listener shared by every integration that needs it. See
+`majordom_integration_sdk.capabilities.ssdp` for the contract."""
+
 import asyncio
 import logging
 import socket
@@ -6,27 +9,12 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from time import monotonic
-from typing import NamedTuple, Protocol
+from typing import NamedTuple
+
+from majordom_integration_sdk.capabilities.ssdp import SSDPDiscoveryInfo, SSDPDiscoveryListener
+from majordom_integration_sdk.peripherals import Endpoint, Peripheral
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class SSDPDiscoveryInfo:
-    addr: str
-    host: str | None
-    search_target: str | None
-    service_name: str | None
-    server: str | None
-    cache_control: str | None
-    location: str | None
-    response: dict[str, str]
-
-
-class SSDPDiscoveryListener(Protocol):
-    async def ssdp_did_discover_service(self, ssdp: "SSDPDiscoveryService", info: "SSDPDiscoveryInfo"): ...
-    async def ssdp_did_update_service(self, ssdp: "SSDPDiscoveryService", info: "SSDPDiscoveryInfo"): ...
-    async def ssdp_did_remove_service(self, ssdp: "SSDPDiscoveryService", info: "SSDPDiscoveryInfo"): ...
 
 
 @dataclass
@@ -58,7 +46,20 @@ class _SocketSubscribers:
     )  # search_target -> list of Subscriber
 
 
-class SSDPDiscoveryService:
+class SSDPDiscoveryService(Peripheral):
+    """An `SSDP`, on demand."""
+
+    name = "ssdp"
+    is_on_demand = True
+
+    @property
+    def endpoint(self) -> Endpoint:
+        return Endpoint("upnp", "ssdp", "ssdp", is_shared=True, instance=self)
+
+    @property
+    def provides(self) -> list[Endpoint]:
+        return [self.endpoint]
+
     def __init__(self):
         # Single dict: Endpoint -> SocketSubscribers(socket, [Subscriber])
         self._endpoints_subscribers: dict[_Endpoint, _SocketSubscribers] = dict()
@@ -117,6 +118,9 @@ class SSDPDiscoveryService:
     # Putting workers together
 
     async def start(self):
+        for es in self._endpoints_subscribers.values():
+            if es.scan_socket.fileno() == -1:  # closed when it stopped: the subscriptions go on
+                es.scan_socket = self._create_scan_socket()
         self._is_running = True
         self._tasks = [
             asyncio.create_task(self._start_scanning()),

@@ -1,5 +1,9 @@
 """The integration controller framework — the interface the Hub drives."""
 
-from .abstract_controller import AbstractController, ControllerOutput
+# The output first: it imports the controller last, once the names the controller takes from it exist
+from .output import ControllerOutput, IntegrationError, LoggingControllerOutput
 
-__all__ = ["AbstractController", "ControllerOutput"]
+# isort: split
+from .abstract_controller import AbstractController
+
+__all__ = ["AbstractController", "ControllerOutput", "IntegrationError", "LoggingControllerOutput"]

@@ -1,9 +1,10 @@
 """The device-repository interface a controller talks to.
 
 A controller never touches a database directly — it goes through this protocol, obtained
-from ``dependencies.make_device_repository()`` (an async context manager scoping one unit
-of work). The Hub backs it with its shared SQLAlchemy database; the SDK ships two
-first-class implementations for standalone/dev use — :class:`DeviceRepositoryMemory` and
+from its platform's ``device_repository(self)`` (an async context manager scoping one unit of
+work). The
+Hub backs it with its shared SQLAlchemy database; the SDK ships two first-class
+implementations for standalone/dev use — :class:`DeviceRepositoryMemory` and
 :class:`SqliteDeviceRepository`.
 
 **Integration scope.** The repository is bound to one integration at construction, so there
@@ -12,11 +13,12 @@ Out-of-scope reads come back ``None``/empty and out-of-scope writes raise — a 
 carelessness, not a security boundary. Constructing with ``integration=None`` gives full
 access (the Hub's own higher-level use).
 
-**Typed reads.** ``as_`` deserializes into your own ``Device``/``DeviceState`` subclass, so
-``integration_data`` comes back typed instead of a bare dict::
+**Typed reads.** ``as_`` deserializes into your own ``Device[MyData]`` /
+``DeviceState[MyData, MyParameterData]`` (or a subclass), so ``integration_data`` comes back
+typed instead of a bare dict::
 
-    async with self.dependencies.make_device_repository() as repo:
-        device = await repo.get(device_id, as_=MyDevice)  # device.integration_data: MyData
+    async with self.platform.device_repository(self) as repo:
+        device = await repo.get(device_id, as_=MyDevice)  # class MyDevice(Device[MyData])
 
 **Not here on purpose:** ``delete`` and ``update_parameter_visibility`` are Hub-internal
 lifecycle operations. They exist on the concrete implementations, but are kept off this
@@ -52,18 +54,19 @@ class DeviceRepositoryProtocol(Protocol):
         """One parameter's current state, or ``None`` if the device/parameter is unknown/out of scope."""
         ...
 
-    async def save(self, device: Device | DeviceState, previous_id: UUID | None = None) -> None:
+    async def save(self, device: Device | DeviceState, previous_id: UUID | None = None):
         """Insert or update a device, merging into whatever is already stored.
 
         Saving a ``Device`` updates its info/``integration_data``; saving a ``DeviceState``
-        updates its info/``parameters`` — neither clobbers the other's fields. ``previous_id``
+        updates its info/``parameters``, and its ``integration_data`` only when it was given
+        one — neither clobbers the other's fields. ``previous_id``
         renames an existing record before the write (pairing turning a provisional discovery
         id into the device's final id), carrying its stored data over. Rejects a device
         outside the bound integration's scope.
         """
         ...
 
-    async def save_parameter_state(self, device_id: UUID, parameter_state: ParameterState) -> None:
+    async def save_parameter_state(self, device_id: UUID, parameter_state: ParameterState):
         """Update a single parameter's value/state on an existing in-scope device."""
         ...
 

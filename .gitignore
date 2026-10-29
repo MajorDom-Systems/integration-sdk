@@ -27,6 +27,9 @@ htmlcov/
 env/
 venv/
 
+# The dev runner's settings and keys
+.majordom-dev/
+
 # Poetry
 # poetry.lock  # uncomment for applications, keep commented for libraries
 
