@@ -1,6 +1,6 @@
 """The ``ble/router`` contract: one Bluetooth LE router that hears every radio and reaches every device.
 
-Integrations need it as ``Need("ble", ["router"])`` and get it at ``self.peripherals.instance("ble")``; never raw
+Integrations need it as `BLE_ROUTER` and get it at ``self.peripherals.instance(BLE_ROUTER)``; never raw
 Bluetooth, which the router holds. Its sources are the radios the runtime binds to it (``ble/bluez`` adapters,
 ``ble/silabs-cpc-hci``, ``ble/esphome-proxy`` nodes an integration brings along): `BLESource`s.
 
@@ -19,6 +19,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from uuid import UUID
+
+from majordom_integration_sdk.peripherals.need import Need
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
@@ -190,3 +192,6 @@ class BLERouter(Protocol):
     def devices(self) -> list[BLEDiscoveryInfo]:
         """Every device heard recently, as the source hearing it best sees it."""
         ...
+
+
+BLE_ROUTER = Need[BLERouter]("ble", ["router"])  # optional: dataclasses.replace(it, is_required=False)

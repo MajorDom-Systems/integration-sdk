@@ -100,9 +100,9 @@ class Peripherals:
         bound = self.bound.get(family, [])
         return bound if isinstance(bound, list) else [bound]
 
-    def instance(self, family: str) -> Any:
-        """The in-process peripheral bound to the need of ``family``, e.g. the Bluetooth router; None while unbound."""
-        return self.endpoint(family).instance if family in self.bound else None
+    def instance[T](self, need: Need[T]) -> T | None:
+        """The in-process peripheral bound to ``need``, typed by it, e.g. the Bluetooth router; None while unbound."""
+        return self.endpoint(need.family).instance if need.family in self.bound else None
 
 
 class Peripheral[S: BaseModel = Any](Protocol):
@@ -122,11 +122,12 @@ class Peripheral[S: BaseModel = Any](Protocol):
     ``settings``, its options validated by its ``Settings``. Declare them as a nested ``class Settings(BaseModel)``
     named as the type parameter, which types ``settings``: ``class Radio(Peripheral["Radio.Settings"])``. Without,
     they are `NoSettings`; a bare ``Peripheral`` is one of any settings. A field marked read-only in its JSON schema,
-    ``channel: int = Field(11, json_schema_extra={"readOnly": True})``, shows what the peripheral fills in itself
+    ``channel: int = Field(11, json_schema_extra={Extra.read_only: True})``, shows what the peripheral fills in itself
     (``self.settings.channel = 25``): the user sees it, and an update to another value is refused. It is never kept:
     until the peripheral fills it in again, it holds its default. One marked write-only,
-    ``network_key: str = Field("", json_schema_extra={"writeOnly": True})``, is the reverse: the user sets it, and the
-    host never shows it (the Hub never reads it back), so an update that leaves it out keeps it.
+    ``network_key: str = Field("", json_schema_extra={Extra.write_only: True})``, is the reverse: the user sets it,
+    and the host never shows it (the Hub never reads it back), so an update that leaves it out keeps it. ``Extra`` is
+    `SettingsExtraField`: never spell a keyword out.
     """
 
     name: str  # what it is shown by

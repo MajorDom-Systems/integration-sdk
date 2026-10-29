@@ -1,7 +1,7 @@
 """The ``upnp/ssdp`` contract: hearing UPnP devices and services over SSDP.
 
-Integrations need it as ``Need("upnp", ["ssdp"])`` and get the runtime's listener at
-``self.peripherals.instance("upnp")``: an `SSDP`.
+Integrations need it as `UPNP_SSDP` and get the runtime's listener at ``self.peripherals.instance(UPNP_SSDP)``: an
+`SSDP`.
 """
 
 from __future__ import annotations
@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
+
+from majordom_integration_sdk.peripherals.need import Need
 
 
 @dataclass
@@ -40,3 +42,6 @@ class SSDP(Protocol):
         """Calls ``listener`` about what answers ``search_target`` (``"ssdp:all"``, a device or service type) as it
         comes, changes and goes. Returns a cancel function — call it on stop to deregister."""
         ...
+
+
+UPNP_SSDP = Need[SSDP]("upnp", ["ssdp"])  # optional: dataclasses.replace(it, is_required=False)

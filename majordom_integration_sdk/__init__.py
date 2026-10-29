@@ -24,6 +24,7 @@ from majordom_integration_sdk.controller import AbstractController, ControllerOu
 from majordom_integration_sdk.errors import MissingCredentialsError
 from majordom_integration_sdk.peripherals import (
     STABLE_RUN,
+    ComposeService,
     Endpoint,
     Need,
     NoSettings,
@@ -32,6 +33,7 @@ from majordom_integration_sdk.peripherals import (
     PeripheralOutput,
     Peripherals,
     Service,
+    SettingsExtraField,
     UsbDriver,
 )
 from majordom_integration_sdk.platform import Platform
@@ -70,8 +72,10 @@ __all__ = [
     "PeripheralOutput",
     "Peripherals",
     "Service",
+    "ComposeService",
     "UsbDriver",
     "PeripheralChange",
     "WifiCredentials",
     "STABLE_RUN",
+    "SettingsExtraField",
 ]

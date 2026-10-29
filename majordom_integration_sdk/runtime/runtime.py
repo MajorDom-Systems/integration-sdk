@@ -28,6 +28,7 @@ from majordom_integration_sdk.peripherals import (
     Peripheral,
     PeripheralChange,
     Peripherals,
+    SettingsExtraField,
 )
 from majordom_integration_sdk.platform import Platform
 from majordom_integration_sdk.runtime.output import HostOutput
@@ -984,7 +985,7 @@ async def _within[T](seconds: float, call: Awaitable[T], late: str) -> T:
 
 def _is_read_only(schema: Any) -> bool:
     """Whether a settings field is marked read-only in its JSON schema: its peripheral fills it in, never the user."""
-    return isinstance(schema, dict) and schema.get("readOnly") is True
+    return isinstance(schema, dict) and schema.get(SettingsExtraField.read_only) is True
 
 
 def _read_only(model: type[BaseModel]) -> set[str]:

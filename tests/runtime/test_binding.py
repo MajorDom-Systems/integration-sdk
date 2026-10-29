@@ -6,6 +6,7 @@ import pytest
 from support import run, settle
 
 from majordom_integration_sdk import Endpoint, Need
+from majordom_integration_sdk.capabilities import BLE_ROUTER
 from majordom_integration_sdk.runtime import PeripheralState, PeripheralStatus
 from majordom_integration_sdk.runtime import StatusKind as K
 from majordom_integration_sdk.testing import FakePeripheral
@@ -51,7 +52,7 @@ async def test_an_in_process_provider_is_a_shared_endpoint_carrying_itself(tmp_p
     runtime = await run(tmp_path, ble, matter, homekit)
 
     instance = ROUTER.instance
-    assert matter.peripherals.instance("ble") is instance and homekit.peripherals.instance("ble") is instance
+    assert matter.peripherals.instance(BLE_ROUTER) is instance and homekit.peripherals.instance(BLE_ROUTER) is instance
     assert runtime.users(ble) == ["matter", "homekit"]
 
 

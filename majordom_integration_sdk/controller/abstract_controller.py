@@ -123,9 +123,10 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
 
     needs: Sequence[Need] = ()
     """What the integration requires from its environment: everything external, which something else must provide —
-    radios (``Need("zigbee", ["ezsp"])``), the Bluetooth router (``Need("ble", ["router"])``), DNS-SD
-    (``Need("mdns", ["zeroconf"])``), SSDP (``Need("upnp", ["ssdp"])``) and the services its integration provides next
-    to it. Bound ones arrive in ``self.peripherals`` keyed by family; in library mode hand them over yourself. A
+    radios (``Need("zigbee", ["ezsp"])``), the Bluetooth router (`BLE_ROUTER`), DNS-SD (`ZEROCONF`), SSDP
+    (`UPNP_SSDP`) and the services its integration provides next to it. Bound ones arrive in ``self.peripherals``
+    keyed by family, an in-process one typed by its need: ``self.peripherals.instance(BLE_ROUTER)``; in library mode
+    hand them over yourself. A
     required need that can't be bound keeps the integration from starting (the Hub tells the user what it waits for, the
     log why); an optional one arrives once its provider runs, as it appears (`needed_peripheral_did_change`). Never need
     raw Bluetooth: the router holds every radio."""

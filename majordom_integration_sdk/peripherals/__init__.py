@@ -17,8 +17,9 @@ from majordom_integration_sdk.peripherals.peripheral import (
     PeripheralOutput,
     Peripherals,
 )
-from majordom_integration_sdk.peripherals.service import Service, ServiceHost
+from majordom_integration_sdk.peripherals.service import ComposeService, Healthcheck, Service, ServiceHost
 from majordom_integration_sdk.peripherals.usb import USB_DRIVER, UsbDriver
+from majordom_integration_sdk.schemas.settings import SettingsExtraField
 
 __all__ = [
     "Need",
@@ -31,8 +32,11 @@ __all__ = [
     "PeripheralChange",
     "Service",
     "ServiceHost",
+    "ComposeService",
+    "Healthcheck",
     "UsbDriver",
     "USB_DRIVER",
     "BLEProxy",
     "STABLE_RUN",
+    "SettingsExtraField",
 ]

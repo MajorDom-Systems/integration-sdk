@@ -9,6 +9,7 @@ from typing import Annotated
 from pydantic import Field
 
 from .base import Base
+from .settings import SettingsExtraField as Extra
 
 
 class CredentialsType(str, Enum):
@@ -81,4 +82,4 @@ class ProvidedCredentials(Base):
 class WifiCredentials:
     ssid: str
     # the user writes it, nothing reads it back: settings holding a network never return it
-    password: Annotated[str, Field(json_schema_extra={"writeOnly": True})] = ""
+    password: Annotated[str, Field(json_schema_extra={Extra.write_only: True})] = ""

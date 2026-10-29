@@ -3,6 +3,7 @@
 only: the implementations live in `majordom_integration_sdk.runtime`."""
 
 from .ble import (
+    BLE_ROUTER,
     BLEBusyError,
     BLEConnection,
     BLEDiscoveryInfo,
@@ -20,10 +21,13 @@ from .ble import (
     ScanModeBLESource,
 )
 from .ble_security import LESecureConnections, SecureChannel, Unsecured
-from .ssdp import SSDP, SSDPDiscoveryInfo, SSDPDiscoveryListener
-from .zeroconf import Zeroconf, ZeroconfDiscoveryInfo, ZeroconfDiscoveryListener
+from .ssdp import SSDP, UPNP_SSDP, SSDPDiscoveryInfo, SSDPDiscoveryListener
+from .zeroconf import ZEROCONF, Zeroconf, ZeroconfDiscoveryInfo, ZeroconfDiscoveryListener
 
 __all__ = [
+    "BLE_ROUTER",
+    "ZEROCONF",
+    "UPNP_SSDP",
     "BLEBusyError",
     "BLEConnection",
     "BLEDiscoveryInfo",

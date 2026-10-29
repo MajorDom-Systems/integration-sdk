@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from majordom_integration_sdk.peripherals.endpoint import Endpoint
 
 
 @dataclass(frozen=True)
-class Need:
-    """A dependency something else must provide, as ``family`` and the ``dialects`` it speaks.
+class Need[T = Any]:
+    """A dependency something else must provide, as ``family`` and the ``dialects`` it speaks; ``T`` types the
+    in-process peripheral it binds, read back with ``self.peripherals.instance(need)``: ``Need[BLERouter]``.
 
     The runtime binds it to an `Endpoint` and hands that over in the peripheral's `Peripherals`, to a controller as
     ``self.peripherals.endpoint(<family>)`` and to a `Service` as ``{peripherals.<family>.url}``. An ``is_many`` need

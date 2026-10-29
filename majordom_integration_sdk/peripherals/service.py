@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 
 from pydantic import BaseModel
 
@@ -13,6 +13,37 @@ from majordom_integration_sdk.peripherals.peripheral import NoSettings, Peripher
 
 if TYPE_CHECKING:
     from majordom_integration_sdk.platform import Platform
+
+
+class Healthcheck(TypedDict, total=False):
+    test: list[str]
+    interval: str
+    timeout: str
+    start_period: str
+    retries: int
+
+
+class ComposeService(TypedDict, total=False):
+    """A Docker Compose service definition, the keys services use typed (a typo fails type checking, not the start);
+    another key goes here first. Its strings are templates: see `Service`."""
+
+    image: str
+    build: str
+    command: list[str]
+    entrypoint: list[str]
+    environment: dict[str, str]
+    volumes: list[str]
+    devices: list[str]
+    tmpfs: list[str]
+    network_mode: Literal["host", "bridge", "none"]
+    userns_mode: Literal["host"]
+    user: str
+    privileged: bool
+    hostname: str
+    cap_add: list[str]
+    cap_drop: list[str]
+    group_add: list[str]
+    healthcheck: Healthcheck
 
 
 class ServiceHost(Protocol):
@@ -33,7 +64,7 @@ class ServiceHost(Protocol):
         ...
 
 
-CONTAINER_HOST = Need("container", ["compose"])  # what every service needs
+CONTAINER_HOST = Need[ServiceHost]("container", ["compose"])  # what every service needs
 
 
 class Service[S: BaseModel = Any](Peripheral[S]):
@@ -69,7 +100,7 @@ class Service[S: BaseModel = Any](Peripheral[S]):
     def __init__(
         self,
         name: str,
-        compose: Mapping[str, Any],
+        compose: ComposeService,
         needs: Sequence[Need] = (),
         provides: Sequence[Endpoint] = (),
         settings: type[S] = NoSettings,  # ty: ignore[invalid-parameter-default]  (none: it takes none)
@@ -85,7 +116,7 @@ class Service[S: BaseModel = Any](Peripheral[S]):
     @property
     def host(self) -> ServiceHost | None:
         """The container host its need is bound to."""
-        return self.peripherals.instance(CONTAINER_HOST.family)
+        return self.peripherals.instance(CONTAINER_HOST)
 
     @property
     def provides(self) -> Sequence[Endpoint]:

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, ValidationError
 from support import changed, run, settle, state, until
 
 from majordom_integration_sdk import STABLE_RUN, Endpoint, Need, NoSettings, PeripheralChange, Platform
+from majordom_integration_sdk import SettingsExtraField as Extra
 from majordom_integration_sdk.runtime import MemoryDisabledStore, PeripheralStatus, Runtime
 from majordom_integration_sdk.runtime import PeripheralState as S
 from majordom_integration_sdk.runtime import StatusKind as K
@@ -1218,7 +1219,9 @@ async def test_new_settings_it_doesnt_have_are_refused(tmp_path):
 
 
 class Network(BaseModel):
-    channel: int = Field(11, json_schema_extra={"readOnly": True})  # the live network's, filled in by the peripheral
+    channel: int = Field(
+        11, json_schema_extra={Extra.read_only: True}
+    )  # the live network's, filled in by the peripheral
     permit_join: bool = False
 
 
@@ -1255,7 +1258,7 @@ async def test_a_read_only_setting_is_never_kept(tmp_path):
 
 
 class Keys(BaseModel):
-    network_key: str = Field("", json_schema_extra={"writeOnly": True})  # set by the user, never shown
+    network_key: str = Field("", json_schema_extra={Extra.write_only: True})  # set by the user, never shown
     region: str = "Europe"
 
 

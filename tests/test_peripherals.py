@@ -15,6 +15,7 @@ from majordom_integration_sdk import (
     Service,
     UsbDriver,
 )
+from majordom_integration_sdk.capabilities import BLE_ROUTER
 from majordom_integration_sdk.peripherals.peripheral import START_TIMEOUT
 from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter
 from majordom_integration_sdk.testing import build_test_platform
@@ -57,12 +58,12 @@ def test_peripherals_hand_out_one_endpoint_many_or_an_instance():
     with pytest.raises(TypeError, match="endpoints"):
         peripherals.endpoint("raw")
     assert peripherals.endpoints("thread") == []
-    assert peripherals.instance("ble") is None
+    assert peripherals.instance(BLE_ROUTER) is None
     with pytest.raises(KeyError):
         peripherals.endpoint("thread")
 
     peripherals = Peripherals({"ble": Endpoint("ble", "router", "router", is_shared=True, instance=router)})
-    assert peripherals.instance("ble") is router
+    assert peripherals.instance(BLE_ROUTER) is router
 
 
 def test_an_endpoint_is_the_same_whatever_instance_it_carries():

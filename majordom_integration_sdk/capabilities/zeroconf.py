@@ -1,7 +1,7 @@
 """The ``mdns/zeroconf`` contract: browsing DNS-SD services over mDNS.
 
-Integrations need it as ``Need("mdns", ["zeroconf"])`` and get the runtime's browser at
-``self.peripherals.instance("mdns")``: a `Zeroconf`.
+Integrations need it as `ZEROCONF` and get the runtime's browser at ``self.peripherals.instance(ZEROCONF)``: a
+`Zeroconf`.
 """
 
 from __future__ import annotations
@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
+
+from majordom_integration_sdk.peripherals.need import Need
 
 if TYPE_CHECKING:
     from zeroconf.asyncio import AsyncZeroconf
@@ -88,3 +90,6 @@ class Zeroconf(Protocol):
     def async_zeroconf(self) -> AsyncZeroconf | None:
         """The zeroconf instance it browses with, for libraries that take one (aiohomekit); None until it starts."""
         ...
+
+
+ZEROCONF = Need[Zeroconf]("mdns", ["zeroconf"])  # optional: dataclasses.replace(it, is_required=False)

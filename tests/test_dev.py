@@ -16,6 +16,7 @@ from factories import make_device_state
 
 import majordom_integration_sdk.dev as dev
 from majordom_integration_sdk import Endpoint, Need, PeripheralChange
+from majordom_integration_sdk.capabilities import BLE_ROUTER
 from majordom_integration_sdk.controller import AbstractController
 from majordom_integration_sdk.dev import LoggingControllerOutput, Runner, build_platform, build_runtime, run_controller
 from majordom_integration_sdk.runtime import Pinned, Runtime
@@ -155,7 +156,7 @@ async def test_the_runner_starts_the_controller_once_its_needs_are_bound(tmp_pat
     await pinned.pin(ZWAVE)
     await until(lambda: runner_.is_running)
     assert controller.peripherals.endpoint("zwave") == ZWAVE
-    assert controller.peripherals.instance("ble") is router  # the router, as under the Hub
+    assert controller.peripherals.instance(BLE_ROUTER) is router  # the router, as under the Hub
 
     await pinned.unpin("zwave")  # a required need lost: stopped until it's back
     assert controller.stopped == 1 and not runner_.is_running

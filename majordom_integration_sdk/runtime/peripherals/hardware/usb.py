@@ -72,6 +72,9 @@ class Radio(Peripheral["Radio.Settings"]):
         self.settings = self.Settings()
         self._asked: list[UsbDriver] = []  # the drivers that didn't recognise it
 
+    def __repr__(self) -> str:
+        return f"Radio({self.name!r}, {self.firmware!r})"
+
     @property
     def provides(self) -> list[Endpoint]:
         if self.is_busy or self.held_by or self.driver is None:
@@ -91,9 +94,13 @@ class Radio(Peripheral["Radio.Settings"]):
         """Firmwares it can be switched to on its channel."""
         return self.driver.flashable(self.path, self.settings.firmware_channel) if self.driver else []
 
+    # Peripheral hooks
+
     async def settings_did_change(self, before: Radio.Settings) -> bool:
         """Its channel only changes what it may be flashed to: nothing restarts."""
         return True
+
+    # Actions
 
     async def recognise(self, is_asking_again: bool = False):
         """Ask the drivers which firmware it runs, each once unless ``is_asking_again``, until one tells."""
@@ -142,6 +149,14 @@ class Radio(Peripheral["Radio.Settings"]):
         if self.scanner:
             await self.scanner.rescan()
 
+    async def check_bluetooth(self):
+        """Whether a multi-PAN firmware serves Bluetooth too: the driver says where it knows, else it is asked."""
+        endpoints = self.driver.serves(self.firmware, self.node) if self.driver else []
+        if any(e.family == "multipan" for e in endpoints) and self.driver:
+            self.has_bluetooth = self.firmware in self.driver.bluetooth or await cpc_hci.has_bluetooth(self.path)
+
+    # Private
+
     def _remember(self):
         if self.scanner:
             self.scanner.remember(self)
@@ -156,15 +171,6 @@ class Radio(Peripheral["Radio.Settings"]):
                 yield
         finally:
             await self.output.peripheral_did_change_provided(self)
-
-    async def check_bluetooth(self):
-        """Whether a multi-PAN firmware serves Bluetooth too: the driver says where it knows, else it is asked."""
-        endpoints = self.driver.serves(self.firmware, self.node) if self.driver else []
-        if any(e.family == "multipan" for e in endpoints) and self.driver:
-            self.has_bluetooth = self.firmware in self.driver.bluetooth or await cpc_hci.has_bluetooth(self.path)
-
-    def __repr__(self) -> str:
-        return f"Radio({self.name!r}, {self.firmware!r})"
 
 
 class UsbScanner(Peripheral):
@@ -197,6 +203,8 @@ class UsbScanner(Peripheral):
     def radios(self) -> list[Radio]:
         return list(self._radios)
 
+    # Lifecycle
+
     async def start(self):
         self._known = read_json(self.platform.documents_folder(self) / "sticks.json")
         await self._scan()
@@ -212,6 +220,37 @@ class UsbScanner(Peripheral):
         the background, as a probe may take long."""
         self._spawn(self.rescan())
         return True
+
+    # Actions
+
+    async def rescan(self):
+        """Follow the sticks plugged in now, identifying the new ones it may open."""
+        try:
+            await self._scan()
+            await self.output.peripheral_did_change_provided(self)
+        except Exception:
+            log.exception("Following the USB sticks failed")
+
+    def remember(self, *radios: Radio):
+        """Keep what ``radios`` are, and whether the user claimed them, across restarts."""
+        for radio in radios:
+            driver = radio.driver.name if radio.driver else None
+            known = {
+                "driver": driver,
+                "firmware": radio.firmware,
+                "params": radio.found,
+                "has_bluetooth": radio.has_bluetooth,
+            }
+            self._known[radio.name] = known | {"is_claimed": radio.is_claimed}
+        write_json(self.platform.documents_folder(self) / "sticks.json", self._known)
+
+    def forget(self, radio: Radio):
+        """Forget what ``radio`` is, and that the user claimed it: the next scan looks at it as a stick plugged in
+        anew."""
+        self._known.pop(radio.name, None)
+        write_json(self.platform.documents_folder(self) / "sticks.json", self._known)
+
+    # Private
 
     def _spawn(self, coroutine: Coroutine[Any, Any, Any]):
         task = asyncio.create_task(coroutine)
@@ -257,25 +296,6 @@ class UsbScanner(Peripheral):
             radio.driver, radio.firmware, radio.has_bluetooth = driver, firmware, known.get("has_bluetooth", False)
             radio.found = known.get("params", {})
 
-    def remember(self, *radios: Radio):
-        """Keep what ``radios`` are, and whether the user claimed them, across restarts."""
-        for radio in radios:
-            driver = radio.driver.name if radio.driver else None
-            known = {
-                "driver": driver,
-                "firmware": radio.firmware,
-                "params": radio.found,
-                "has_bluetooth": radio.has_bluetooth,
-            }
-            self._known[radio.name] = known | {"is_claimed": radio.is_claimed}
-        write_json(self.platform.documents_folder(self) / "sticks.json", self._known)
-
-    def forget(self, radio: Radio):
-        """Forget what ``radio`` is, and that the user claimed it: the next scan looks at it as a stick plugged in
-        anew."""
-        self._known.pop(radio.name, None)
-        write_json(self.platform.documents_folder(self) / "sticks.json", self._known)
-
     async def _watch(self):
         seen = _nodes(_sticks())
         while True:
@@ -288,14 +308,6 @@ class UsbScanner(Peripheral):
             is_let_go = any(r.held_by not in (None, UNSEEN) and not _holder(r.path) for r in self.radios)
             if is_moved or is_let_go:
                 await self.rescan()
-
-    async def rescan(self):
-        """Follow the sticks plugged in now, identifying the new ones it may open."""
-        try:
-            await self._scan()
-            await self.output.peripheral_did_change_provided(self)
-        except Exception:
-            log.exception("Following the USB sticks failed")
 
 
 async def _identified(driver: UsbDriver, path: str) -> tuple[str, dict[str, Any]] | None:
