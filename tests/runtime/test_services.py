@@ -14,8 +14,9 @@ from support import changed, run, settle, state, until
 from majordom_integration_sdk import Endpoint, Need, Platform, Service
 from majordom_integration_sdk.runtime import PeripheralState, PeripheralStatus
 from majordom_integration_sdk.runtime import StatusKind as K
+from majordom_integration_sdk.runtime.peripherals.hardware.drivers import Silabs
 from majordom_integration_sdk.runtime.peripherals.services import builtin
-from majordom_integration_sdk.runtime.peripherals.services.compose import Compose
+from majordom_integration_sdk.runtime.peripherals.services.compose import Compose, _Host
 from majordom_integration_sdk.testing import FakeCompose, FakePeripheral, RecordingRuntimeOutput
 
 IP = Endpoint("ip", is_shared=True)
@@ -83,7 +84,11 @@ async def test_a_multipan_stick_serves_zigbee_and_matter_through_one_container(t
     assert set(services) == {"silabs-multiprotocol", "matterjs-server"}  # no one binds the standalone border router
     assert services["silabs-multiprotocol"]["devices"][0] == "/dev/ttyUSB0:/dev/ttyRCP"
     environment = services["silabs-multiprotocol"]["environment"]
-    assert (environment["RADIO_BAUD"], environment["RADIO_FLOW_CONTROL"]) == ("460800", "True")
+    assert (environment["RADIO_DEVICE"], environment["RADIO_BAUD"], environment["RADIO_HARDFLOW"]) == (
+        "/dev/ttyRCP",
+        "460800",
+        "true",
+    )
     assert services["matterjs-server"]["environment"]["OTBR"] == "http://127.0.0.1:8081"
     assert "depends_on" not in services["matterjs-server"]  # its border router coming and going doesn't restart it
     assert runtime.users(radio) == ["silabs-multiprotocol", "zigbee", "matterjs-server", "matter"]
@@ -92,6 +97,24 @@ async def test_a_multipan_stick_serves_zigbee_and_matter_through_one_container(t
     assert runtime.status(otbr) == PeripheralStatus(
         PeripheralState.WAITING, K.NEEDS_UNBOUND, "need thread/spinel: nothing offers it"
     )
+
+
+async def test_a_board_uart_without_flow_control_renders_its_own_serial_settings(tmp_path):
+    wired = Silabs().serves("multipan-rcp", "/dev/ttyAMA3", {"baud": 115200, "flow_control": False})  # the CM4's MG26
+    await run(tmp_path, FakeCompose(), host(), stick("board", *wired), builtin.silabs_multiprotocol(), zigbee())
+    service = compose(tmp_path)["silabs-multiprotocol"]
+    assert service["devices"][0] == "/dev/ttyAMA3:/dev/ttyRCP"
+    assert (service["environment"]["RADIO_BAUD"], service["environment"]["RADIO_HARDFLOW"]) == ("115200", "false")
+
+
+@pytest.mark.parametrize("has_avahi", [True, False])
+async def test_the_multipan_border_router_publishes_through_the_hosts_avahi_when_it_runs(
+    tmp_path, monkeypatch, has_avahi
+):
+    monkeypatch.setattr(_Host, "avahi", has_avahi)
+    await run(tmp_path, FakeCompose(), host(), stick("sky", MULTIPAN), builtin.silabs_multiprotocol(), zigbee())
+    volumes = compose(tmp_path)["silabs-multiprotocol"]["volumes"]
+    assert ("/run/dbus:/run/dbus" in volumes) == has_avahi
 
 
 async def test_learning_the_thread_network_recreates_no_border_router(tmp_path):

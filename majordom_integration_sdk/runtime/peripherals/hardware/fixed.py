@@ -28,7 +28,9 @@ class FixedPeripherals(Peripheral):
     """What is soldered on the board, as its owner describes it (the Hub reads its board profile): each one whose path
     exists is brought along, a radio as a `Radio`.
 
-        FixedPeripherals(FixedRadio("mg26", "/dev/ttyAMA3", "silabs", "multipan-rcp", {"flow_control": False}))
+        FixedPeripherals(
+            FixedRadio("mg26", "/dev/ttyAMA3", "silabs", "multipan-rcp", {"baud": 115200, "flow_control": False})
+        )
     """
 
     name = "board"

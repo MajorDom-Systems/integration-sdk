@@ -73,8 +73,8 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
         settings=ThreadRadio,
         ports={"ezsp": 9999, "rest": 8081},
         compose={
-            "image": "majordom/silabs-multiprotocol:gsdk-4.4.6-arm64",
-            "build": str(_IMAGES / "multiprotocol"),
+            "image": "majordom/multiprotocol:sisdk-2025.6.3-avahi-arm64",
+            "build": str(_IMAGES / "multiprotocol-sisdk"),
             "privileged": True,
             "userns_mode": "host",
             "network_mode": "host",
@@ -82,17 +82,20 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
             # a privileged container sees the host's /dev: a common name (ttyACM0) would be the host's own device
             "devices": ["{peripherals.multipan.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
             "volumes": [
-                f"{_IMAGES}/multiprotocol/cpcd.conf:/usr/local/etc/cpcd.conf:ro",
-                f"{_IMAGES}/multiprotocol/entrypoint.sh:/entrypoint.sh:ro",
+                f"{_IMAGES}/multiprotocol-sisdk/entrypoint.sh:/entrypoint.sh:ro",
                 f"{_IMAGES}/thread-source/run:/thread-source:ro",
+                # the avahi build publishes through the host's avahi-daemon, on the host's bus
+                "{host.avahi:?/run/dbus:/run/dbus}",
                 "{data}/thread:/var/lib/thread",
                 "{data}/zigbee:/var/lib/zigbee",
             ],
             "tmpfs": ["/run:exec,mode=1777"],
             "entrypoint": ["/bin/bash", "/entrypoint.sh"],
             "environment": {
+                "RADIO_DEVICE": "/dev/ttyRCP",
                 "RADIO_BAUD": "{peripherals.multipan.params[baud]}",
-                "RADIO_FLOW_CONTROL": "{peripherals.multipan.params[flow_control]}",
+                "RADIO_HARDFLOW": "{peripherals.multipan.params[flow_control]:?true}"
+                "{peripherals.multipan.params[flow_control]:!false}",
                 "BACKBONE_IF": "{host.interface}",
                 "EZSP_TCP_PORT": "{ports.ezsp}",
                 "OTBR_REST_PORT": "{ports.rest}",
