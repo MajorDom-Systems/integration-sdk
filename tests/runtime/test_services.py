@@ -186,7 +186,8 @@ async def test_without_radios_zigbee_waits_and_matter_runs_over_ip(tmp_path):
 
     assert state(runtime, integration) == PeripheralState.WAITING
     assert state(runtime, app) == PeripheralState.RUNNING
-    assert compose(tmp_path)["matterjs-server"]["environment"]["OTBR"] == ""
+    # unset, not set to nothing: a server parsing it (matterjs-server's BLUETOOTH_ADAPTER as an integer) would fail
+    assert "OTBR" not in compose(tmp_path)["matterjs-server"]["environment"]
 
 
 async def test_an_endpoint_given_first_replaces_the_border_router(tmp_path):
