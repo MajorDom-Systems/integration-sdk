@@ -45,10 +45,8 @@ class Silabs(UsbDriver):
                 f"{_NABUCASA}/v2025.11.24/skyconnect_openthread_rcp_2.4.4.0_GitHub-7074a43e4_gsdk_4.4.4.gbl",
                 "4cb5d04f4fab827745665104110fe1d272e4eb9bc38d1f496abb0311ef76e062",
             ),
-            "multipan-rcp": Firmware(
-                f"{_NABUCASA}/v2024.8.20/skyconnect_rcp-uart-802154_gsdk_4.4.4.gbl",
-                "2140cfb06d2957e610057888a80fa068cf1bdacdbadb51ba430e2c8e1907a8bb",
-            ),
+            # no multipan-rcp: NabuCasa's is gsdk 4.4.4 (CPC v5), the multi-PAN service runs SiSDK 2025.6.3 (CPC v6)
+            # and our SiSDK build isn't published yet; a stick already on it is still recognised (``_apps``)
         },
     }
 

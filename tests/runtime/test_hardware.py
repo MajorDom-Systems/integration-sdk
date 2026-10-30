@@ -418,7 +418,7 @@ async def test_the_firmware_offered_follows_the_radios_channel(tmp_path):
     assert radio.options == []  # stable channel: nothing verified to flash yet
 
     await runtime.update_settings(radio, {"firmware_channel": "dev"})
-    assert radio.options == ["zigbee-ncp", "thread-rcp", "multipan-rcp"]
+    assert radio.options == ["zigbee-ncp", "thread-rcp"]
     assert runtime.reach(Silabs().serves("multipan-rcp", "x")) == []  # nothing here needs what it would serve
     assert runtime.reach(Silabs().serves("zigbee-ncp", "x")) == ["zigbee"]
 
@@ -515,3 +515,17 @@ async def test_endpoints_pinned_first_win_and_come_and_go(tmp_path, sticks):
     await pinned.pin(mine)
     await settle(runtime)
     assert runtime.providers(integration) == {"zigbee": "pinned"}
+
+
+def test_a_skyconnect_is_never_offered_a_multipan_build_the_sisdk_stack_cant_run(monkeypatch):
+    from majordom_integration_sdk.runtime.peripherals.hardware import drivers
+
+    sky = "/dev/serial/by-id/usb-Nabu_Casa_SkyConnect_v1.0_0-if00-port0"
+    assert "multipan-rcp" not in drivers.Silabs().flashable(sky, "dev")  # gsdk 4.4.4 / CPC v5: no match for CPC v6
+    assert set(drivers.Silabs().flashable(sky, "dev")) == {"zigbee-ncp", "thread-rcp"}
+
+    async def probe(path: str, *args: str) -> str:
+        return "Detected ApplicationType.CPC"
+
+    monkeypatch.setattr(drivers, "_flasher", probe)
+    assert asyncio.run(drivers.Silabs().identify(sky)) == "multipan-rcp"  # a stick already on our SiSDK build
