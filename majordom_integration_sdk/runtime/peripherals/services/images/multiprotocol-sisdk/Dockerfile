@@ -89,7 +89,7 @@ LABEL org.opencontainers.image.title="MajorDom multi-PAN host stack" \
       io.majordom.sisdk="${SISDK}" \
       io.majordom.mdns="${MDNS}"
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      dbus gpiod ipset iproute2 iptables libdbus-1-3 libjsoncpp25 libmbedcrypto7 libnetfilter-queue1 \
+      dbus dbus-bin gpiod ipset iproute2 iptables libdbus-1-3 libjsoncpp25 libmbedcrypto7 libnetfilter-queue1 \
       libprotobuf-lite32 libreadline8 procps python3 socat $([ "${MDNS}" = avahi ] && echo libavahi-client3) \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=pkgs /out/usr/lib/ /usr/lib/

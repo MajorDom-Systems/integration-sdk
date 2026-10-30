@@ -52,8 +52,10 @@ sysctl -w "net.ipv6.conf.${BACKBONE_IF}.accept_ra_rt_info_max_plen=64" >/dev/nul
 # 1. System D-Bus — otbr-agent EMERG-crashes without it. The avahi build (no mdnsd) publishes through the
 # host's avahi-daemon on the host's bus, bind-mounted at /run/dbus (Dockerfile, MDNS).
 mkdir -p /run/dbus
+HOST_DBUS=0
 if [ -S /run/dbus/system_bus_socket ]; then
   log "using the host's D-Bus"
+  HOST_DBUS=1
 else
   dbus-daemon --system --fork
   command -v mdnsd >/dev/null || log "WARN: no host D-Bus at /run/dbus: Thread services won't reach mDNS"
@@ -102,6 +104,29 @@ otbr-agent -I wpan0 -B "${BACKBONE_IF}" \
 sleep 4
 log "otbr-agent up; Thread REST on :${OTBR_REST_PORT}"
 [ -f /thread-source ] && { bash /thread-source & }  # the host reaches Thread nodes over TCP (see the script)
+
+# The host's avahi drops otbr-agent's publications when it restarts, and the SRP services of Thread nodes stay
+# off mDNS until each node's next SRP refresh (hours). When avahi takes its bus name again, restart the SRP server:
+# nodes re-register at once and otbr-agent republishes them.
+avahi_has_owner() {
+  dbus-send --system --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
+    org.freedesktop.DBus.NameHasOwner string:org.freedesktop.Avahi 2>/dev/null | grep -q "boolean true"
+}
+watch_avahi() {
+  while true; do
+    dbus-monitor --system "type='signal',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0='org.freedesktop.Avahi'" 2>/dev/null |
+      while read -r kind _; do
+        [ "${kind}" = signal ] || continue
+        sleep 2  # avahi registers its objects after taking the name
+        avahi_has_owner && pgrep -x otbr-agent >/dev/null || continue
+        [ "$(ot-ctl srp server state 2>/dev/null | head -1)" = disabled ] && continue
+        ot-ctl srp server disable >/dev/null 2>&1 || true; sleep 2; ot-ctl srp server enable >/dev/null 2>&1 || true
+        log "avahi restarted: SRP server restarted so Thread nodes re-register"
+      done
+    sleep 5  # the monitor went away
+  done
+}
+[ "${HOST_DBUS}" = 1 ] && command -v dbus-monitor >/dev/null && { watch_avahi & }
 
 if [ "${THREAD_FORM}" = "1" ]; then
   # Decide on the saved dataset, not the state: a restored network is still "detached" right after
@@ -177,7 +202,8 @@ log "zigbeed up; EZSP exposed on tcp:${EZSP_TCP_PORT} (bellows: socket://<host>:
 # Thread TX power (THREAD_TX_DBM). On a multi-PAN RCP the radio transmits at Zigbee's power: `ot-ctl
 # txpower` reads back but isn't applied (observed 2026-10-13). Lower Zigbee's tx_power instead (zigpy's -10 dBm
 # minimum gives about -11 dBm). BLE TX and receiver sensitivity are not tunable.
-if [ -n "${THREAD_TX_DBM:-}" ]; then
+THREAD_TX_DBM=${THREAD_TX_DBM:-${HARNESS_TX_DBM:-}}  # HARNESS_TX_DBM: the lab's old name, until 0.4
+if [ -n "${THREAD_TX_DBM}" ]; then
   log "setting Thread TX power to ${THREAD_TX_DBM} dBm (clamps to radio min)"
   ot-ctl txpower "${THREAD_TX_DBM}" >/dev/null 2>&1 || true
   log "Thread TX now: $(ot-ctl txpower 2>/dev/null | head -1)"
