@@ -256,6 +256,11 @@ class _Host:
         self.listen_address = listen_address
 
     @property
+    def avahi(self) -> bool:
+        """Whether the host runs avahi-daemon on its system bus, for a service that publishes through it."""
+        return Path("/run/dbus/system_bus_socket").exists() and Path("/run/avahi-daemon/socket").exists()
+
+    @property
     def interface(self) -> str:
         """The backbone interface: a wired one with a link (Wi-Fi drops the multicast a Thread border
         router relies on), else the one of the default route."""
