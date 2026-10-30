@@ -130,7 +130,11 @@ class Compose(Peripheral):
     def _render(self, service: Service) -> Mapping[str, Any]:
         # no depends_on: everything retries until its links answer, and a dependency would recreate
         # a service whenever an optional provider (matter-server's border router) comes or goes
-        return {"restart": "unless-stopped", **_render(service.compose, self._values(service))}
+        rendered = {"restart": "unless-stopped", **_render(service.compose, self._values(service))}
+        if isinstance(environment := rendered.get("environment"), Mapping):
+            # a variable rendering empty is left out, unset rather than set to nothing: a server parsing it would fail
+            rendered["environment"] = {k: v for k, v in environment.items() if v != ""}
+        return rendered
 
     def _ports(self, service: Service) -> dict[str, int]:
         """Its host ports: the ones it kept unless another service took one since, else the preferred one when free.
