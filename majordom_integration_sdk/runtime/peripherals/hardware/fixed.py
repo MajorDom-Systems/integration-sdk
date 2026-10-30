@@ -15,7 +15,8 @@ from majordom_integration_sdk.runtime.peripherals.hardware.usb import Radio
 @dataclass(frozen=True)
 class FixedRadio:
     """A radio wired to the board: used without asking, by the driver named ``driver``. With no ``firmware`` that
-    driver identifies it; ``params`` override the firmware's serial settings where the board wires them otherwise."""
+    driver identifies it; ``params`` override the firmware's serial settings where the board wires them otherwise, and
+    may name the line wired to its reset (``reset_gpio``, e.g. ``gpiochip0:23``) for a multi-PAN RCP on a bare UART."""
 
     name: str
     path: str
