@@ -96,6 +96,8 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
                 "RADIO_BAUD": "{peripherals.multipan.params[baud]}",
                 "RADIO_HARDFLOW": "{peripherals.multipan.params[flow_control]:?true}"
                 "{peripherals.multipan.params[flow_control]:!false}",
+                # a bare UART: the entrypoint pulses RESETn so cpcd syncs; privileged, it sees the gpiochip
+                "RADIO_RESET_GPIO": "{peripherals.multipan.params[reset_gpio]}",
                 "BACKBONE_IF": "{host.interface}",
                 "EZSP_TCP_PORT": "{ports.ezsp}",
                 "OTBR_REST_PORT": "{ports.rest}",

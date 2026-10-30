@@ -105,6 +105,16 @@ async def test_a_board_uart_without_flow_control_renders_its_own_serial_settings
     service = compose(tmp_path)["silabs-multiprotocol"]
     assert service["devices"][0] == "/dev/ttyAMA3:/dev/ttyRCP"
     assert (service["environment"]["RADIO_BAUD"], service["environment"]["RADIO_HARDFLOW"]) == ("115200", "false")
+    assert "RADIO_RESET_GPIO" not in service["environment"]  # no reset line wired: left unset
+
+
+async def test_a_board_uart_with_a_reset_line_has_the_radio_pulsed_through_it(tmp_path):
+    params = {"baud": 115200, "flow_control": False, "reset_gpio": "gpiochip0:23"}  # the CM4's MG26 RESETn
+    wired = Silabs().serves("multipan-rcp", "/dev/ttyAMA3", params)
+    await run(tmp_path, FakeCompose(), host(), stick("board", *wired), builtin.silabs_multiprotocol(), zigbee())
+    service = compose(tmp_path)["silabs-multiprotocol"]
+    assert service["environment"]["RADIO_RESET_GPIO"] == "gpiochip0:23"
+    assert service["privileged"]  # it sees the host's /dev/gpiochip0 without a device mapping
 
 
 @pytest.mark.parametrize("has_avahi", [True, False])
