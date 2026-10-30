@@ -59,6 +59,7 @@ def _matches(matchers: list[BLEMatcher], adv: AdvertisementData) -> bool:
 class _BLETrackedDevice:
     info: BLEDiscoveryInfo
     heard: dict[str, tuple[int, float]] = field(default_factory=dict)  # source -> (rssi, monotonic last seen)
+    name: str | None = None  # the last local name heard: a passive scan misses the scan responses that carry it
 
     def sources(self, grace: float) -> list[str]:
         """Sources that heard it within ``grace`` seconds, the strongest signal first."""
@@ -86,6 +87,9 @@ class BLEService(Peripheral):
         self._eviction_interval_sec: float = 10.0
         self._silence_sec: float = 60.0  # a source unheard this long is restarted
         self._active_until: float = 0.0  # monotonic end of an active scan burst
+        self._name_burst_sec: float = 5.0  # an active burst to hear the name of a new device advertising none
+        self._name_burst_interval_sec: float = 60.0  # at most one such burst this often
+        self._name_burst_at: float = float("-inf")  # monotonic start of the last one
         self._heard_at: dict[str, float] = {}  # source -> monotonic time it last heard anything
         self._tracked: dict[str, _BLETrackedDevice] = {}  # address -> tracked device
         self._tasks: set[asyncio.Task] = set()
@@ -342,6 +346,12 @@ class BLEService(Peripheral):
         tracked = prev or _BLETrackedDevice(BLEDiscoveryInfo(device, adv_data, source, adv_data.rssi, monotonic()))
         tracked.heard[source] = (adv_data.rssi, monotonic())
         self._tracked[address] = tracked
+        if adv_data.local_name:
+            tracked.name = adv_data.local_name
+        elif tracked.name:
+            adv_data = adv_data._replace(local_name=tracked.name)
+        elif prev is None:
+            self._burst_for_name()
         # a weaker source only keeps the device alive: sources hear different subsets of the
         # advertisement (e.g. no scan response), so mixing them would report false updates
         if tracked.sources(self._removal_grace_sec)[0] != source:
@@ -363,6 +373,13 @@ class BLEService(Peripheral):
             is_new = tasks[0][0]
             logger.debug(f"BLE {'discovered' if is_new else 'updated'}: {device.name} ({address}) via {source}")
             await asyncio.gather(*(coro for _, coro in tasks))
+
+    def _burst_for_name(self):
+        """Scans actively for a moment, bounded to one burst per interval, so a new device's scan response is heard."""
+        if not self._scans_passively() or monotonic() - self._name_burst_at < self._name_burst_interval_sec:
+            return
+        self._name_burst_at = monotonic()
+        self._spawn(self.scan_actively(self._name_burst_sec))
 
     async def _eviction_loop(self):
         while self._is_running:

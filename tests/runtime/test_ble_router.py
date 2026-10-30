@@ -668,3 +668,36 @@ async def test_changed_manufacturer_data_is_an_update(radios):
         near.advertise("BB", manufacturer_data={APPLE: data})
         await settle()
     assert (len(listener.found), len(listener.updated)) == (1, 1)
+
+
+async def test_a_name_heard_once_stays_with_the_device_under_passive_scanning(radios):
+    ble, near, _ = radios
+    listener = Listener()
+    ble.register(listener, {MATTER})
+
+    near.advertise("AA", local_name="KAJPLATS WS BULB", service_data={str(MATTER): b"\x00"})  # a scan response
+    near.advertise("AA", service_data={str(MATTER): b"\x00"})  # passive: no scan response, no name
+    await settle()
+    assert [i.advertisement.local_name for i in listener.found] == ["KAJPLATS WS BULB"]
+    assert not listener.updated  # a name missing from a passive sighting isn't a change
+    assert ble.devices()[0].advertisement.local_name == "KAJPLATS WS BULB"
+
+
+async def test_a_new_device_without_a_name_gets_a_short_active_burst_bounded_in_time():
+    radio = ScanModeFakeBLESource("hci0")
+    ble = BLEService(sources=[radio])
+    ble._name_burst_sec = 0.02
+    await ble.start()
+
+    radio.advertise("AA", service_data={str(MATTER): b"\x00"})
+    radio.advertise("BB", service_data={str(MATTER): b"\x00"})  # within the same window: no second burst
+    await settle()
+    assert radio.modes == [False, True]
+    await asyncio.sleep(0.05)
+    assert radio.modes == [False, True, False]
+
+    radio.advertise("CC", local_name="named")  # a name of its own needs no burst
+    radio.advertise("DD")  # nor does one heard before the burst interval passed
+    await settle()
+    assert radio.modes == [False, True, False]
+    await ble.stop()
