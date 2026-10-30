@@ -1,11 +1,15 @@
-# Harness: the stack the runtime runs for a multi-PAN stick (services.py `silabs-multiprotocol`) and
-# integration-matter's matterjs-server (its config.py), as static services for a host without the hub.
+# Harness: the SiSDK multi-PAN stack (../multiprotocol-sisdk, avahi build) and integration-matter's matterjs-server
+# (its config.py), as static services for a host without the hub, as the cage's lab-pi5 runs them.
 # Keep both in step with those definitions.
+# Host side once: the OTBR publishes through the host's avahi over D-Bus (../multiprotocol-sisdk/Dockerfile, MDNS):
+#   docker cp silabs-multiprotocol:/etc/dbus-1/system.d/otbr-agent.conf /etc/dbus-1/system.d/ && systemctl reload dbus
 #   RADIO_BY_ID=/dev/serial/by-id/<stick> docker compose up -d --build
 services:
   silabs-multiprotocol:
-    image: majordom/silabs-multiprotocol:gsdk-4.4.6-arm64
-    build: .
+    image: majordom/multiprotocol:sisdk-2025.6.3-avahi-arm64
+    build:
+      context: ../multiprotocol-sisdk
+      platforms: [linux/arm64]
     container_name: silabs-multiprotocol
     restart: unless-stopped
     privileged: true
@@ -14,18 +18,21 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     volumes:
-      - ./cpcd.conf:/usr/local/etc/cpcd.conf:ro
-      - ./entrypoint.sh:/entrypoint.sh:ro
       - /dev/serial:/dev/serial:ro # the by-id link is followed at every start, not pinned to a tty at creation
-      - otbr-data:/var/lib/thread
-      - zigbee-data:/var/lib/zigbee
+      - /run/dbus:/run/dbus # the host's bus: otbr-agent publishes through the host's avahi-daemon
+      - ../thread-source/run:/thread-source:ro
+      - otbr-data-sisdk:/var/lib/thread
+      - zigbee-data-sisdk:/var/lib/zigbee
     tmpfs:
       - /run:exec,mode=1777
     environment:
       RADIO_DEVICE: ${RADIO_BY_ID:?set RADIO_BY_ID to the stick's /dev/serial/by-id path}
+      RADIO_BAUD: "460800"
+      RADIO_HARDFLOW: "true"
+      CHANNEL: "15"
+      BACKBONE_IF: eth0
       THREAD_TX_DBM: ${THREAD_TX_DBM:-}
       LISTEN_ADDRESS: ${LISTEN_ADDRESS:-127.0.0.1} # 0.0.0.0 for tests on another host (the CI node's IP): nothing guards it
-    entrypoint: ["/bin/bash", "/entrypoint.sh"]
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f tcp-listen && ot-ctl state | grep -qE 'leader|router|child'"]
       interval: 10s
@@ -45,5 +52,5 @@ services:
     volumes:
       - ${MATTER_DATA_DIR:-/var/lib/majordom/matter-data}:/data
 volumes:
-  otbr-data:
-  zigbee-data:
+  otbr-data-sisdk:
+  zigbee-data-sisdk:
