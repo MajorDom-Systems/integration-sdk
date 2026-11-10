@@ -29,7 +29,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import rich
 from typer_shell import make_typer_shell
@@ -98,6 +98,9 @@ class _CapturingHandler(logging.Handler):
             builtins.print(self.format(record), file=sys.stderr, flush=True)
 
 
+_CLI_ROOM = uuid5(UUID(int=0), "cli")  # the dev runner has no rooms: every device it pairs is in this one
+
+
 # --- controller-driving core (testable without the REPL) ---------------------------------------
 
 
@@ -120,7 +123,25 @@ class _CliSession:
         if not discovery:
             return None
         credentials = ProvidedCredentials(type=CredentialsType(credentials_type), value=credentials_value or None)
-        return await self._controller.pair_device(discovery, credentials)
+        draft = self._controller.device_state_type(
+            id=discovery.id,
+            name=discovery.device_name,
+            category=discovery.device_category,
+            icon=discovery.device_icon,
+            room_id=_CLI_ROOM,
+            transport=discovery.transport,
+            integration=self._controller.key,
+            manufacturer=discovery.device_manufacturer,
+            parameters=[],
+        )
+        device = await self._controller.pair_device(discovery, draft, credentials)
+        async with self._controller.platform.device_repository(self._controller) as repo:
+            await repo.save(device)
+        # as the Hub does once it saved the device
+        if device.available:
+            await self._controller.output.controller_did_connect_device(self._controller, device.id)
+        await self._controller.fetch(device)
+        return device.id
 
     async def pair_window(self, seconds: int):
         await self._controller.start_pairing_window(seconds)

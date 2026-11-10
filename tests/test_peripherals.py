@@ -127,8 +127,8 @@ class ExampleController(AbstractController[Device, Parameter, "ExampleController
     async def stop(self):
         pass
 
-    async def pair_device(self, discovery, credentials):
-        pass
+    async def pair_device(self, discovery, draft, credentials):
+        return draft
 
     async def unpair(self, device):
         pass

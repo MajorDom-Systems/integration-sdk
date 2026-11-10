@@ -4,16 +4,16 @@ import inspect
 import subprocess
 import sys
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from factories import make_device_state
 
-from majordom_integration_sdk import NoSettings
+from majordom_integration_sdk import DeviceIdTakenError, NoSettings, Platform
 from majordom_integration_sdk.controller import AbstractController, ControllerOutput, LoggingControllerOutput
 from majordom_integration_sdk.repository import DeviceRepositoryMemory
 from majordom_integration_sdk.schemas.command import DeviceCommand
-from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
+from majordom_integration_sdk.schemas.device import Device, DeviceState, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.schemas.event import DeviceParameterChange
 from majordom_integration_sdk.testing import RecordingControllerOutput, build_test_platform
 
@@ -31,8 +31,12 @@ class _MinimalController(AbstractController[Device, Parameter]):
     async def stop(self):
         pass
 
-    async def pair_device(self, discovery: Discovery, credentials: ProvidedCredentials | None):
-        pass
+    async def pair_device(
+        self, discovery: Discovery, draft: DeviceState, credentials: ProvidedCredentials | None
+    ) -> DeviceState:
+        await self.check_device_id(self.device_uuid("serial-1"), draft)
+        draft.id = self.device_uuid("serial-1")
+        return draft
 
     async def unpair(self, device: Device):
         pass
@@ -147,3 +151,66 @@ def test_the_output_annotations_evaluate():
         for name, method in inspect.getmembers(output, inspect.isfunction):
             if name.startswith("controller_did_"):
                 assert inspect.get_annotations(method, eval_str=True)["controller"] is AbstractController, name
+
+
+def _discovery(controller: AbstractController) -> Discovery:
+    return Discovery(
+        id=uuid4(),
+        integration=controller.key,
+        expected_credentials_options=[],
+        transport="wifi",
+        device_manufacturer=None,
+        device_name="Lamp",
+        device_category=None,
+        device_icon=None,
+    )
+
+
+async def test_pairing_fills_and_returns_the_draft_without_saving_it():
+    store: dict = {}
+    controller = _MinimalController(build_test_platform(store=store))
+    discovery = _discovery(controller)
+    draft = make_device_state(id=discovery.id, integration=controller.key)
+
+    device = await controller.pair_device(discovery, draft, None)
+
+    assert device is draft and device.id == controller.device_uuid("serial-1")
+    assert store == {}
+
+
+async def test_the_final_id_held_by_another_record_is_taken():
+    store: dict = {}
+    platform = build_test_platform(store=store)
+    controller = _MinimalController(platform)
+    taken = controller.device_uuid("serial-1")
+    async with platform.device_repository(controller) as repo:
+        await repo.save(make_device_state(id=taken, integration=controller.key, name="Old lamp"))
+    store[taken]["is_paired"] = False
+    discovery = _discovery(controller)
+
+    with pytest.raises(DeviceIdTakenError) as raised:
+        await controller.pair_device(discovery, make_device_state(id=discovery.id, integration=controller.key), None)
+
+    assert (raised.value.device_id, raised.value.name, raised.value.is_paired) == (taken, "Old lamp", False)
+
+
+async def test_the_record_paired_onto_is_not_another():
+    store: dict = {}
+    platform = build_test_platform(store=store)
+    controller = _MinimalController(platform)
+    picked = make_device_state(id=controller.device_uuid("serial-1"), integration=controller.key)
+    async with platform.device_repository(controller) as repo:
+        await repo.save(picked)
+
+    device = await controller.pair_device(_discovery(controller), picked, None)
+
+    assert device.id == picked.id
+
+
+async def test_library_mode_takes_every_id_for_free():
+    controller = _MinimalController(Platform(documents_root=Path(".")))
+    await controller.check_device_id(uuid4(), make_device_state())
+
+
+def test_the_device_state_type_defaults_to_device_state():
+    assert _MinimalController(build_test_platform()).device_state_type is DeviceState

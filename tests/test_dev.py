@@ -22,7 +22,7 @@ from majordom_integration_sdk.dev import LoggingControllerOutput, Runner, build_
 from majordom_integration_sdk.runtime import Pinned, Runtime
 from majordom_integration_sdk.runtime.output import HostOutput
 from majordom_integration_sdk.schemas.command import DeviceCommand
-from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
+from majordom_integration_sdk.schemas.device import Device, DeviceState, Discovery, Parameter, ProvidedCredentials
 from majordom_integration_sdk.testing import FakeBLERouter, FakePeripheral, FakeSSDP
 
 ZWAVE = Endpoint("zwave", "zwave-js-server", "ws://127.0.0.1:3000", is_shared=True)
@@ -56,8 +56,10 @@ class _RecordingController(AbstractController[Device, Parameter]):
         self.changes.append(change)
         return self.handles_changes
 
-    async def pair_device(self, discovery: Discovery, credentials: ProvidedCredentials | None):
-        pass
+    async def pair_device(
+        self, discovery: Discovery, draft: DeviceState, credentials: ProvidedCredentials | None
+    ) -> DeviceState:
+        return draft
 
     async def unpair(self, device: Device):
         pass

@@ -70,21 +70,14 @@ class FakeController(AbstractController):
     async def stop(self):
         pass
 
-    async def pair_device(self, discovery: Discovery, credentials: ProvidedCredentials | None):
-        device_id = uuid4()
-        state = DeviceState(
-            id=device_id,
-            name=discovery.device_name,
-            room_id=uuid4(),
-            transport=discovery.transport,
-            integration=self.key,
-            manufacturer=None,
-            parameters=[_param(self._param_role)],
-        )
-        async with self.platform.device_repository(self) as repo:
-            await repo.save(state)
-        self.paired.append(device_id)
-        return device_id
+    async def pair_device(
+        self, discovery: Discovery, draft: DeviceState, credentials: ProvidedCredentials | None
+    ) -> DeviceState:
+        draft.id = uuid4()
+        draft.parameters = [_param(self._param_role)]
+        draft.available = True
+        self.paired.append(draft.id)
+        return draft
 
     async def unpair(self, device: Device):
         self.unpaired.append(device.id)
@@ -125,9 +118,10 @@ async def test_pair_list_control_unpair_flow(session_and_controller):
     discovery = _discovery()
     controller.discoveries[discovery.id] = discovery
 
-    # pair -> persists a device
+    # pair -> persists the filled draft, then reports it connected and fetches it, as the Hub does
     device_id = await session.pair(discovery.id, "none", "")
     assert device_id in controller.paired
+    assert controller.fetched == [device_id]
 
     # devices -> lists it
     devices = await session.list_devices()
@@ -148,7 +142,7 @@ async def test_pair_list_control_unpair_flow(session_and_controller):
     assert await session.identify(device_id) is True
     assert await session.fetch(device_id) is True
     assert controller.identified == [device_id]
-    assert controller.fetched == [device_id]
+    assert controller.fetched == [device_id, device_id]
 
     # unpair
     assert await session.unpair(device_id) is True

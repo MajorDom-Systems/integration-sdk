@@ -54,8 +54,8 @@ class EchoController(AbstractController[Device, Parameter, "EchoController.Setti
     async def settings_did_change(self, before) -> bool:
         return True  # it tells the server over its connection
 
-    async def pair_device(self, discovery, credentials):
-        pass
+    async def pair_device(self, discovery, draft, credentials):
+        return draft
 
     async def unpair(self, device):
         pass
