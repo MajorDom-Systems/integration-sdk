@@ -134,7 +134,7 @@ async def test_recording_output_captures_reports():
     output = controller.output = RecordingControllerOutput()
 
     device = make_device_state()
-    change = DeviceParameterChange(device_id=device.id, parameter_id=device.parameters[0].id, value=1)
+    change = DeviceParameterChange(physical_id=device.physical_id, parameter_id=device.parameters[0].id, value=1)
     await output.controller_did_connect_device(controller, device.id)
     await output.controller_did_receive_events(controller, [change])
 

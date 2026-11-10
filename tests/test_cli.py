@@ -191,7 +191,7 @@ async def test_output_delegate_persists_event_values():
 
     output = _CliControllerOutput()
     await output.controller_did_receive_events(
-        controller, [DeviceParameterChange(device_id=device_id, parameter_id=parameter.id, value=True)]
+        controller, [DeviceParameterChange(physical_id=device_id, parameter_id=parameter.id, value=True)]
     )
 
     async with controller.platform.device_repository(controller) as repo:

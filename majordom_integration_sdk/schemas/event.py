@@ -17,11 +17,10 @@ class Event(Base):
 class DeviceParameterChange(Event):
     """A device reported that one of its parameters changed to a new value.
 
-    Mirrors :class:`DeviceCommand`'s shape (``device_id``, ``parameter_id``, ``value``) but
-    flows the other direction — device → Hub. ``device_id`` is the device's ``physical_id``: the integration knows
-    no other.
+    Mirrors :class:`DeviceCommand`'s shape (``parameter_id``, ``value``) but flows the other direction — device → Hub,
+    so it names the device by its ``physical_id``: the integration knows no other.
     """
 
-    device_id: UUID
+    physical_id: UUID
     parameter_id: UUID
     value: Any

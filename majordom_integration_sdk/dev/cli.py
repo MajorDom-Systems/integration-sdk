@@ -279,12 +279,12 @@ class _CliControllerOutput(ControllerOutput):
             for event in events:
                 if not isinstance(event, DeviceParameterChange):
                     continue
-                if device := await repo.get(event.device_id):
+                if device := await repo.get(event.physical_id):
                     device.last_seen = datetime.now()
                     await repo.save(device)
-                if state := await repo.get_parameter_state(event.device_id, event.parameter_id):
+                if state := await repo.get_parameter_state(event.physical_id, event.parameter_id):
                     state.value = event.value
-                    await repo.save_parameter_state(event.device_id, state)
+                    await repo.save_parameter_state(event.physical_id, state)
         for event in events:
             _print(f"[event] {type(event).__name__}: {event!r}")
 
