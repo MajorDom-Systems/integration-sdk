@@ -224,10 +224,14 @@ class AbstractController[
 
         - don't use the device repository: nothing is saved during pairing;
         - report nothing about this device (no ``controller_did_connect_device``, no events) until the Hub saved it;
-        - once the final id is known, call ``check_device_id`` before anything irreversible;
-        - fill the draft in place *before* each irreversible step (a key about to be set, a node about to be
-          included): on a failure the Hub calls ``unpair(draft)`` to roll back, which can only undo what the draft
-          says ran.
+        - once the final id is known, call ``check_device_id`` before anything irreversible.
+
+        Leave the device re-pairable: the Hub undoes nothing (it never calls ``unpair`` for a pairing), so on a
+        failure undo, in your own failure path, only what would block a retry if what this attempt learned were lost
+        (e.g. a pairing the accessory holds, refusing a new setup), and keep in your own storage what a retry needs
+        (e.g. a key just set on the device). The Hub may also never save what you return (it refuses the id, or the
+        save fails): the next ``pair_device`` for that device must still work, resuming or redoing the pairing. What
+        stays harmless (a node left on a fabric or network, offered again as a discovery) needs no undo.
 
         Raise when it can't pair (`MissingCredentialsError` before touching the device when credentials are lacking).
         """
@@ -237,10 +241,8 @@ class AbstractController[
         """
         Unpairs a device from the Hub. Called when the user initiates removal from the UI.
 
-        Also the rollback of a failed pairing: the Hub calls it with the draft as ``pair_device`` left it, at any
-        stage. Undo in reverse order of pairing, tolerate any partial state (an id not final yet, no
-        ``integration_data``, a device gone), never wait for the user, and go as far as you can: it is best effort,
-        within the Hub's timeout.
+        Only the user's unpair of a saved device, never a rollback of a failed pairing (``pair_device`` handles
+        its own failures). Tolerate a device gone or partly set up, and go as far as you can: it is best effort.
         """
 
     @abstractmethod
