@@ -216,15 +216,16 @@ class AbstractController[
         from the UI.
 
         The Hub builds ``draft`` (no record exists yet): the user's fields (name, room, icon, category, note), ``id``
-        the discovery's, ``integration`` this controller's key. When the user picked an existing record to pair onto,
-        it carries that record's data, its ``id`` and ``integration_data`` included: decide what in it is stale.
+        the Hub's own (read-only: never change it), ``physical_id`` the discovery's id as a placeholder, ``integration``
+        this controller's key. When the user picked an existing record to pair onto, it carries that record's data,
+        its ``id``, ``physical_id`` and ``integration_data`` included: decide what in it is stale.
 
-        Fill in what the device is: ``parameters``, ``integration_data``, the final ``id`` (``device_uuid``),
-        ``available``, … and return it. The Hub saves it and then reports the device connected and fetches it, so:
+        Fill in what the device is: ``parameters``, ``integration_data``, its ``physical_id`` (``device_uuid``, what
+        you look the device up by from now on), ``available``, … and return it. The Hub saves it and then reports the device connected and fetches it, so:
 
         - don't use the device repository: nothing is saved during pairing;
         - report nothing about this device (no ``controller_did_connect_device``, no events) until the Hub saved it;
-        - once the final id is known, call ``check_device_id`` before anything irreversible.
+        - once the ``physical_id`` is known, call ``check_device_id`` before anything irreversible.
 
         Leave the device re-pairable: the Hub undoes nothing (it never calls ``unpair`` for a pairing), so on a
         failure undo, in your own failure path, only what would block a retry if what this attempt learned were lost
@@ -296,22 +297,25 @@ class AbstractController[
         return uuid5(self.namespace_uuid(), self.key)
 
     @final
-    def device_uuid(self, device_id: str) -> UUID:
-        """uuid of the device based on a string unique to that device (MAC, serial number): a name or an address two
-        devices share gives them the same id, and the second can't be paired."""
-        return uuid5(self.integration_uuid(), device_id)
+    def device_uuid(self, raw: str | bytes, strip: str = ":-") -> UUID:
+        """The ``physical_id`` of a device from what is unique to it (MAC, serial number), seeded by the integration:
+        a name or an address two devices share gives them the same id, and the second can't be paired. A string is
+        normalised (lowercased, whitespace and every char in ``strip`` dropped) so "AA:BB-cc" and "aabbcc" agree;
+        bytes (a raw MAC or UUID) are taken as they are."""
+        return uuid5(self.integration_uuid(), _normalised(raw, strip))
 
     @final
-    async def check_device_id(self, device_id: UUID, draft: TDeviceState):
-        """Raises `DeviceIdTakenError` when another record holds ``device_id``, the final id of the device ``draft``
-        pairs. The record the user picked to pair onto (``draft.id``) is not another. Optional: call it in
-        ``pair_device`` as soon as the final id is known, before anything irreversible."""
-        await self.platform.check_device_id(device_id, draft)
+    async def check_device_id(self, physical_id: UUID, draft: TDeviceState):
+        """Raises `DeviceIdTakenError` when another record holds ``physical_id``, the one ``pair_device`` gives the
+        device ``draft`` pairs. The record the user picked to pair onto (``draft.id``, its Hub id) is not another.
+        Optional: call it in ``pair_device`` as soon as the physical id is known, before anything irreversible."""
+        await self.platform.check_device_id(physical_id, draft)
 
     @final
-    def parameter_uuid(self, device_uuid: UUID, parameter_id: str) -> UUID:
-        """uuid of the parameter based on an arbitrary string identifier"""
-        return uuid5(device_uuid, parameter_id)
+    def parameter_uuid(self, physical_id: UUID, raw: str | bytes, strip: str = ":-") -> UUID:
+        """The id of a parameter from an identifier unique within its device, seeded by the device's ``physical_id``
+        (stable and known from protocol data alone, unlike the Hub's ``id``); normalised as in ``device_uuid``."""
+        return uuid5(physical_id, _normalised(raw, strip))
 
     # def add_service_coroutine(self, coroutine: Callable[[], Awaitable]): ... # FUTURE
 
@@ -320,3 +324,9 @@ class AbstractController[
     # def schedule_task(self, callback: Callable[[], Awaitable] | Callable[[], Any], interval: float): ... # FUTURE
 
     # def search_native_parameter(self, name: str) -> Parameter | None: ... # FUTURE
+
+
+def _normalised(raw: str | bytes, strip: str) -> str | bytes:
+    if isinstance(raw, bytes):
+        return raw
+    return "".join(char for char in raw.lower() if not char.isspace() and char not in strip)

@@ -38,9 +38,9 @@ class ControllerOutput(Protocol):
     async def controller_did_update_discovery(self, controller: AnyController, discovery: Discovery): ...
     async def controller_did_lose_discovery(self, controller: AnyController, discovery_id: UUID): ...
 
-    async def controller_did_connect_device(self, controller: AnyController, device_id: UUID): ...
+    async def controller_did_connect_device(self, controller: AnyController, physical_id: UUID): ...
 
-    async def controller_did_lose_device(self, controller: AnyController, device_id: UUID):
+    async def controller_did_lose_device(self, controller: AnyController, physical_id: UUID):
         """Paired device became unreachable while the Hub is running (not just at startup/reboot)."""
         ...
 
@@ -99,11 +99,11 @@ class LoggingControllerOutput(ControllerOutput):
     async def controller_did_lose_discovery(self, controller: AnyController, discovery_id: UUID):
         logger.info(f"lost discovery {discovery_id}")
 
-    async def controller_did_connect_device(self, controller: AnyController, device_id: UUID):
-        logger.info(f"connected device {device_id}")
+    async def controller_did_connect_device(self, controller: AnyController, physical_id: UUID):
+        logger.info(f"connected device {physical_id}")
 
-    async def controller_did_lose_device(self, controller: AnyController, device_id: UUID):
-        logger.info(f"lost device {device_id}")
+    async def controller_did_lose_device(self, controller: AnyController, physical_id: UUID):
+        logger.info(f"lost device {physical_id}")
 
     async def controller_did_receive_events(self, controller: AnyController, events: Iterable[Event]):
         for event in events:

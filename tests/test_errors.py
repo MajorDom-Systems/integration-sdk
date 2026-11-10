@@ -34,7 +34,7 @@ def test_the_hub_already_handles_it_as_a_lookup_error():
 
 
 def test_a_taken_device_id_carries_the_record_holding_it():
-    device_id = UUID(int=1)
-    error = DeviceIdTakenError(device_id, "Lamp", is_paired=True)
-    assert (error.device_id, error.name, error.is_paired) == (device_id, "Lamp", True)
-    assert str(error) == f"Device id {device_id} is taken by 'Lamp' (paired)"
+    physical_id, device_id = UUID(int=1), UUID(int=2)
+    error = DeviceIdTakenError(physical_id, device_id, "Lamp", is_paired=True)
+    assert (error.physical_id, error.device_id, error.name, error.is_paired) == (physical_id, device_id, "Lamp", True)
+    assert str(error) == f"Physical id {physical_id} is taken by 'Lamp' ({device_id}, paired)"

@@ -18,7 +18,8 @@ class DeviceParameterChange(Event):
     """A device reported that one of its parameters changed to a new value.
 
     Mirrors :class:`DeviceCommand`'s shape (``device_id``, ``parameter_id``, ``value``) but
-    flows the other direction — device → Hub.
+    flows the other direction — device → Hub. ``device_id`` is the device's ``physical_id``: the integration knows
+    no other.
     """
 
     device_id: UUID

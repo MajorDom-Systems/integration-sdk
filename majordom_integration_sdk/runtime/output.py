@@ -50,11 +50,11 @@ class HostOutput(ControllerOutput):
     async def controller_did_lose_discovery(self, controller: AnyController, discovery_id: UUID):
         await self.controller_output.controller_did_lose_discovery(controller, discovery_id)
 
-    async def controller_did_connect_device(self, controller: AnyController, device_id: UUID):
-        await self.controller_output.controller_did_connect_device(controller, device_id)
+    async def controller_did_connect_device(self, controller: AnyController, physical_id: UUID):
+        await self.controller_output.controller_did_connect_device(controller, physical_id)
 
-    async def controller_did_lose_device(self, controller: AnyController, device_id: UUID):
-        await self.controller_output.controller_did_lose_device(controller, device_id)
+    async def controller_did_lose_device(self, controller: AnyController, physical_id: UUID):
+        await self.controller_output.controller_did_lose_device(controller, physical_id)
 
     async def controller_did_receive_events(self, controller: AnyController, events: Iterable[Event]):
         await self.controller_output.controller_did_receive_events(controller, events)

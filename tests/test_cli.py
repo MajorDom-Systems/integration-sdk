@@ -73,20 +73,20 @@ class FakeController(AbstractController):
     async def pair_device(
         self, discovery: Discovery, draft: DeviceState, credentials: ProvidedCredentials | None
     ) -> DeviceState:
-        draft.id = uuid4()
+        draft.physical_id = uuid4()
         draft.parameters = [_param(self._param_role)]
         draft.available = True
-        self.paired.append(draft.id)
+        self.paired.append(draft.physical_id)
         return draft
 
     async def unpair(self, device: Device):
-        self.unpaired.append(device.id)
+        self.unpaired.append(device.physical_id)
 
     async def identify(self, device: Device):
-        self.identified.append(device.id)
+        self.identified.append(device.physical_id)
 
     async def fetch(self, device: Device):
-        self.fetched.append(device.id)
+        self.fetched.append(device.physical_id)
 
     async def send_command(self, command: DeviceCommand, device: Device, parameter):
         self.sent.append((command.device_id, command.parameter_id, command.value))
@@ -125,7 +125,7 @@ async def test_pair_list_control_unpair_flow(session_and_controller):
 
     # devices -> lists it
     devices = await session.list_devices()
-    assert [d.id for d in devices] == [device_id]
+    assert [d.physical_id for d in devices] == [device_id]
 
     # device -> shows its (single control) parameter
     state = await session.device_state(device_id)
@@ -136,7 +136,7 @@ async def test_pair_list_control_unpair_flow(session_and_controller):
 
     # control -> resolves device+parameter and reaches the controller
     assert await session.control(device_id, parameter.id, True) == "Command sent"
-    assert controller.sent == [(device_id, parameter.id, True)]
+    assert controller.sent == [(devices[0].id, parameter.id, True)]  # the command carries the Hub's id
 
     # identify / fetch reach the controller with the resolved device
     assert await session.identify(device_id) is True

@@ -4,10 +4,11 @@ import inspect
 import subprocess
 import sys
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 from factories import make_device_state
+from pydantic import ValidationError
 
 from majordom_integration_sdk import DeviceIdTakenError, NoSettings, Platform
 from majordom_integration_sdk.controller import AbstractController, ControllerOutput, LoggingControllerOutput
@@ -36,7 +37,7 @@ class _MinimalController(AbstractController[Device, Parameter]):
         self, discovery: Discovery, draft: DeviceState, credentials: ProvidedCredentials | None
     ) -> DeviceState:
         await self.check_device_id(self.device_uuid("serial-1"), draft)
-        draft.id = self.device_uuid("serial-1")
+        draft.physical_id = self.device_uuid("serial-1")
         return draft
 
     async def unpair(self, device: Device):
@@ -59,6 +60,40 @@ def test_key_and_uuid_helpers():
     device_uuid = controller.device_uuid("abc")
     assert controller.device_uuid("abc") == device_uuid
     assert controller.parameter_uuid(device_uuid, "p1") != device_uuid
+
+
+@pytest.mark.parametrize("raw", ["AA:BB-cc", "aabbcc", "  aa bb\tcc\n", "a-a:b-b:c-c"])
+def test_device_uuid_normalises_a_string(raw):
+    controller = _MinimalController(build_test_platform())
+    assert controller.device_uuid(raw) == controller.device_uuid("aabbcc")
+
+
+@pytest.mark.parametrize("other", ["aa.bb.cc", "aa_bb_cc", "aa/bb/cc"])
+def test_device_uuid_keeps_other_separators(other):
+    controller = _MinimalController(build_test_platform())
+    assert controller.device_uuid(other) != controller.device_uuid("aabbcc")
+
+
+def test_device_uuid_strips_only_the_chars_given():
+    controller = _MinimalController(build_test_platform())
+    assert controller.device_uuid("aa.bb", strip=".") == controller.device_uuid("aabb")
+    assert controller.device_uuid("aa:bb", strip="") != controller.device_uuid("aabb")
+
+
+def test_device_uuid_takes_bytes_as_they_are():
+    controller = _MinimalController(build_test_platform())
+    mac = bytes.fromhex("aabbccddeeff")
+    assert controller.device_uuid(mac) == uuid5(controller.integration_uuid(), mac)
+    assert controller.device_uuid(b"AA") != controller.device_uuid(b"aa")
+    assert controller.device_uuid(mac) != controller.device_uuid("aabbccddeeff")
+
+
+def test_parameter_uuid_is_seeded_by_the_physical_id_and_normalised():
+    controller = _MinimalController(build_test_platform())
+    physical_id = controller.device_uuid("aabbcc")
+    assert controller.parameter_uuid(physical_id, "On-Off") == controller.parameter_uuid(physical_id, "onoff")
+    assert controller.parameter_uuid(physical_id, "On-Off") == uuid5(physical_id, "onoff")
+    assert controller.parameter_uuid(physical_id, b"\x01") == uuid5(physical_id, b"\x01")
 
 
 def test_its_documents_folder_is_its_own_under_the_platforms(tmp_path):
@@ -88,7 +123,7 @@ async def test_its_device_repository_holds_only_its_own_devices():
     device = make_device_state(integration=controller.key)  # its slug, "example-protocol"
     async with controller.platform.device_repository(controller) as repo:
         await repo.save(device)
-        stored = await repo.state(device.id)
+        stored = await repo.state(device.physical_id)
         assert stored is not None and stored.id == device.id
         with pytest.raises(PermissionError):
             await repo.save(make_device_state(integration="Other"))
@@ -175,37 +210,44 @@ async def test_pairing_fills_and_returns_the_draft_without_saving_it():
 
     device = await controller.pair_device(discovery, draft, None)
 
-    assert device is draft and device.id == controller.device_uuid("serial-1")
+    assert device is draft and device.physical_id == controller.device_uuid("serial-1")
     assert store == {}
 
 
-async def test_the_final_id_held_by_another_record_is_taken():
+async def test_the_physical_id_held_by_another_record_is_taken():
     store: dict = {}
     platform = build_test_platform(store=store)
     controller = _MinimalController(platform)
     taken = controller.device_uuid("serial-1")
     async with platform.device_repository(controller) as repo:
-        await repo.save(make_device_state(id=taken, integration=controller.key, name="Old lamp"))
-    store[taken]["is_paired"] = False
+        old = make_device_state(physical_id=taken, integration=controller.key, name="Old lamp")
+        await repo.save(old)
+    store[old.id]["is_paired"] = False
     discovery = _discovery(controller)
 
     with pytest.raises(DeviceIdTakenError) as raised:
         await controller.pair_device(discovery, make_device_state(id=discovery.id, integration=controller.key), None)
 
-    assert (raised.value.device_id, raised.value.name, raised.value.is_paired) == (taken, "Old lamp", False)
+    error = raised.value
+    assert (error.physical_id, error.device_id, error.name, error.is_paired) == (taken, old.id, "Old lamp", False)
 
 
 async def test_the_record_paired_onto_is_not_another():
     store: dict = {}
     platform = build_test_platform(store=store)
     controller = _MinimalController(platform)
-    picked = make_device_state(id=controller.device_uuid("serial-1"), integration=controller.key)
+    picked = make_device_state(physical_id=controller.device_uuid("serial-1"), integration=controller.key)
     async with platform.device_repository(controller) as repo:
         await repo.save(picked)
 
     device = await controller.pair_device(_discovery(controller), picked, None)
 
-    assert device.id == picked.id
+    assert device.id == picked.id and device.physical_id == picked.physical_id
+
+
+def test_the_hub_id_is_read_only(device_state):
+    with pytest.raises(ValidationError):
+        device_state.id = uuid4()
 
 
 async def test_library_mode_takes_every_id_for_free():

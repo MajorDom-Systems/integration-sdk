@@ -26,7 +26,7 @@ def _in_memory() -> MakeDeviceRepository:
     return lambda key: DeviceRepositoryMemory(key, store).session()
 
 
-async def _any_id_is_free(device_id: UUID, draft: DeviceState):
+async def _any_id_is_free(physical_id: UUID, draft: DeviceState):
     pass
 
 
@@ -49,8 +49,8 @@ class Platform:
     documents_root: Path
     # One unit of work on the device repository, scoped to the devices of the peripheral keyed; in memory by default
     make_device_repository: MakeDeviceRepository = field(default_factory=_in_memory)
-    # Raises `DeviceIdTakenError` when a record other than the one ``draft`` pairs onto holds the id; the Hub's checks
-    # every record. Library mode has no other records to collide with: every id is free
+    # Raises `DeviceIdTakenError` when a record other than the one ``draft`` pairs onto (``draft.id``) holds the
+    # physical id; the Hub's checks every record. Library mode has no other records to collide with: every id is free
     check_device_id: CheckDeviceId = _any_id_is_free
     region: str | None = None  # RF region for sub-GHz radios, a Z-Wave JS name: "Europe", "USA", …
     wifi: WifiCredentials | None = None  # the network to provision Wi-Fi devices onto

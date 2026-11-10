@@ -27,16 +27,18 @@ class MissingCredentialsError(LookupError):
 
 
 class DeviceIdTakenError(Exception):
-    """Another device record already holds ``device_id``, the id a pairing would give its device.
+    """Another device record already holds ``physical_id``, the one a pairing would give its device.
 
     Raised by `AbstractController.check_device_id` before anything irreversible is done to the device; the Hub refuses
-    the pairing with it and does not roll it back (nothing ran). It carries the record found: its ``name`` and whether
-    it ``is_paired`` (an unpaired one is a record kept after its device was removed), so the app can offer to pair onto
-    that record instead.
+    the pairing with it and does not roll it back (nothing ran). It carries the record found: its Hub ``device_id``,
+    ``name`` and whether it ``is_paired`` (an unpaired one is a record kept after its device was removed), so the app
+    can offer to pair onto that record instead.
     """
 
-    def __init__(self, device_id: UUID, name: str, is_paired: bool):
+    def __init__(self, physical_id: UUID, device_id: UUID, name: str, is_paired: bool):
+        self.physical_id = physical_id
         self.device_id = device_id
         self.name = name
         self.is_paired = is_paired
-        super().__init__(f"Device id {device_id} is taken by {name!r} ({'paired' if is_paired else 'unpaired'})")
+        state = "paired" if is_paired else "unpaired"
+        super().__init__(f"Physical id {physical_id} is taken by {name!r} ({device_id}, {state})")

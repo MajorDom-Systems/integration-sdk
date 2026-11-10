@@ -56,8 +56,8 @@ class RecordingControllerOutput(ControllerOutput):
         self.received_discoveries: list[Discovery] = []
         self.updated_discoveries: list[Discovery] = []
         self.lost_discoveries: list[UUID] = []
-        self.connected_devices: list[UUID] = []
-        self.lost_devices: list[UUID] = []
+        self.connected_devices: list[UUID] = []  # physical ids
+        self.lost_devices: list[UUID] = []  # physical ids
         self.events: list[Event] = []
         self.errors: dict[str, IntegrationError] = {}  # the active ones, by id
         self.error_log: list[IntegrationError | str] = []  # every report, and the id of every resolve
@@ -73,11 +73,11 @@ class RecordingControllerOutput(ControllerOutput):
     async def controller_did_lose_discovery(self, controller: _Controller, discovery_id: UUID):
         self.lost_discoveries.append(discovery_id)
 
-    async def controller_did_connect_device(self, controller: _Controller, device_id: UUID):
-        self.connected_devices.append(device_id)
+    async def controller_did_connect_device(self, controller: _Controller, physical_id: UUID):
+        self.connected_devices.append(physical_id)
 
-    async def controller_did_lose_device(self, controller: _Controller, device_id: UUID):
-        self.lost_devices.append(device_id)
+    async def controller_did_lose_device(self, controller: _Controller, physical_id: UUID):
+        self.lost_devices.append(physical_id)
 
     async def controller_did_receive_events(self, controller: _Controller, events: Iterable[Event]):
         self.events.extend(events)
@@ -329,15 +329,16 @@ def build_test_platform(
     Pass ``documents_root`` as the root of the peripherals' folders; a fresh temp folder otherwise, removed when the
     process ends. Pass ``store`` to see every device kept there: ``DeviceRepositoryMemory(store=store)``.
 
-    Its ``check_device_id`` takes any record in ``store`` but the draft's own for another: a test seeds the store with
-    the record a collision should hit (``"is_paired": False`` in it for an unpaired one; paired otherwise).
+    Its ``check_device_id`` takes any record in ``store`` but the draft's own (``draft.id``) for another holder of the
+    physical id: a test seeds the store with the record a collision should hit (``"is_paired": False`` in it for an
+    unpaired one; paired otherwise).
     """
     store = store if store is not None else {}
 
-    async def check_device_id(device_id: UUID, draft: DeviceState):
-        record = store.get(device_id)
-        if record is not None and device_id != draft.id:
-            raise DeviceIdTakenError(device_id, record.get("name", ""), record.get("is_paired", True))
+    async def check_device_id(physical_id: UUID, draft: DeviceState):
+        for device_id, record in store.items():
+            if record.get("physical_id") == str(physical_id) and device_id != draft.id:
+                raise DeviceIdTakenError(physical_id, device_id, record.get("name", ""), record.get("is_paired", True))
 
     return Platform(
         documents_root=documents_root or Path(tempfile.mkdtemp(dir=_temp_root().name)),

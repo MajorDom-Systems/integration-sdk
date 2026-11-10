@@ -117,9 +117,9 @@ async def test_build_platform_memory_repository_round_trips_in_its_scope(tmp_pat
     async with platform.make_device_repository("example") as repo:
         await repo.save(device)
     async with platform.make_device_repository("example") as repo:
-        assert (await repo.state(device.id)) is not None
+        assert (await repo.state(device.physical_id)) is not None
     async with platform.make_device_repository("other") as repo:
-        assert (await repo.state(device.id)) is None
+        assert (await repo.state(device.physical_id)) is None
 
 
 async def test_build_platform_sqlite_persists_to_file(tmp_path):
@@ -134,7 +134,7 @@ async def test_build_platform_sqlite_persists_to_file(tmp_path):
     # A fresh platform over the same file sees the persisted device (survives 'restarts').
     again = build_platform(storage_root=tmp_path, db_path=db_path)
     async with again.make_device_repository("example") as repo:
-        assert (await repo.state(device.id)) is not None
+        assert (await repo.state(device.physical_id)) is not None
 
 
 # --- the runtime --------------------------------------------------------------------------

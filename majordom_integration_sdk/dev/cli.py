@@ -29,7 +29,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 import rich
 from typer_shell import make_typer_shell
@@ -125,7 +125,8 @@ class _CliSession:
             return None
         credentials = ProvidedCredentials(type=CredentialsType(credentials_type), value=credentials_value or None)
         draft = self._controller.device_state_type(
-            id=discovery.id,
+            id=uuid4(),  # the Hub's own, which the integration never sees in lookups
+            physical_id=discovery.id,
             name=discovery.device_name,
             category=discovery.device_category,
             icon=discovery.device_icon,
@@ -140,9 +141,9 @@ class _CliSession:
             await repo.save(device)
         # as the Hub does once it saved the device
         if device.available:
-            await self._controller.output.controller_did_connect_device(self._controller, device.id)
+            await self._controller.output.controller_did_connect_device(self._controller, device.physical_id)
         await self._controller.fetch(device)
-        return device.id
+        return device.physical_id
 
     async def pair_window(self, seconds: int):
         await self._controller.start_pairing_window(seconds)
@@ -151,42 +152,42 @@ class _CliSession:
         async with self._controller.platform.device_repository(self._controller) as repo:
             return await repo.get_all()
 
-    async def device_state(self, device_id: UUID):
+    async def device_state(self, physical_id: UUID):
         async with self._controller.platform.device_repository(self._controller) as repo:
-            return await repo.state(device_id)
+            return await repo.state(physical_id)
 
-    async def _device(self, device_id: UUID):
+    async def _device(self, physical_id: UUID):
         async with self._controller.platform.device_repository(self._controller) as repo:
-            device = await repo.get(device_id)
+            device = await repo.get(physical_id)
         return self._controller.device_type.model_validate(device) if device else None
 
-    async def identify(self, device_id: UUID) -> bool:
-        if not (device := await self._device(device_id)):
+    async def identify(self, physical_id: UUID) -> bool:
+        if not (device := await self._device(physical_id)):
             return False
         await self._controller.identify(device)
         return True
 
-    async def fetch(self, device_id: UUID) -> bool:
-        if not (device := await self._device(device_id)):
+    async def fetch(self, physical_id: UUID) -> bool:
+        if not (device := await self._device(physical_id)):
             return False
         await self._controller.fetch(device)
         return True
 
-    async def unpair(self, device_id: UUID) -> bool:
-        if not (device := await self._device(device_id)):
+    async def unpair(self, physical_id: UUID) -> bool:
+        if not (device := await self._device(physical_id)):
             return False
         await self._controller.unpair(device)
         return True
 
-    async def control(self, device_id: UUID, parameter_id: UUID, value: object) -> str:
-        command = DeviceCommand(device_id=device_id, parameter_id=parameter_id, value=value)
+    async def control(self, physical_id: UUID, parameter_id: UUID, value: object) -> str:
         async with self._controller.platform.device_repository(self._controller) as repo:
-            device = await repo.get(command.device_id)
+            device = await repo.get(physical_id)
             if not device:
-                return f"No device {device_id}"
-            parameter = await repo.get_parameter_state(command.device_id, command.parameter_id)
+                return f"No device {physical_id}"
+            command = DeviceCommand(device_id=device.id, parameter_id=parameter_id, value=value)
+            parameter = await repo.get_parameter_state(physical_id, parameter_id)
             if not parameter:
-                return f"No parameter {parameter_id} on device {device_id}"
+                return f"No parameter {parameter_id} on device {physical_id}"
             if parameter.role != ParameterRole.control:
                 return f"Parameter {parameter_id} is not controllable (role={parameter.role.value})"
             await self._controller.send_command(
@@ -256,18 +257,18 @@ class _CliControllerOutput(ControllerOutput):
     async def controller_did_lose_discovery(self, controller, discovery_id):
         _print(f"[discovery lost] {discovery_id}")
 
-    async def controller_did_connect_device(self, controller, device_id):
-        _print(f"[connected] {device_id}")
+    async def controller_did_connect_device(self, controller, physical_id):
+        _print(f"[connected] {physical_id}")
         async with controller.platform.device_repository(controller) as repo:
-            if device := await repo.get(device_id):
+            if device := await repo.get(physical_id):
                 device.last_seen = datetime.now()
                 device.available = True
                 await repo.save(device)
 
-    async def controller_did_lose_device(self, controller, device_id):
-        _print(f"[lost] {device_id}")
+    async def controller_did_lose_device(self, controller, physical_id):
+        _print(f"[lost] {physical_id}")
         async with controller.platform.device_repository(controller) as repo:
-            if device := await repo.get(device_id):
+            if device := await repo.get(physical_id):
                 device.available = False
                 device.last_error = f"Device is no longer connected to the {controller.name} network"
                 await repo.save(device)
@@ -381,12 +382,12 @@ async def run_cli(
 
     @app.command()
     def devices():
-        """List paired devices (id, name, available)."""
+        """List paired devices (physical id, name, available)."""
         found = call(session.list_devices())
         if not found:
             _print("(no paired devices)")
         for device in found:
-            _print(f"{device.id}  {device.name}  available={device.available}")
+            _print(f"{device.physical_id}  {device.name}  available={device.available}")
 
     @app.command()
     def device(device_id: str):

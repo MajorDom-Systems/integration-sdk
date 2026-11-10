@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import GetJsonSchemaHandler
+from pydantic import Field, GetJsonSchemaHandler
 from pydantic_core import core_schema as cs
 
 
@@ -46,7 +46,7 @@ class NonEmptyStr(str):
 
 
 class UUIdentifable(Base):  # TODO: review
-    id: UUID
+    id: UUID = Field(frozen=True)
 
     def __hash__(self):
         return hash(self.id)

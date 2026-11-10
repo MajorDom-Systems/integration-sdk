@@ -35,12 +35,14 @@ def make_parameter_state(
 def make_device_state(
     *,
     id: UUID | None = None,
+    physical_id: UUID | None = None,
     integration: str = "example",
     name: str = "Lamp",
     parameters: list[ParameterState] | None = None,
 ) -> DeviceState:
     return DeviceState(
         id=id or uuid4(),
+        physical_id=physical_id or uuid4(),
         name=name,
         room_id=uuid4(),
         transport="wifi",

@@ -37,7 +37,7 @@ class SqliteDeviceRepository:
         try:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS devices ("
-                "  id INTEGER PRIMARY KEY, uuid TEXT UNIQUE NOT NULL,"
+                "  id INTEGER PRIMARY KEY, uuid TEXT UNIQUE NOT NULL, physical_uuid TEXT UNIQUE NOT NULL,"
                 "  integration TEXT NOT NULL, data TEXT NOT NULL)"
             )
             conn.commit()
@@ -67,16 +67,16 @@ class SqliteDeviceRepository:
             raise RuntimeError("Use `async with repo.session():` before calling repository methods")
         return conn
 
-    def _record(self, device_id: UUID) -> Record | None:
-        """The stored record for an in-scope device, or None."""
+    def _record(self, value: UUID, column: str = "physical_uuid") -> Record | None:
+        """The stored record for an in-scope device by its ``physical_uuid`` (or Hub ``uuid``), or None."""
         if self.integration is None:
-            row = self._cursor().execute("SELECT data FROM devices WHERE uuid = ?", (str(device_id),)).fetchone()
+            row = self._cursor().execute(f"SELECT data FROM devices WHERE {column} = ?", (str(value),)).fetchone()
         else:
             row = (
                 self._cursor()
                 .execute(
-                    "SELECT data FROM devices WHERE uuid = ? AND integration = ?",
-                    (str(device_id), self.integration),
+                    f"SELECT data FROM devices WHERE {column} = ? AND integration = ?",
+                    (str(value), self.integration),
                 )
                 .fetchone()
             )
@@ -84,9 +84,10 @@ class SqliteDeviceRepository:
 
     def _write(self, record: Record):
         self._cursor().execute(
-            "INSERT INTO devices (uuid, integration, data) VALUES (?, ?, ?) "
-            "ON CONFLICT(uuid) DO UPDATE SET integration = excluded.integration, data = excluded.data",
-            (record["id"], record["integration"], json.dumps(record)),
+            "INSERT INTO devices (uuid, physical_uuid, integration, data) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(uuid) DO UPDATE SET physical_uuid = excluded.physical_uuid,"
+            " integration = excluded.integration, data = excluded.data",
+            (record["id"], record["physical_id"], record["integration"], json.dumps(record)),
         )
 
     async def get_all[T: Device](self, as_: type[T] = Device) -> list[T]:
@@ -98,16 +99,16 @@ class SqliteDeviceRepository:
             )
         return [as_.model_validate(json.loads(row["data"])) for row in rows]
 
-    async def get[T: Device](self, device_id: UUID, as_: type[T] = Device) -> T | None:
-        record = self._record(device_id)
+    async def get[T: Device](self, physical_id: UUID, as_: type[T] = Device) -> T | None:
+        record = self._record(physical_id)
         return as_.model_validate(record) if record else None
 
-    async def state[T: DeviceState](self, device_id: UUID, as_: type[T] = DeviceState) -> T | None:
-        record = self._record(device_id)
+    async def state[T: DeviceState](self, physical_id: UUID, as_: type[T] = DeviceState) -> T | None:
+        record = self._record(physical_id)
         return as_.model_validate(record) if record else None
 
-    async def get_parameter_state(self, device_id: UUID, parameter_id: UUID) -> ParameterState | None:
-        record = self._record(device_id)
+    async def get_parameter_state(self, physical_id: UUID, parameter_id: UUID) -> ParameterState | None:
+        record = self._record(physical_id)
         if not record:
             return None
         return next(
@@ -115,30 +116,26 @@ class SqliteDeviceRepository:
             None,
         )
 
-    async def save(self, device: Device | DeviceState, previous_id: UUID | None = None):
+    async def save(self, device: Device | DeviceState):
         if self.integration is not None and device.integration != self.integration:
             raise PermissionError(f"Device {device.id} is outside integration scope {self.integration!r}")
-        base: Record | None = None
-        if previous_id is not None and previous_id != device.id:
-            base = self._record(previous_id)
-            self._cursor().execute("DELETE FROM devices WHERE uuid = ?", (str(previous_id),))
-        self._write(merge(base if base is not None else self._record(device.id), device))
+        self._write(merge(self._record(device.id, "uuid"), device))  # another record's physical_uuid: IntegrityError
 
-    async def save_parameter_state(self, device_id: UUID, parameter_state: ParameterState):
-        record = self._record(device_id)
+    async def save_parameter_state(self, physical_id: UUID, parameter_state: ParameterState):
+        record = self._record(physical_id)
         if not record:
-            raise KeyError(f"Unknown or out-of-scope device {device_id}")
+            raise KeyError(f"Unknown or out-of-scope device {physical_id}")
         updated = dump(parameter_state)
         record["parameters"] = [
             updated if p["id"] == str(parameter_state.id) else p for p in record.get("parameters", [])
         ]
         self._write(record)
 
-    # Hub-internal (not on DeviceRepositoryProtocol); still scope-checked.
+    # Hub-internal (not on DeviceRepositoryProtocol), by the Hub's ids; still scope-checked.
 
     async def update_parameter_visibility(self, parameter_id: UUID, visibility: ParameterVisibility):
         for device in await self.get_all():
-            record = self._record(device.id)
+            record = self._record(device.id, "uuid")
             if not record:
                 continue
             if any(p["id"] == str(parameter_id) for p in record.get("parameters", [])):
@@ -149,7 +146,7 @@ class SqliteDeviceRepository:
                 return
 
     async def delete(self, device_id: UUID):
-        if self._record(device_id) is None:
+        if self._record(device_id, "uuid") is None:
             return
         self._cursor().execute("DELETE FROM devices WHERE uuid = ?", (str(device_id),))
 

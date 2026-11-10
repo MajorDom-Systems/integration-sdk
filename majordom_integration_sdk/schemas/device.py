@@ -80,7 +80,7 @@ class DevicePair(Base):
 
 
 class DeviceInfo(DevicePatch):
-    id: UUID  # NOTE: moved from DeviceCreate, check whether it's correct
+    id: UUID = Field(frozen=True)  # Hub-owned, set at the pairing write, never changes
     transport: str
     integration: str
     manufacturer: str | None
@@ -104,6 +104,9 @@ class Device[TData = Any](DeviceInfo):  # TODO: review models
     validated from ``{}`` (the Hub creates a device before its integration pairs it), and stays unset: a save keeps
     the stored one. For ``Device[HueData | None]`` that ``{}``, unset or stored, is None."""
 
+    # The integration's lookup id (``device_uuid`` of what the protocol identifies the device by): unique, filled in
+    # by ``pair_device``; inbound protocol data maps to the record through it, and the repository is keyed by it
+    physical_id: UUID
     integration_data: SerializeAsAny[TData] = Field(default_factory=dict, validate_default=True)
 
     @field_validator("integration_data", mode="before")
