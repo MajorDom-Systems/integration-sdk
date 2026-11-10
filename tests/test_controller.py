@@ -11,6 +11,7 @@ from factories import make_device_state
 
 from majordom_integration_sdk import DeviceIdTakenError, NoSettings, Platform
 from majordom_integration_sdk.controller import AbstractController, ControllerOutput, LoggingControllerOutput
+from majordom_integration_sdk.controller.output import AnyController
 from majordom_integration_sdk.repository import DeviceRepositoryMemory
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, DeviceState, Discovery, Parameter, ProvidedCredentials
@@ -150,7 +151,7 @@ def test_the_output_annotations_evaluate():
     for output in (ControllerOutput, LoggingControllerOutput):
         for name, method in inspect.getmembers(output, inspect.isfunction):
             if name.startswith("controller_did_"):
-                assert inspect.get_annotations(method, eval_str=True)["controller"] is AbstractController, name
+                assert inspect.get_annotations(method, eval_str=True)["controller"] is AnyController, name
 
 
 def _discovery(controller: AbstractController) -> Discovery:
