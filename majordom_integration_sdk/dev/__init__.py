@@ -34,6 +34,7 @@ from majordom_integration_sdk.platform import Platform
 from majordom_integration_sdk.repository.sqlite import SqliteDeviceRepository
 
 if TYPE_CHECKING:
+    from majordom_integration_sdk.controller.output import AnyController
     from majordom_integration_sdk.runtime import PeripheralStatus, Runtime
 
 logger = logging.getLogger("majordom_integration_sdk.dev")
@@ -101,7 +102,7 @@ class Runner:
     """Runs one controller standalone: under ``runtime``, which starts it once its needs are bound and hands moved
     peripherals, settings and platform facts over as under the Hub; or, without, with the needs bound by hand."""
 
-    def __init__(self, controller: AbstractController, runtime: Runtime | None = None):
+    def __init__(self, controller: AnyController, runtime: Runtime | None = None):
         self.controller, self.runtime = controller, runtime
         self._is_started = False
 

@@ -45,7 +45,7 @@ from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
 
 if TYPE_CHECKING:
-    from majordom_integration_sdk.controller.abstract_controller import AbstractController as _Controller
+    from majordom_integration_sdk.controller.output import AnyController as _Controller
     from majordom_integration_sdk.runtime import PeripheralStatus
 
 

@@ -34,7 +34,6 @@ from uuid import UUID, uuid5
 import rich
 from typer_shell import make_typer_shell
 
-from ..controller.abstract_controller import AbstractController
 from ..controller.output import ControllerOutput
 from ..peripherals import Bound, Endpoint, Peripheral
 from ..schemas.command import DeviceCommand
@@ -44,6 +43,8 @@ from ..schemas.parameter import ParameterRole
 from . import Integration, _runner, build_platform
 
 if TYPE_CHECKING:
+    from majordom_integration_sdk.controller.output import AnyController
+
     from ..runtime import Pinned, Runtime
 
 logger = logging.getLogger("majordom_integration_sdk.dev")
@@ -110,7 +111,7 @@ class _CliSession:
     resolution (``repo.get`` + ``get_parameter_state`` + ``model_validate`` into the controller's
     ``device_type`` / ``parameter_type``)."""
 
-    def __init__(self, controller: AbstractController, runtime: Runtime | None = None):
+    def __init__(self, controller: AnyController, runtime: Runtime | None = None):
         self._controller = controller
         self._runtime = runtime
 
