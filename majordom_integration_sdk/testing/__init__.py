@@ -15,8 +15,8 @@ instead of reinventing them, so every integration is exercised through the same 
   :class:`FakeZeroconf` (the ``discovery`` extra) and :class:`FakeSSDP`. Each provides itself as
   ``.endpoint``, to bind as the controller's peripherals: ``Peripherals({"ble": router.endpoint})``.
 - :func:`build_test_platform` — assembles a ``Platform`` with an in-memory device repository
-  (its ``store`` yours to read), temp-dir storage and the facts you give, so a test can drive a
-  controller (or any peripheral) exactly as the Hub would.
+  (its ``store`` yours to read), an id check over that store, temp-dir storage and the facts you give,
+  so a test can drive a controller (or any peripheral) exactly as the Hub would.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from majordom_integration_sdk.capabilities.ble import BLEConnection, BLEDiscoveryListener, BLEMatcher, OnAdvertisement
 from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
+from majordom_integration_sdk.errors import DeviceIdTakenError
 from majordom_integration_sdk.peripherals import Endpoint, Need, NoSettings, Peripheral, PeripheralChange, Service
 from majordom_integration_sdk.platform import Platform
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
@@ -39,7 +40,7 @@ from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BL
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
 from majordom_integration_sdk.runtime.peripherals.services.compose import Compose
 from majordom_integration_sdk.schemas.credentials import WifiCredentials
-from majordom_integration_sdk.schemas.device import Discovery
+from majordom_integration_sdk.schemas.device import DeviceState, Discovery
 from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
 
@@ -327,11 +328,21 @@ def build_test_platform(
 
     Pass ``documents_root`` as the root of the peripherals' folders; a fresh temp folder otherwise, removed when the
     process ends. Pass ``store`` to see every device kept there: ``DeviceRepositoryMemory(store=store)``.
+
+    Its ``check_device_id`` takes any record in ``store`` but the draft's own for another: a test seeds the store with
+    the record a collision should hit (``"is_paired": False`` in it for an unpaired one; paired otherwise).
     """
     store = store if store is not None else {}
+
+    async def check_device_id(device_id: UUID, draft: DeviceState):
+        record = store.get(device_id)
+        if record is not None and device_id != draft.id:
+            raise DeviceIdTakenError(device_id, record.get("name", ""), record.get("is_paired", True))
+
     return Platform(
         documents_root=documents_root or Path(tempfile.mkdtemp(dir=_temp_root().name)),
         make_device_repository=lambda key: DeviceRepositoryMemory(key, store).session(),
+        check_device_id=check_device_id,
         region=region,
         wifi=wifi,
         thread_dataset=thread_dataset,
