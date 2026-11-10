@@ -62,8 +62,8 @@ async def test_save_and_read_back(repository, device_state):
     async with repository.session() as repo:
         await repo.save(device_state)
 
-        state = await repo.state(device_state.physical_id)
-        got = await repo.get(device_state.physical_id)
+        state = await repo.state(physical_id=device_state.physical_id)
+        got = await repo.get(physical_id=device_state.physical_id)
         assert state is not None and state.id == device_state.id
         assert got is not None and got.id == device_state.id
         assert [d.id for d in await repo.get_all()] == [device_state.id]
@@ -71,8 +71,8 @@ async def test_save_and_read_back(repository, device_state):
 
 async def test_get_unknown_is_none(repository):
     async with repository.session() as repo:
-        assert await repo.state(uuid4()) is None
-        assert await repo.get(uuid4()) is None
+        assert await repo.state(physical_id=uuid4()) is None
+        assert await repo.get(physical_id=uuid4()) is None
 
 
 async def test_parameter_state_round_trip(repository, device_state):
@@ -80,12 +80,12 @@ async def test_parameter_state_round_trip(repository, device_state):
     async with repository.session() as repo:
         await repo.save(device_state)
 
-        fetched = await repo.get_parameter_state(device_state.physical_id, parameter.id)
+        fetched = await repo.get_parameter_state(physical_id=device_state.physical_id, parameter_id=parameter.id)
         assert fetched is not None and fetched.id == parameter.id
 
         parameter.value = 7
-        await repo.save_parameter_state(device_state.physical_id, parameter)
-        updated = await repo.get_parameter_state(device_state.physical_id, parameter.id)
+        await repo.save_parameter_state(physical_id=device_state.physical_id, parameter_state=parameter)
+        updated = await repo.get_parameter_state(physical_id=device_state.physical_id, parameter_id=parameter.id)
         assert updated is not None and updated.value == 7
 
 
@@ -94,15 +94,15 @@ async def test_update_visibility(repository, device_state):
     async with repository.session() as repo:
         await repo.save(device_state)
         await repo.update_parameter_visibility(parameter.id, ParameterVisibility.system)
-        fetched = await repo.get_parameter_state(device_state.physical_id, parameter.id)
+        fetched = await repo.get_parameter_state(physical_id=device_state.physical_id, parameter_id=parameter.id)
         assert fetched is not None and fetched.visibility is ParameterVisibility.system
 
 
 async def test_reads_are_keyed_by_physical_id(repository, device_state):
     async with repository.session() as repo:
         await repo.save(device_state)
-        assert await repo.get(device_state.id) is None
-        assert await repo.state(device_state.id) is None
+        assert await repo.get(physical_id=device_state.id) is None
+        assert await repo.state(physical_id=device_state.id) is None
 
 
 async def test_a_physical_id_held_by_another_record_is_refused(repository, device_state):
@@ -119,8 +119,8 @@ async def test_a_new_physical_id_updates_the_same_record(repository, device_stat
         await repo.save(device_state)
         moved = device_state.model_copy(update={"physical_id": uuid4()})
         await repo.save(moved)
-        assert await repo.state(device_state.physical_id) is None
-        state = await repo.state(moved.physical_id)
+        assert await repo.state(physical_id=device_state.physical_id) is None
+        state = await repo.state(physical_id=moved.physical_id)
         assert state is not None and state.id == device_state.id
         assert [d.id for d in await repo.get_all()] == [device_state.id]
 
@@ -129,7 +129,7 @@ async def test_delete(repository, device_state):
     async with repository.session() as repo:
         await repo.save(device_state)
         await repo.delete(device_state.id)
-        assert await repo.state(device_state.physical_id) is None
+        assert await repo.state(physical_id=device_state.physical_id) is None
 
 
 async def test_typed_read_returns_typed_integration_data(repository):
@@ -137,7 +137,7 @@ async def test_typed_read_returns_typed_integration_data(repository):
     async with repository.session() as repo:
         await repo.save(device)
 
-        got = await repo.get(device.physical_id, as_=_MyDevice)
+        got = await repo.get(physical_id=device.physical_id, as_=_MyDevice)
         assert got is not None
         assert isinstance(got.integration_data, _PairingData)
         assert got.integration_data.token == "secret"
@@ -156,10 +156,10 @@ async def test_a_typed_state_reads_the_data_of_the_device_and_its_parameters(rep
             )
         )
 
-        state = await repo.state(device_state.physical_id, as_=DeviceState[_PairingData, _Endpoint])
+        state = await repo.state(physical_id=device_state.physical_id, as_=DeviceState[_PairingData, _Endpoint])
         assert state is not None and state.integration_data.token == "secret"
         assert state.parameters[0].integration_data.endpoint == 1
-        untyped = await repo.state(device_state.physical_id)  # a bare name means any data
+        untyped = await repo.state(physical_id=device_state.physical_id)  # a bare name means any data
         assert untyped is not None and untyped.parameters[0].integration_data == {"endpoint": 1}
 
 
@@ -173,14 +173,14 @@ async def test_device_and_state_views_merge(repository, device_state):
         await repo.save(device_state)  # info + parameters
         await repo.save(device)  # info + integration_data
 
-        state = await repo.state(device_state.physical_id)
-        typed = await repo.get(device_state.physical_id, as_=_MyDevice)
+        state = await repo.state(physical_id=device_state.physical_id)
+        typed = await repo.get(physical_id=device_state.physical_id, as_=_MyDevice)
         assert state is not None and len(state.parameters) == 1, "parameters must survive a Device save"
         assert typed is not None and typed.integration_data.token == "t"
 
         # ...and the reverse order.
         await repo.save(device_state)
-        typed_again = await repo.get(device_state.physical_id, as_=_MyDevice)
+        typed_again = await repo.get(physical_id=device_state.physical_id, as_=_MyDevice)
         assert typed_again is not None, "integration_data must survive a DeviceState save"
         assert typed_again.integration_data.token == "t"
 
@@ -194,7 +194,7 @@ async def test_a_typed_state_without_data_holds_its_own_model_and_keeps_the_stor
         await repo.save(make_my_device(device_id=state.id, token="t", integration=state.integration))
         await repo.save(state)
 
-        typed = await repo.get(state.physical_id, as_=_MyDevice)
+        typed = await repo.get(physical_id=state.physical_id, as_=_MyDevice)
         assert typed is not None and typed.integration_data.token == "t"
 
 
@@ -207,12 +207,12 @@ async def test_data_filled_in_place_on_a_device_saved_without_any_is_kept(reposi
     )  # fmt: skip
     async with repository.session() as repo:
         await repo.save(seeded)
-        device = await repo.get(seeded.physical_id, as_=Device[_Learned])
+        device = await repo.get(physical_id=seeded.physical_id, as_=Device[_Learned])
         assert device is not None
         device.integration_data.firmware = "1.2"
         await repo.save(device)
 
-        kept = await repo.get(seeded.physical_id, as_=Device[_Learned])
+        kept = await repo.get(physical_id=seeded.physical_id, as_=Device[_Learned])
         assert kept is not None and kept.integration_data.firmware == "1.2"
 
 
@@ -230,7 +230,7 @@ async def test_data_filled_in_place_on_a_state_saved_onto_a_record_holding_none_
         state.integration_data.firmware = "1.2"
         await repo.save(state)
 
-        kept = await repo.get(seeded.physical_id, as_=Device[_Learned])
+        kept = await repo.get(physical_id=seeded.physical_id, as_=Device[_Learned])
         assert kept is not None and kept.integration_data.firmware == "1.2"
 
 
@@ -278,9 +278,12 @@ async def test_scope_hides_foreign_reads(make_scoped):
     async with make_scoped(None).session() as repo:
         await repo.save(foreign)
     async with make_scoped("mine").session() as repo:
-        assert await repo.state(foreign.physical_id) is None
-        assert await repo.get(foreign.physical_id) is None
-        assert await repo.get_parameter_state(foreign.physical_id, foreign.parameters[0].id) is None
+        assert await repo.state(physical_id=foreign.physical_id) is None
+        assert await repo.get(physical_id=foreign.physical_id) is None
+        assert (
+            await repo.get_parameter_state(physical_id=foreign.physical_id, parameter_id=foreign.parameters[0].id)
+            is None
+        )
 
 
 async def test_sqlite_persists_across_sessions(tmp_path, device_state):
@@ -290,5 +293,11 @@ async def test_sqlite_persists_across_sessions(tmp_path, device_state):
     # A brand-new repository object over the same file still sees the device.
     reopened = SqliteDeviceRepository(tmp_path / "devices.db")
     async with reopened.session() as session:
-        persisted = await session.state(device_state.physical_id)
+        persisted = await session.state(physical_id=device_state.physical_id)
         assert persisted is not None and persisted.id == device_state.id
+
+
+async def test_lookups_are_keyword_only(repository, device_state):
+    async with repository.session() as repo:
+        with pytest.raises(TypeError):
+            await repo.get(device_state.physical_id)

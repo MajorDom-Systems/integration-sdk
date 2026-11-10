@@ -154,11 +154,11 @@ class _CliSession:
 
     async def device_state(self, physical_id: UUID):
         async with self._controller.platform.device_repository(self._controller) as repo:
-            return await repo.state(physical_id)
+            return await repo.state(physical_id=physical_id)
 
     async def _device(self, physical_id: UUID):
         async with self._controller.platform.device_repository(self._controller) as repo:
-            device = await repo.get(physical_id)
+            device = await repo.get(physical_id=physical_id)
         return self._controller.device_type.model_validate(device) if device else None
 
     async def identify(self, physical_id: UUID) -> bool:
@@ -181,11 +181,11 @@ class _CliSession:
 
     async def control(self, physical_id: UUID, parameter_id: UUID, value: object) -> str:
         async with self._controller.platform.device_repository(self._controller) as repo:
-            device = await repo.get(physical_id)
+            device = await repo.get(physical_id=physical_id)
             if not device:
                 return f"No device {physical_id}"
             command = DeviceCommand(device_id=device.id, parameter_id=parameter_id, value=value)
-            parameter = await repo.get_parameter_state(physical_id, parameter_id)
+            parameter = await repo.get_parameter_state(physical_id=physical_id, parameter_id=parameter_id)
             if not parameter:
                 return f"No parameter {parameter_id} on device {physical_id}"
             if parameter.role != ParameterRole.control:
@@ -260,7 +260,7 @@ class _CliControllerOutput(ControllerOutput):
     async def controller_did_connect_device(self, controller, physical_id):
         _print(f"[connected] {physical_id}")
         async with controller.platform.device_repository(controller) as repo:
-            if device := await repo.get(physical_id):
+            if device := await repo.get(physical_id=physical_id):
                 device.last_seen = datetime.now()
                 device.available = True
                 await repo.save(device)
@@ -268,7 +268,7 @@ class _CliControllerOutput(ControllerOutput):
     async def controller_did_lose_device(self, controller, physical_id):
         _print(f"[lost] {physical_id}")
         async with controller.platform.device_repository(controller) as repo:
-            if device := await repo.get(physical_id):
+            if device := await repo.get(physical_id=physical_id):
                 device.available = False
                 device.last_error = f"Device is no longer connected to the {controller.name} network"
                 await repo.save(device)
@@ -279,12 +279,14 @@ class _CliControllerOutput(ControllerOutput):
             for event in events:
                 if not isinstance(event, DeviceParameterChange):
                     continue
-                if device := await repo.get(event.physical_id):
+                if device := await repo.get(physical_id=event.physical_id):
                     device.last_seen = datetime.now()
                     await repo.save(device)
-                if state := await repo.get_parameter_state(event.physical_id, event.parameter_id):
+                if state := await repo.get_parameter_state(
+                    physical_id=event.physical_id, parameter_id=event.parameter_id
+                ):
                     state.value = event.value
-                    await repo.save_parameter_state(event.physical_id, state)
+                    await repo.save_parameter_state(physical_id=event.physical_id, parameter_state=state)
         for event in events:
             _print(f"[event] {type(event).__name__}: {event!r}")
 

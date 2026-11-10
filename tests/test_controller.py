@@ -123,7 +123,7 @@ async def test_its_device_repository_holds_only_its_own_devices():
     device = make_device_state(integration=controller.key)  # its slug, "example-protocol"
     async with controller.platform.device_repository(controller) as repo:
         await repo.save(device)
-        stored = await repo.state(device.physical_id)
+        stored = await repo.state(physical_id=device.physical_id)
         assert stored is not None and stored.id == device.id
         with pytest.raises(PermissionError):
             await repo.save(make_device_state(integration="Other"))

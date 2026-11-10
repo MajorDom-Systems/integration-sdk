@@ -195,7 +195,7 @@ async def test_output_delegate_persists_event_values():
     )
 
     async with controller.platform.device_repository(controller) as repo:
-        stored = await repo.get_parameter_state(device_id, parameter.id)
+        stored = await repo.get_parameter_state(physical_id=device_id, parameter_id=parameter.id)
     assert stored is not None
     assert stored.value  # a (non-empty, encoded) value was written back by the event
 

@@ -15,14 +15,14 @@ access (the Hub's own higher-level use).
 
 **Keyed by ``physical_id``.** An integration looks its devices up by the ``physical_id`` it gave them
 (``device_uuid``), never by the Hub-owned ``id``: ``get``, ``state``, ``get_parameter_state`` and
-``save_parameter_state`` take it, ``save`` writes the record of ``device.id`` (read-only, set by the Hub).
+``save_parameter_state`` take it as a keyword, ``save`` writes the record of ``device.id`` (read-only, set by the Hub).
 
 **Typed reads.** ``as_`` deserializes into your own ``Device[MyData]`` /
 ``DeviceState[MyData, MyParameterData]`` (or a subclass), so ``integration_data`` comes back
 typed instead of a bare dict::
 
     async with self.platform.device_repository(self) as repo:
-        device = await repo.get(physical_id, as_=MyDevice)  # class MyDevice(Device[MyData])
+        device = await repo.get(physical_id=physical_id, as_=MyDevice)  # class MyDevice(Device[MyData])
 
 **Not here on purpose:** ``delete`` and ``update_parameter_visibility`` are Hub-internal
 lifecycle operations. They exist on the concrete implementations, but are kept off this
@@ -46,15 +46,15 @@ class DeviceRepositoryProtocol(Protocol):
         """Every paired device in scope, deserialized as ``as_``."""
         ...
 
-    async def get[T: Device](self, physical_id: UUID, as_: type[T] = Device) -> T | None:
+    async def get[T: Device](self, *, physical_id: UUID, as_: type[T] = Device) -> T | None:
         """The device (info + ``integration_data``) as ``as_``, or ``None`` if unknown/out of scope."""
         ...
 
-    async def state[T: DeviceState](self, physical_id: UUID, as_: type[T] = DeviceState) -> T | None:
+    async def state[T: DeviceState](self, *, physical_id: UUID, as_: type[T] = DeviceState) -> T | None:
         """The device with its parameter states as ``as_``, or ``None`` if unknown/out of scope."""
         ...
 
-    async def get_parameter_state(self, physical_id: UUID, parameter_id: UUID) -> ParameterState | None:
+    async def get_parameter_state(self, *, physical_id: UUID, parameter_id: UUID) -> ParameterState | None:
         """One parameter's current state, or ``None`` if the device/parameter is unknown/out of scope."""
         ...
 
@@ -69,7 +69,7 @@ class DeviceRepositoryProtocol(Protocol):
         """
         ...
 
-    async def save_parameter_state(self, physical_id: UUID, parameter_state: ParameterState):
+    async def save_parameter_state(self, *, physical_id: UUID, parameter_state: ParameterState):
         """Update a single parameter's value/state on an existing in-scope device."""
         ...
 

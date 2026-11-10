@@ -43,15 +43,15 @@ class DeviceRepositoryMemory:
     async def get_all[T: Device](self, as_: type[T] = Device) -> list[T]:
         return [as_.model_validate(r) for r in self._store.values() if self._in_scope(r)]
 
-    async def get[T: Device](self, physical_id: UUID, as_: type[T] = Device) -> T | None:
+    async def get[T: Device](self, *, physical_id: UUID, as_: type[T] = Device) -> T | None:
         record = self._owned(physical_id)
         return as_.model_validate(record) if record else None
 
-    async def state[T: DeviceState](self, physical_id: UUID, as_: type[T] = DeviceState) -> T | None:
+    async def state[T: DeviceState](self, *, physical_id: UUID, as_: type[T] = DeviceState) -> T | None:
         record = self._owned(physical_id)
         return as_.model_validate(record) if record else None
 
-    async def get_parameter_state(self, physical_id: UUID, parameter_id: UUID) -> ParameterState | None:
+    async def get_parameter_state(self, *, physical_id: UUID, parameter_id: UUID) -> ParameterState | None:
         record = self._owned(physical_id)
         if not record:
             return None
@@ -71,7 +71,7 @@ class DeviceRepositoryMemory:
             raise ValueError(f"Physical id {device.physical_id} is held by device {holder}")
         self._store[device.id] = merge(self._store.get(device.id), device)
 
-    async def save_parameter_state(self, physical_id: UUID, parameter_state: ParameterState):
+    async def save_parameter_state(self, *, physical_id: UUID, parameter_state: ParameterState):
         record = self._owned(physical_id)
         if not record:
             raise KeyError(f"Unknown or out-of-scope device {physical_id}")

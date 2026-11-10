@@ -99,15 +99,15 @@ class SqliteDeviceRepository:
             )
         return [as_.model_validate(json.loads(row["data"])) for row in rows]
 
-    async def get[T: Device](self, physical_id: UUID, as_: type[T] = Device) -> T | None:
+    async def get[T: Device](self, *, physical_id: UUID, as_: type[T] = Device) -> T | None:
         record = self._record(physical_id)
         return as_.model_validate(record) if record else None
 
-    async def state[T: DeviceState](self, physical_id: UUID, as_: type[T] = DeviceState) -> T | None:
+    async def state[T: DeviceState](self, *, physical_id: UUID, as_: type[T] = DeviceState) -> T | None:
         record = self._record(physical_id)
         return as_.model_validate(record) if record else None
 
-    async def get_parameter_state(self, physical_id: UUID, parameter_id: UUID) -> ParameterState | None:
+    async def get_parameter_state(self, *, physical_id: UUID, parameter_id: UUID) -> ParameterState | None:
         record = self._record(physical_id)
         if not record:
             return None
@@ -121,7 +121,7 @@ class SqliteDeviceRepository:
             raise PermissionError(f"Device {device.id} is outside integration scope {self.integration!r}")
         self._write(merge(self._record(device.id, "uuid"), device))  # another record's physical_uuid: IntegrityError
 
-    async def save_parameter_state(self, physical_id: UUID, parameter_state: ParameterState):
+    async def save_parameter_state(self, *, physical_id: UUID, parameter_state: ParameterState):
         record = self._record(physical_id)
         if not record:
             raise KeyError(f"Unknown or out-of-scope device {physical_id}")
