@@ -221,18 +221,17 @@ class AbstractController[
         its ``id``, ``physical_id`` and ``integration_data`` included: decide what in it is stale.
 
         Fill in what the device is: ``parameters``, ``integration_data``, its ``physical_id`` (``device_uuid``, what
-        you look the device up by from now on), ``available``, … and return it. The Hub saves it and then reports the device connected and fetches it, so:
+        you look the device up by from now on), ``available``, … and return it. The Hub then saves it to its database,
+        reports it connected if you set it ``available``, and calls ``fetch``. So:
 
         - don't use the device repository: nothing is saved during pairing;
         - report nothing about this device (no ``controller_did_connect_device``, no events) until the Hub saved it;
-        - once the ``physical_id`` is known, call ``check_device_id`` before anything irreversible.
+        - once the ``physical_id`` is known, call ``check_device_id`` before anything irreversible;
+        - keep what the device needs from now on (a key just set on it) in ``integration_data``, filled in *before*
+          each irreversible step: it is saved with the device, so no storage of your own is needed.
 
-        Leave the device re-pairable: the Hub undoes nothing (it never calls ``unpair`` for a pairing), so on a
-        failure undo, in your own failure path, only what would block a retry if what this attempt learned were lost
-        (e.g. a pairing the accessory holds, refusing a new setup), and keep in your own storage what a retry needs
-        (e.g. a key just set on the device). The Hub may also never save what you return (it refuses the id, or the
-        save fails): the next ``pair_device`` for that device must still work, resuming or redoing the pairing. What
-        stays harmless (a node left on a fabric or network, offered again as a discovery) needs no undo.
+        On any failure but a refused id, and when the Hub fails to save what you return, it calls ``unpair(draft)``
+        with the draft as far as you filled it, to roll back.
 
         Raise when it can't pair (`MissingCredentialsError` before touching the device when credentials are lacking).
         """
@@ -242,8 +241,11 @@ class AbstractController[
         """
         Unpairs a device from the Hub. Called when the user initiates removal from the UI.
 
-        Only the user's unpair of a saved device, never a rollback of a failed pairing (``pair_device`` handles
-        its own failures). Tolerate a device gone or partly set up, and go as far as you can: it is best effort.
+        Also the rollback of a failed pairing: the Hub calls it with the draft as ``pair_device`` left it, at any
+        stage. Undo, in reverse order of pairing, only what would block a clean re-pair once the draft is lost (a key
+        set on the device, a pairing the accessory holds); what stays harmless (a node left on a fabric or network,
+        offered again as a discovery) needs no undo. Tolerate any partial state, never wait for the user, and go as
+        far as you can: it is best effort, within the Hub's timeout.
         """
 
     @abstractmethod
