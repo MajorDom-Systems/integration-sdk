@@ -15,8 +15,8 @@ instead of reinventing them, so every integration is exercised through the same 
   :class:`FakeZeroconf` (the ``discovery`` extra) and :class:`FakeSSDP`. Each provides itself as
   ``.endpoint``, to bind as the controller's peripherals: ``Peripherals({"ble": router.endpoint})``.
 - :func:`build_test_platform` — assembles a ``Platform`` with an in-memory device repository
-  (its ``store`` yours to read), temp-dir storage and the facts you give, so a test can drive a
-  controller (or any peripheral) exactly as the Hub would.
+  (its ``store`` yours to read), an id check over that store, temp-dir storage and the facts you give,
+  so a test can drive a controller (or any peripheral) exactly as the Hub would.
 """
 
 from __future__ import annotations
@@ -25,13 +25,14 @@ import functools
 import tempfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from pydantic import BaseModel
 
 from majordom_integration_sdk.capabilities.ble import BLEConnection, BLEDiscoveryListener, BLEMatcher, OnAdvertisement
 from majordom_integration_sdk.controller.output import ControllerOutput, IntegrationError
+from majordom_integration_sdk.errors import DeviceIdTakenError
 from majordom_integration_sdk.peripherals import Endpoint, Need, NoSettings, Peripheral, PeripheralChange, Service
 from majordom_integration_sdk.platform import Platform
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
@@ -39,12 +40,12 @@ from majordom_integration_sdk.runtime.peripherals.providers.ble.router import BL
 from majordom_integration_sdk.runtime.peripherals.providers.ssdp import SSDPDiscoveryService
 from majordom_integration_sdk.runtime.peripherals.services.compose import Compose
 from majordom_integration_sdk.schemas.credentials import WifiCredentials
-from majordom_integration_sdk.schemas.device import Discovery
+from majordom_integration_sdk.schemas.device import DeviceState, Discovery
 from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
 
 if TYPE_CHECKING:
-    from majordom_integration_sdk.controller.abstract_controller import AbstractController as _Controller
+    from majordom_integration_sdk.controller.output import AnyController as _Controller
     from majordom_integration_sdk.runtime import PeripheralStatus
 
 
@@ -55,8 +56,8 @@ class RecordingControllerOutput(ControllerOutput):
         self.received_discoveries: list[Discovery] = []
         self.updated_discoveries: list[Discovery] = []
         self.lost_discoveries: list[UUID] = []
-        self.connected_devices: list[UUID] = []
-        self.lost_devices: list[UUID] = []
+        self.connected_devices: list[UUID] = []  # the ids passed, physical ones from integrations
+        self.lost_devices: list[UUID] = []  # the ids passed, physical ones from integrations
         self.events: list[Event] = []
         self.errors: dict[str, IntegrationError] = {}  # the active ones, by id
         self.error_log: list[IntegrationError | str] = []  # every report, and the id of every resolve
@@ -72,11 +73,15 @@ class RecordingControllerOutput(ControllerOutput):
     async def controller_did_lose_discovery(self, controller: _Controller, discovery_id: UUID):
         self.lost_discoveries.append(discovery_id)
 
-    async def controller_did_connect_device(self, controller: _Controller, device_id: UUID):
-        self.connected_devices.append(device_id)
+    async def controller_did_connect_device(
+        self, controller: _Controller, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        self.connected_devices.append(cast(UUID, physical_id or device_id))
 
-    async def controller_did_lose_device(self, controller: _Controller, device_id: UUID):
-        self.lost_devices.append(device_id)
+    async def controller_did_lose_device(
+        self, controller: _Controller, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        self.lost_devices.append(cast(UUID, physical_id or device_id))
 
     async def controller_did_receive_events(self, controller: _Controller, events: Iterable[Event]):
         self.events.extend(events)
@@ -327,11 +332,22 @@ def build_test_platform(
 
     Pass ``documents_root`` as the root of the peripherals' folders; a fresh temp folder otherwise, removed when the
     process ends. Pass ``store`` to see every device kept there: ``DeviceRepositoryMemory(store=store)``.
+
+    Its ``check_device_id`` takes any record in ``store`` but the draft's own (``draft.id``) for another holder of the
+    physical id: a test seeds the store with the record a collision should hit (``"is_paired": False`` in it for an
+    unpaired one; paired otherwise).
     """
     store = store if store is not None else {}
+
+    async def check_device_id(physical_id: UUID, draft: DeviceState):
+        for device_id, record in store.items():
+            if record.get("physical_id") == str(physical_id) and device_id != draft.id:
+                raise DeviceIdTakenError(physical_id, device_id, record.get("name", ""), record.get("is_paired", True))
+
     return Platform(
         documents_root=documents_root or Path(tempfile.mkdtemp(dir=_temp_root().name)),
         make_device_repository=lambda key: DeviceRepositoryMemory(key, store).session(),
+        check_device_id=check_device_id,
         region=region,
         wifi=wifi,
         thread_dataset=thread_dataset,

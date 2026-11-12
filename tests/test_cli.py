@@ -70,30 +70,23 @@ class FakeController(AbstractController):
     async def stop(self):
         pass
 
-    async def pair_device(self, discovery: Discovery, credentials: ProvidedCredentials | None):
-        device_id = uuid4()
-        state = DeviceState(
-            id=device_id,
-            name=discovery.device_name,
-            room_id=uuid4(),
-            transport=discovery.transport,
-            integration=self.key,
-            manufacturer=None,
-            parameters=[_param(self._param_role)],
-        )
-        async with self.platform.device_repository(self) as repo:
-            await repo.save(state)
-        self.paired.append(device_id)
-        return device_id
+    async def pair_device(
+        self, discovery: Discovery, draft: DeviceState, credentials: ProvidedCredentials | None
+    ) -> DeviceState:
+        draft.physical_id = uuid4()
+        draft.parameters = [_param(self._param_role)]
+        draft.available = True
+        self.paired.append(draft.physical_id)
+        return draft
 
     async def unpair(self, device: Device):
-        self.unpaired.append(device.id)
+        self.unpaired.append(device.physical_id)
 
     async def identify(self, device: Device):
-        self.identified.append(device.id)
+        self.identified.append(device.physical_id)
 
     async def fetch(self, device: Device):
-        self.fetched.append(device.id)
+        self.fetched.append(device.physical_id)
 
     async def send_command(self, command: DeviceCommand, device: Device, parameter):
         self.sent.append((command.device_id, command.parameter_id, command.value))
@@ -125,13 +118,14 @@ async def test_pair_list_control_unpair_flow(session_and_controller):
     discovery = _discovery()
     controller.discoveries[discovery.id] = discovery
 
-    # pair -> persists a device
+    # pair -> persists the filled draft, then reports it connected and fetches it, as the Hub does
     device_id = await session.pair(discovery.id, "none", "")
     assert device_id in controller.paired
+    assert controller.fetched == [device_id]
 
     # devices -> lists it
     devices = await session.list_devices()
-    assert [d.id for d in devices] == [device_id]
+    assert [d.physical_id for d in devices] == [device_id]
 
     # device -> shows its (single control) parameter
     state = await session.device_state(device_id)
@@ -142,13 +136,13 @@ async def test_pair_list_control_unpair_flow(session_and_controller):
 
     # control -> resolves device+parameter and reaches the controller
     assert await session.control(device_id, parameter.id, True) == "Command sent"
-    assert controller.sent == [(device_id, parameter.id, True)]
+    assert controller.sent == [(devices[0].id, parameter.id, True)]  # the command carries the Hub's id
 
     # identify / fetch reach the controller with the resolved device
     assert await session.identify(device_id) is True
     assert await session.fetch(device_id) is True
     assert controller.identified == [device_id]
-    assert controller.fetched == [device_id]
+    assert controller.fetched == [device_id, device_id]
 
     # unpair
     assert await session.unpair(device_id) is True
@@ -197,11 +191,11 @@ async def test_output_delegate_persists_event_values():
 
     output = _CliControllerOutput()
     await output.controller_did_receive_events(
-        controller, [DeviceParameterChange(device_id=device_id, parameter_id=parameter.id, value=True)]
+        controller, [DeviceParameterChange(physical_id=device_id, parameter_id=parameter.id, value=True)]
     )
 
     async with controller.platform.device_repository(controller) as repo:
-        stored = await repo.get_parameter_state(device_id, parameter.id)
+        stored = await repo.get_parameter_state(physical_id=device_id, parameter_id=parameter.id)
     assert stored is not None
     assert stored.value  # a (non-empty, encoded) value was written back by the event
 

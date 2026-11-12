@@ -18,7 +18,7 @@ from majordom_integration_sdk.controller.output import ControllerOutput, Logging
 from majordom_integration_sdk.peripherals import Need, Peripheral, PeripheralChange
 from majordom_integration_sdk.platform import Platform
 from majordom_integration_sdk.schemas.command import DeviceCommand
-from majordom_integration_sdk.schemas.device import Device, Discovery, Parameter, ProvidedCredentials
+from majordom_integration_sdk.schemas.device import Device, DeviceState, Discovery, Parameter, ProvidedCredentials
 
 _NAME_HELP = (
     "The integration name is auto-derived from your controller class name; set a class-level "
@@ -39,9 +39,12 @@ def _titleize(class_name: str) -> str:
     return " ".join(words) or base
 
 
-class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: BaseModel = Any](
-    Peripheral[TSettings], ABC
-):
+class AbstractController[
+    TDevice: Device,
+    TParameter: Parameter,
+    TSettings: BaseModel = Any,
+    TDeviceState: DeviceState = DeviceState,
+](Peripheral[TSettings], ABC):
     """
     Base class for all integration controllers.
     Defines the interface the Hub uses to interact with an integration — its package's ``peripherals(platform)`` builds the subclass, the runtime starts and stops it, and the Hub drives it by calling these methods.
@@ -62,7 +65,9 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
     - ``self.output``: what it reports (``controller_did_…``: discoveries, devices, events, errors, notifications,
       what it provides), which the runtime relays to the Hub; it logs them in library mode until you give yours;
     - ``self.settings``: its validated ``Settings``, declared as a nested ``class Settings(BaseModel)`` named as the
-      last type parameter, ``AbstractController[Device, Parameter, "HueController.Settings"]``; `NoSettings` without;
+      third type parameter, ``AbstractController[Device, Parameter, "HueController.Settings"]``; `NoSettings` without;
+    - its device-state model, the fourth type parameter (`DeviceState` by default), returned by ``device_state_type``:
+      what ``pair_device`` is given as its draft and returns;
     - ``self.peripherals``: the endpoints its needs are bound to (``endpoint()``, ``endpoints()``, ``instance()``).
 
     In library mode, with no runtime, give it any settings, hand the bound needs over yourself and, to hear what it
@@ -162,6 +167,11 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
         return cast(type[TDevice], Device)
 
     @property
+    def device_state_type(self) -> type[TDeviceState]:
+        """Override to return a DeviceState subclass. Hub will validate the pairing draft into this type before passing it to ``pair_device``."""
+        return cast(type[TDeviceState], DeviceState)
+
+    @property
     def parameter_type(self) -> type[TParameter]:
         """Override to return a Parameter subclass. Hub will deserialize parameters into this type before passing them to other controller methods."""
         return cast(type[TParameter], Parameter)
@@ -198,15 +208,54 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
         pass
 
     @abstractmethod
-    async def pair_device(self, discovery: Discovery, credentials: ProvidedCredentials | None):
+    async def pair_device(
+        self, discovery: Discovery, draft: TDeviceState, credentials: ProvidedCredentials | None
+    ) -> TDeviceState:
         """
-        Pairs a discovered device to the Hub. Called when the user initiates pairing from the UI.
+        Pairs a discovered device to the Hub and returns ``draft`` filled in. Called when the user initiates pairing
+        from the UI.
+
+        The Hub builds ``draft`` (no record exists yet): the user's fields (name, room, icon, category, note), ``id``
+        the Hub's own (read-only: never change it), ``physical_id`` the discovery's id as a placeholder, ``integration``
+        this controller's key. When the user picked an existing record to pair onto, it carries that record's data,
+        its ``id``, ``physical_id`` and ``integration_data`` included: decide what in it is stale.
+
+        Fill in what the device is: ``parameters``, ``integration_data``, its ``physical_id`` (``device_uuid``, what
+        you look the device up by from now on), ``available``, … and return it. The Hub then saves it to its database,
+        reports it connected if you set it ``available``, and calls ``fetch``. So:
+
+        - don't use the device repository: nothing is saved during pairing;
+        - report nothing about this device (no ``controller_did_connect_device``, no events) until the Hub saved it;
+        - once the ``physical_id`` is known, call ``check_device_id`` before anything irreversible;
+        - keep what the device needs from now on (a key just set on it) in ``integration_data``, filled in *before*
+          each irreversible step: it is saved with the device, so no storage of your own is needed.
+
+        On any failure but a refused id, and when the Hub fails to save what you return, it calls ``unpair(draft)``
+        with the draft as far as you filled it, to roll back.
+
+        Idempotent, like ``fetch``: called again after a failed or rolled-back attempt, bring the device to a
+        known-good paired state from whatever the last one left. Check each step and redo only what is missing or
+        stale (a key already set is checked, not set again), so a device found already paired is confirmed and
+        returned, not refused.
+
+        Raise when it can't pair (`MissingCredentialsError` before touching the device when credentials are lacking).
         """
 
     @abstractmethod
     async def unpair(self, device: TDevice):
         """
         Unpairs a device from the Hub. Called when the user initiates removal from the UI.
+
+        Also the rollback of a failed pairing: the Hub calls it with the draft as ``pair_device`` left it, at any
+        stage. Undo, in reverse order of pairing, only what would block a clean re-pair once the draft is lost (a key
+        set on the device, a pairing the accessory holds); what stays harmless (a node left on a fabric or network,
+        offered again as a discovery) needs no undo. Tolerate any partial state, never wait for the user, and go as
+        far as you can: it is best effort, within the Hub's timeout.
+
+        Calling it again must work: on a device already unpaired, or never fully paired, it does nothing more.
+
+        Raise `DeviceUnreachableError` when the device can't be reached to undo its pairing, after forgetting your own
+        state of it.
         """
 
     @abstractmethod
@@ -219,8 +268,12 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
     @abstractmethod
     async def fetch(self, device: TDevice):
         """
-        Fetches and refreshes the current state of the device and all its parameters.
-        Called by the Hub when an up-to-date snapshot is needed.
+        Brings the device to a known-good state; called after pairing, on a manual refresh, and to revive a device
+        that is unavailable. Idempotent:
+
+        - check the device answers and read its current values, reported through the normal events;
+        - check its event subscription and subscribe again only when it is gone, never a second one;
+        - finish in bounded time; a sleeping battery device that doesn't answer is not a failure.
         """
 
     @abstractmethod
@@ -256,14 +309,25 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
         return uuid5(self.namespace_uuid(), self.key)
 
     @final
-    def device_uuid(self, device_id: str) -> UUID:
-        """uuid of the device based on an arbitrary string identifier"""
-        return uuid5(self.integration_uuid(), device_id)
+    def device_uuid(self, raw: str | bytes, strip: str = ":-") -> UUID:
+        """The ``physical_id`` of a device from what is unique to it (MAC, serial number), seeded by the integration:
+        a name or an address two devices share gives them the same id, and the second can't be paired. A string is
+        normalised (lowercased, whitespace and every char in ``strip`` dropped) so "AA:BB-cc" and "aabbcc" agree;
+        bytes (a raw MAC or UUID) are taken as they are."""
+        return uuid5(self.integration_uuid(), _normalised(raw, strip))
 
     @final
-    def parameter_uuid(self, device_uuid: UUID, parameter_id: str) -> UUID:
-        """uuid of the parameter based on an arbitrary string identifier"""
-        return uuid5(device_uuid, parameter_id)
+    async def check_device_id(self, physical_id: UUID, draft: TDeviceState):
+        """Raises `DeviceIdTakenError` when another record holds ``physical_id``, the one ``pair_device`` gives the
+        device ``draft`` pairs. The record the user picked to pair onto (``draft.id``, its Hub id) is not another.
+        Optional: call it in ``pair_device`` as soon as the physical id is known, before anything irreversible."""
+        await self.platform.check_device_id(physical_id, draft)
+
+    @final
+    def parameter_uuid(self, physical_id: UUID, raw: str | bytes, strip: str = ":-") -> UUID:
+        """The id of a parameter from an identifier unique within its device, seeded by the device's ``physical_id``
+        (stable and known from protocol data alone, unlike the Hub's ``id``); normalised as in ``device_uuid``."""
+        return uuid5(physical_id, _normalised(raw, strip))
 
     # def add_service_coroutine(self, coroutine: Callable[[], Awaitable]): ... # FUTURE
 
@@ -272,3 +336,9 @@ class AbstractController[TDevice: Device, TParameter: Parameter, TSettings: Base
     # def schedule_task(self, callback: Callable[[], Awaitable] | Callable[[], Any], interval: float): ... # FUTURE
 
     # def search_native_parameter(self, name: str) -> Parameter | None: ... # FUTURE
+
+
+def _normalised(raw: str | bytes, strip: str) -> str | bytes:
+    if isinstance(raw, bytes):
+        return raw
+    return "".join(char for char in raw.lower() if not char.isspace() and char not in strip)

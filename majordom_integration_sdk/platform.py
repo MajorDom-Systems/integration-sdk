@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,16 +12,22 @@ from uuid import UUID
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtocol
 from majordom_integration_sdk.schemas.credentials import WifiCredentials
+from majordom_integration_sdk.schemas.device import DeviceState
 
 if TYPE_CHECKING:
     from majordom_integration_sdk.peripherals import Peripheral
 
 type MakeDeviceRepository = Callable[[str], AbstractAsyncContextManager[DeviceRepositoryProtocol]]
+type CheckDeviceId = Callable[[UUID, DeviceState], Awaitable[None]]
 
 
 def _in_memory() -> MakeDeviceRepository:
     store: dict[UUID, dict[str, Any]] = {}  # shared by the repositories of every peripheral
     return lambda key: DeviceRepositoryMemory(key, store).session()
+
+
+async def _any_id_is_free(physical_id: UUID, draft: DeviceState):
+    pass
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -43,6 +49,9 @@ class Platform:
     documents_root: Path
     # One unit of work on the device repository, scoped to the devices of the peripheral keyed; in memory by default
     make_device_repository: MakeDeviceRepository = field(default_factory=_in_memory)
+    # Raises `DeviceIdTakenError` when a record other than the one ``draft`` pairs onto (``draft.id``) holds the
+    # physical id; the Hub's checks every record. Library mode has no other records to collide with: every id is free
+    check_device_id: CheckDeviceId = _any_id_is_free
     region: str | None = None  # RF region for sub-GHz radios, a Z-Wave JS name: "Europe", "USA", …
     wifi: WifiCredentials | None = None  # the network to provision Wi-Fi devices onto
     thread_dataset: str | None = None  # active operational dataset of the hub's Thread network, hex TLVs

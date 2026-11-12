@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol, overload
 from uuid import UUID
 
 from majordom_integration_sdk.schemas.device import Discovery
@@ -34,21 +34,37 @@ class ControllerOutput(Protocol):
     every call (`LoggingControllerOutput`); give it yours: ``controller.output = MyOutput()``.
     """
 
-    async def controller_did_receive_discovery(self, controller: AbstractController, discovery: Discovery): ...
-    async def controller_did_update_discovery(self, controller: AbstractController, discovery: Discovery): ...
-    async def controller_did_lose_discovery(self, controller: AbstractController, discovery_id: UUID): ...
+    async def controller_did_receive_discovery(self, controller: AnyController, discovery: Discovery): ...
+    async def controller_did_update_discovery(self, controller: AnyController, discovery: Discovery): ...
+    async def controller_did_lose_discovery(self, controller: AnyController, discovery_id: UUID): ...
 
-    async def controller_did_connect_device(self, controller: AbstractController, device_id: UUID): ...
-
-    async def controller_did_lose_device(self, controller: AbstractController, device_id: UUID):
-        """Paired device became unreachable while the Hub is running (not just at startup/reboot)."""
+    @overload
+    async def controller_did_connect_device(self, controller: AnyController, *, physical_id: UUID): ...
+    @overload
+    async def controller_did_connect_device(self, controller: AnyController, *, device_id: UUID): ...
+    async def controller_did_connect_device(
+        self, controller: AnyController, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        """A paired device connected. Integrations pass its ``physical_id``; its ``device_id`` is accepted too, e.g.
+        from a relay passing it on under the Hub's id."""
         ...
 
-    async def controller_did_receive_events(self, controller: AbstractController, events: Iterable[Event]):
+    @overload
+    async def controller_did_lose_device(self, controller: AnyController, *, physical_id: UUID): ...
+    @overload
+    async def controller_did_lose_device(self, controller: AnyController, *, device_id: UUID): ...
+    async def controller_did_lose_device(
+        self, controller: AnyController, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        """Paired device became unreachable while the Hub is running (not just at startup/reboot). Ids as in
+        ``controller_did_connect_device``."""
+        ...
+
+    async def controller_did_receive_events(self, controller: AnyController, events: Iterable[Event]):
         """Report device-domain events (e.g. DeviceParameterChange) observed by the controller."""
         ...
 
-    async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError):
+    async def controller_did_encounter_error(self, controller: AnyController, error: IntegrationError):
         """A user-facing problem the integration hit — surfaced to the user, not the developer.
 
         Use this for things the user should know about or can act on (a wrong setup, an unplugged
@@ -68,11 +84,11 @@ class ControllerOutput(Protocol):
         """
         ...
 
-    async def controller_did_resolve_error(self, controller: AbstractController, error_id: str):
+    async def controller_did_resolve_error(self, controller: AnyController, error_id: str):
         """The problem reported with ``error_id`` is gone. Resolving an id that isn't active does nothing."""
         ...
 
-    async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):
+    async def controller_did_emit_notification(self, controller: AnyController, notification: Notification):
         """Surface a general user-facing notification — a floating tile in the app. Unlike
         ``controller_did_encounter_error`` (specifically for failures/health), this is for anything
         informational or advisory: a firmware update is available, a device needs a physical action,
@@ -81,7 +97,7 @@ class ControllerOutput(Protocol):
         """
         ...
 
-    async def controller_did_change_provided(self, controller: AbstractController):
+    async def controller_did_change_provided(self, controller: AnyController):
         """What it ``provides`` changed on its own, e.g. ESPHome's Bluetooth proxies as nodes come and go: the
         runtime reads it again. The runtime's output takes this one itself: the Hub's needn't implement it."""
         return
@@ -90,38 +106,45 @@ class ControllerOutput(Protocol):
 class LoggingControllerOutput(ControllerOutput):
     """A ``ControllerOutput`` that logs every callback: the Hub's stand-in for dev runs and library mode."""
 
-    async def controller_did_receive_discovery(self, controller: AbstractController, discovery: Discovery):
+    async def controller_did_receive_discovery(self, controller: AnyController, discovery: Discovery):
         logger.info(f"discovered {discovery.device_name} ({discovery.transport}) id={discovery.id}")
 
-    async def controller_did_update_discovery(self, controller: AbstractController, discovery: Discovery):
+    async def controller_did_update_discovery(self, controller: AnyController, discovery: Discovery):
         logger.info(f"updated discovery {discovery.id}")
 
-    async def controller_did_lose_discovery(self, controller: AbstractController, discovery_id: UUID):
+    async def controller_did_lose_discovery(self, controller: AnyController, discovery_id: UUID):
         logger.info(f"lost discovery {discovery_id}")
 
-    async def controller_did_connect_device(self, controller: AbstractController, device_id: UUID):
-        logger.info(f"connected device {device_id}")
+    async def controller_did_connect_device(
+        self, controller: AnyController, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        logger.info(f"connected device {physical_id or device_id}")
 
-    async def controller_did_lose_device(self, controller: AbstractController, device_id: UUID):
-        logger.info(f"lost device {device_id}")
+    async def controller_did_lose_device(
+        self, controller: AnyController, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        logger.info(f"lost device {physical_id or device_id}")
 
-    async def controller_did_receive_events(self, controller: AbstractController, events: Iterable[Event]):
+    async def controller_did_receive_events(self, controller: AnyController, events: Iterable[Event]):
         for event in events:
             logger.info(f"event {type(event).__name__}: {event!r}")
 
-    async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError):
+    async def controller_did_encounter_error(self, controller: AnyController, error: IntegrationError):
         stopped = "" if error.is_still_running else ", it can't go on"
         logger.error(f"integration error {error.id}{stopped}: {error.message}")
 
-    async def controller_did_resolve_error(self, controller: AbstractController, error_id: str):
+    async def controller_did_resolve_error(self, controller: AnyController, error_id: str):
         logger.info(f"integration error {error_id} resolved")
 
-    async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):
+    async def controller_did_emit_notification(self, controller: AnyController, notification: Notification):
         logger.info(f"notification [{notification.type.value}/{notification.priority.value}]: {notification.message}")
 
-    async def controller_did_change_provided(self, controller: AbstractController):
+    async def controller_did_change_provided(self, controller: AnyController):
         logger.info(f"{controller.key} changed what it provides")
 
 
 # Last, once the names the controller takes from here exist: the annotations above then evaluate
 from majordom_integration_sdk.controller.abstract_controller import AbstractController  # noqa: E402
+
+# any integration: its type parameters are invariant, so the bare generic would accept only the defaults
+type AnyController = AbstractController[Any, Any, Any, Any]

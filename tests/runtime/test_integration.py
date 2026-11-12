@@ -54,8 +54,8 @@ class EchoController(AbstractController[Device, Parameter, "EchoController.Setti
     async def settings_did_change(self, before) -> bool:
         return True  # it tells the server over its connection
 
-    async def pair_device(self, discovery, credentials):
-        pass
+    async def pair_device(self, discovery, draft, credentials):
+        return draft
 
     async def unpair(self, device):
         pass
@@ -155,7 +155,7 @@ async def test_every_peripheral_shares_one_output_and_a_controllers_reports_reac
     runtime = await run(tmp_path, HostNetwork(), FakeCompose(), server, echo, controller_output=hub)
     assert echo.output is server.output and not hasattr(echo, "runtime")
 
-    await echo.output.controller_did_lose_device(echo, DEVICE)
+    await echo.output.controller_did_lose_device(echo, physical_id=DEVICE)
     await echo.output.controller_did_encounter_error(echo, IntegrationError("server-slow", "The server is slow."))
     assert hub.lost_devices == [DEVICE] and list(hub.errors) == ["server-slow"]
     assert runtime.status(echo).state == PeripheralState.RUNNING  # it goes on

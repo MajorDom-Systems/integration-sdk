@@ -13,7 +13,7 @@ from majordom_integration_sdk.schemas.event import Event
 from majordom_integration_sdk.schemas.notification import Notification
 
 if TYPE_CHECKING:
-    from majordom_integration_sdk.controller.abstract_controller import AbstractController
+    from majordom_integration_sdk.controller.output import AnyController
     from majordom_integration_sdk.runtime.runtime import Runtime
 
 
@@ -41,34 +41,44 @@ class HostOutput(ControllerOutput):
 
     # ControllerOutput
 
-    async def controller_did_receive_discovery(self, controller: AbstractController, discovery: Discovery):
+    async def controller_did_receive_discovery(self, controller: AnyController, discovery: Discovery):
         await self.controller_output.controller_did_receive_discovery(controller, discovery)
 
-    async def controller_did_update_discovery(self, controller: AbstractController, discovery: Discovery):
+    async def controller_did_update_discovery(self, controller: AnyController, discovery: Discovery):
         await self.controller_output.controller_did_update_discovery(controller, discovery)
 
-    async def controller_did_lose_discovery(self, controller: AbstractController, discovery_id: UUID):
+    async def controller_did_lose_discovery(self, controller: AnyController, discovery_id: UUID):
         await self.controller_output.controller_did_lose_discovery(controller, discovery_id)
 
-    async def controller_did_connect_device(self, controller: AbstractController, device_id: UUID):
-        await self.controller_output.controller_did_connect_device(controller, device_id)
+    async def controller_did_connect_device(
+        self, controller: AnyController, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        if physical_id:
+            await self.controller_output.controller_did_connect_device(controller, physical_id=physical_id)
+        elif device_id:
+            await self.controller_output.controller_did_connect_device(controller, device_id=device_id)
 
-    async def controller_did_lose_device(self, controller: AbstractController, device_id: UUID):
-        await self.controller_output.controller_did_lose_device(controller, device_id)
+    async def controller_did_lose_device(
+        self, controller: AnyController, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        if physical_id:
+            await self.controller_output.controller_did_lose_device(controller, physical_id=physical_id)
+        elif device_id:
+            await self.controller_output.controller_did_lose_device(controller, device_id=device_id)
 
-    async def controller_did_receive_events(self, controller: AbstractController, events: Iterable[Event]):
+    async def controller_did_receive_events(self, controller: AnyController, events: Iterable[Event]):
         await self.controller_output.controller_did_receive_events(controller, events)
 
-    async def controller_did_encounter_error(self, controller: AbstractController, error: IntegrationError):
+    async def controller_did_encounter_error(self, controller: AnyController, error: IntegrationError):
         await self.controller_output.controller_did_encounter_error(controller, error)
         if not error.is_still_running:
             await self.runtime.peripheral_did_fail(controller, error.message)
 
-    async def controller_did_resolve_error(self, controller: AbstractController, error_id: str):
+    async def controller_did_resolve_error(self, controller: AnyController, error_id: str):
         await self.controller_output.controller_did_resolve_error(controller, error_id)
 
-    async def controller_did_emit_notification(self, controller: AbstractController, notification: Notification):
+    async def controller_did_emit_notification(self, controller: AnyController, notification: Notification):
         await self.controller_output.controller_did_emit_notification(controller, notification)
 
-    async def controller_did_change_provided(self, controller: AbstractController):
+    async def controller_did_change_provided(self, controller: AnyController):
         await self.runtime.peripheral_did_change_provided(controller)

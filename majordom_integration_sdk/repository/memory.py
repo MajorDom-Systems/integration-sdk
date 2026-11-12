@@ -35,23 +35,24 @@ class DeviceRepositoryMemory:
     def _in_scope(self, record: Record) -> bool:
         return self.integration is None or record.get("integration") == self.integration
 
-    def _owned(self, device_id: UUID) -> Record | None:
-        record = self._store.get(device_id)
-        return record if record is not None and self._in_scope(record) else None
+    def _owned(self, physical_id: UUID) -> Record | None:
+        return next(
+            (r for r in self._store.values() if r.get("physical_id") == str(physical_id) and self._in_scope(r)), None
+        )
 
     async def get_all[T: Device](self, as_: type[T] = Device) -> list[T]:
         return [as_.model_validate(r) for r in self._store.values() if self._in_scope(r)]
 
-    async def get[T: Device](self, device_id: UUID, as_: type[T] = Device) -> T | None:
-        record = self._owned(device_id)
+    async def get[T: Device](self, *, physical_id: UUID, as_: type[T] = Device) -> T | None:
+        record = self._owned(physical_id)
         return as_.model_validate(record) if record else None
 
-    async def state[T: DeviceState](self, device_id: UUID, as_: type[T] = DeviceState) -> T | None:
-        record = self._owned(device_id)
+    async def state[T: DeviceState](self, *, physical_id: UUID, as_: type[T] = DeviceState) -> T | None:
+        record = self._owned(physical_id)
         return as_.model_validate(record) if record else None
 
-    async def get_parameter_state(self, device_id: UUID, parameter_id: UUID) -> ParameterState | None:
-        record = self._owned(device_id)
+    async def get_parameter_state(self, *, physical_id: UUID, parameter_id: UUID) -> ParameterState | None:
+        record = self._owned(physical_id)
         if not record:
             return None
         return next(
@@ -59,22 +60,27 @@ class DeviceRepositoryMemory:
             None,
         )
 
-    async def save(self, device: Device | DeviceState, previous_id: UUID | None = None):
+    async def save(self, device: Device | DeviceState):
         if self.integration is not None and device.integration != self.integration:
             raise PermissionError(f"Device {device.id} is outside integration scope {self.integration!r}")
-        base = self._store.pop(previous_id, None) if previous_id is not None and previous_id != device.id else None
-        self._store[device.id] = merge(base if base is not None else self._store.get(device.id), device)
+        holder = next(
+            (i for i, r in self._store.items() if r.get("physical_id") == str(device.physical_id) and i != device.id),
+            None,
+        )
+        if holder is not None:
+            raise ValueError(f"Physical id {device.physical_id} is held by device {holder}")
+        self._store[device.id] = merge(self._store.get(device.id), device)
 
-    async def save_parameter_state(self, device_id: UUID, parameter_state: ParameterState):
-        record = self._owned(device_id)
+    async def save_parameter_state(self, *, physical_id: UUID, parameter_state: ParameterState):
+        record = self._owned(physical_id)
         if not record:
-            raise KeyError(f"Unknown or out-of-scope device {device_id}")
+            raise KeyError(f"Unknown or out-of-scope device {physical_id}")
         updated = dump(parameter_state)
         record["parameters"] = [
             updated if p["id"] == str(parameter_state.id) else p for p in record.get("parameters", [])
         ]
 
-    # Hub-internal (not on DeviceRepositoryProtocol); still scope-checked.
+    # Hub-internal (not on DeviceRepositoryProtocol), by the Hub's ids; still scope-checked.
 
     async def update_parameter_visibility(self, parameter_id: UUID, visibility: ParameterVisibility):
         for record in self._store.values():
@@ -86,8 +92,9 @@ class DeviceRepositoryMemory:
                     return
 
     async def delete(self, device_id: UUID):
-        if self._owned(device_id):
-            self._store.pop(device_id, None)
+        record = self._store.get(device_id)
+        if record is not None and self._in_scope(record):
+            del self._store[device_id]
 
 
 __all__ = ["DeviceRepositoryMemory"]

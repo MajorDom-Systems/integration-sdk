@@ -2,6 +2,7 @@
 
 import re
 from typing import ClassVar
+from uuid import UUID
 
 _TYPE = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*")
 
@@ -23,3 +24,30 @@ class MissingCredentialsError(LookupError):
             raise ValueError(f"Credentials type must be lower_snake_case, got {type!r}")
         self.type = type
         super().__init__(f"Missing credentials: {type}")
+
+
+class DeviceIdTakenError(Exception):
+    """Another device record already holds ``physical_id``, the one a pairing would give its device.
+
+    Raised by `AbstractController.check_device_id` before anything irreversible is done to the device; the Hub refuses
+    the pairing with it and does not roll it back (nothing ran). It carries the record found: its Hub ``device_id``,
+    ``name`` and whether it ``is_paired`` (an unpaired one is a record kept after its device was removed), so the app
+    can offer to pair onto that record instead.
+    """
+
+    def __init__(self, physical_id: UUID, device_id: UUID, name: str, is_paired: bool):
+        self.physical_id = physical_id
+        self.device_id = device_id
+        self.name = name
+        self.is_paired = is_paired
+        state = "paired" if is_paired else "unpaired"
+        super().__init__(f"Physical id {physical_id} is taken by {name!r} ({device_id}, {state})")
+
+
+class DeviceUnreachableError(Exception):
+    """``unpair`` could not reach the device to undo its pairing, e.g. it is off or out of range.
+
+    Raised after the controller forgot its own state of the device, so only the device keeps the pairing: the Hub
+    answers with it (``device_unreachable``), and the app offers to forget the device instead, which then needs a
+    manual factory reset to pair again.
+    """
