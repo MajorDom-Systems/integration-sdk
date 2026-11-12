@@ -29,9 +29,9 @@ cli = ["typer-shell (>=0.2)", "rich (>=13)"]
 # The runtime (`majordom_integration_sdk.runtime`): radios, firmware, services. The Hub and the dev runner install it.
 runtime = ["pyserial (>=3.5)"]
 # The Bluetooth router's adapters (bleak; dbus-fast pairs through BlueZ on Linux).
-ble = ["bleak (>=0.22)", "dbus-fast (>=2.0) ; sys_platform == 'linux'"]
+ble = ["bleak (>=3.1.0)", "dbus-fast (>=5.2.0) ; sys_platform == 'linux'"]
 # DNS-SD over mDNS (zeroconf).
-discovery = ["zeroconf (>=0.153.0)"]
+discovery = ["zeroconf (>=0.154.0)"]
 
 [project.urls]
 Homepage = "https://majordom.io"
