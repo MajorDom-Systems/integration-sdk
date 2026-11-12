@@ -42,3 +42,12 @@ class DeviceIdTakenError(Exception):
         self.is_paired = is_paired
         state = "paired" if is_paired else "unpaired"
         super().__init__(f"Physical id {physical_id} is taken by {name!r} ({device_id}, {state})")
+
+
+class DeviceUnreachableError(Exception):
+    """``unpair`` could not reach the device to undo its pairing, e.g. it is off or out of range.
+
+    Raised after the controller forgot its own state of the device, so only the device keeps the pairing: the Hub
+    answers with it (``device_unreachable``), and the app offers to forget the device instead, which then needs a
+    manual factory reset to pair again.
+    """

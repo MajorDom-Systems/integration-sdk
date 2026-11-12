@@ -21,7 +21,7 @@ The names an integration author reaches for most are re-exported here for conven
 from importlib.metadata import version
 
 from majordom_integration_sdk.controller import AbstractController, ControllerOutput, IntegrationError
-from majordom_integration_sdk.errors import DeviceIdTakenError, MissingCredentialsError
+from majordom_integration_sdk.errors import DeviceIdTakenError, DeviceUnreachableError, MissingCredentialsError
 from majordom_integration_sdk.peripherals import (
     STABLE_RUN,
     ComposeService,
@@ -66,6 +66,7 @@ __all__ = [
     "DeviceParameterChange",
     "MissingCredentialsError",
     "DeviceIdTakenError",
+    "DeviceUnreachableError",
     "Need",
     "Endpoint",
     "Peripheral",

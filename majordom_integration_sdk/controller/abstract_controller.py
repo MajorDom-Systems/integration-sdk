@@ -246,6 +246,9 @@ class AbstractController[
         set on the device, a pairing the accessory holds); what stays harmless (a node left on a fabric or network,
         offered again as a discovery) needs no undo. Tolerate any partial state, never wait for the user, and go as
         far as you can: it is best effort, within the Hub's timeout.
+
+        Raise `DeviceUnreachableError` when the device can't be reached to undo its pairing, after forgetting your own
+        state of it.
         """
 
     @abstractmethod
