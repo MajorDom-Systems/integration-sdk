@@ -233,8 +233,10 @@ class AbstractController[
         On any failure but a refused id, and when the Hub fails to save what you return, it calls ``unpair(draft)``
         with the draft as far as you filled it, to roll back.
 
-        Retrying must work: after a failed or rolled-back attempt, tolerate the state it left behind and overwrite it
-        instead of failing.
+        Idempotent, like ``fetch``: called again after a failed or rolled-back attempt, bring the device to a
+        known-good paired state from whatever the last one left. Check each step and redo only what is missing or
+        stale (a key already set is checked, not set again), so a device found already paired is confirmed and
+        returned, not refused.
 
         Raise when it can't pair (`MissingCredentialsError` before touching the device when credentials are lacking).
         """
