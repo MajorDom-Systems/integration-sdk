@@ -25,7 +25,7 @@ import functools
 import tempfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -56,8 +56,8 @@ class RecordingControllerOutput(ControllerOutput):
         self.received_discoveries: list[Discovery] = []
         self.updated_discoveries: list[Discovery] = []
         self.lost_discoveries: list[UUID] = []
-        self.connected_devices: list[UUID] = []  # physical ids
-        self.lost_devices: list[UUID] = []  # physical ids
+        self.connected_devices: list[UUID] = []  # the ids passed, physical ones from integrations
+        self.lost_devices: list[UUID] = []  # the ids passed, physical ones from integrations
         self.events: list[Event] = []
         self.errors: dict[str, IntegrationError] = {}  # the active ones, by id
         self.error_log: list[IntegrationError | str] = []  # every report, and the id of every resolve
@@ -73,11 +73,15 @@ class RecordingControllerOutput(ControllerOutput):
     async def controller_did_lose_discovery(self, controller: _Controller, discovery_id: UUID):
         self.lost_discoveries.append(discovery_id)
 
-    async def controller_did_connect_device(self, controller: _Controller, physical_id: UUID):
-        self.connected_devices.append(physical_id)
+    async def controller_did_connect_device(
+        self, controller: _Controller, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        self.connected_devices.append(cast(UUID, physical_id or device_id))
 
-    async def controller_did_lose_device(self, controller: _Controller, physical_id: UUID):
-        self.lost_devices.append(physical_id)
+    async def controller_did_lose_device(
+        self, controller: _Controller, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        self.lost_devices.append(cast(UUID, physical_id or device_id))
 
     async def controller_did_receive_events(self, controller: _Controller, events: Iterable[Event]):
         self.events.extend(events)

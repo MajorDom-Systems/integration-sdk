@@ -45,7 +45,9 @@ from . import Integration, _runner, build_platform
 if TYPE_CHECKING:
     from majordom_integration_sdk.controller.output import AnyController
 
+    from ..repository.protocol import DeviceRepositoryProtocol
     from ..runtime import Pinned, Runtime
+    from ..schemas.device import Device
 
 logger = logging.getLogger("majordom_integration_sdk.dev")
 
@@ -141,7 +143,9 @@ class _CliSession:
             await repo.save(device)
         # as the Hub does once it saved the device
         if device.available:
-            await self._controller.output.controller_did_connect_device(self._controller, device.physical_id)
+            await self._controller.output.controller_did_connect_device(
+                self._controller, physical_id=device.physical_id
+            )
         await self._controller.fetch(device)
         return device.physical_id
 
@@ -257,18 +261,18 @@ class _CliControllerOutput(ControllerOutput):
     async def controller_did_lose_discovery(self, controller, discovery_id):
         _print(f"[discovery lost] {discovery_id}")
 
-    async def controller_did_connect_device(self, controller, physical_id):
-        _print(f"[connected] {physical_id}")
+    async def controller_did_connect_device(self, controller, *, physical_id=None, device_id=None):
+        _print(f"[connected] {physical_id or device_id}")
         async with controller.platform.device_repository(controller) as repo:
-            if device := await repo.get(physical_id=physical_id):
+            if device := await _device(repo, physical_id, device_id):
                 device.last_seen = datetime.now()
                 device.available = True
                 await repo.save(device)
 
-    async def controller_did_lose_device(self, controller, physical_id):
-        _print(f"[lost] {physical_id}")
+    async def controller_did_lose_device(self, controller, *, physical_id=None, device_id=None):
+        _print(f"[lost] {physical_id or device_id}")
         async with controller.platform.device_repository(controller) as repo:
-            if device := await repo.get(physical_id=physical_id):
+            if device := await _device(repo, physical_id, device_id):
                 device.available = False
                 device.last_error = f"Device is no longer connected to the {controller.name} network"
                 await repo.save(device)
@@ -301,6 +305,12 @@ class _CliControllerOutput(ControllerOutput):
 
 
 # --- the REPL ----------------------------------------------------------------------------------
+
+
+async def _device(repo: DeviceRepositoryProtocol, physical_id: UUID | None, device_id: UUID | None) -> Device | None:
+    if physical_id:
+        return await repo.get(physical_id=physical_id)
+    return next((device for device in await repo.get_all() if device.id == device_id), None)
 
 
 async def run_cli(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, overload
 from uuid import UUID
 
 from majordom_integration_sdk.schemas.device import Discovery
@@ -38,12 +38,26 @@ class ControllerOutput(Protocol):
     async def controller_did_update_discovery(self, controller: AnyController, discovery: Discovery): ...
     async def controller_did_lose_discovery(self, controller: AnyController, discovery_id: UUID): ...
 
-    # Positional-only ids: a relay passing these on may name the device by another id of its own
+    @overload
+    async def controller_did_connect_device(self, controller: AnyController, *, physical_id: UUID): ...
+    @overload
+    async def controller_did_connect_device(self, controller: AnyController, *, device_id: UUID): ...
+    async def controller_did_connect_device(
+        self, controller: AnyController, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        """A paired device connected. Integrations pass its ``physical_id``; its ``device_id`` is accepted too, e.g.
+        from a relay passing it on under the Hub's id."""
+        ...
 
-    async def controller_did_connect_device(self, controller: AnyController, physical_id: UUID, /): ...
-
-    async def controller_did_lose_device(self, controller: AnyController, physical_id: UUID, /):
-        """Paired device became unreachable while the Hub is running (not just at startup/reboot)."""
+    @overload
+    async def controller_did_lose_device(self, controller: AnyController, *, physical_id: UUID): ...
+    @overload
+    async def controller_did_lose_device(self, controller: AnyController, *, device_id: UUID): ...
+    async def controller_did_lose_device(
+        self, controller: AnyController, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        """Paired device became unreachable while the Hub is running (not just at startup/reboot). Ids as in
+        ``controller_did_connect_device``."""
         ...
 
     async def controller_did_receive_events(self, controller: AnyController, events: Iterable[Event]):
@@ -101,11 +115,15 @@ class LoggingControllerOutput(ControllerOutput):
     async def controller_did_lose_discovery(self, controller: AnyController, discovery_id: UUID):
         logger.info(f"lost discovery {discovery_id}")
 
-    async def controller_did_connect_device(self, controller: AnyController, physical_id: UUID):
-        logger.info(f"connected device {physical_id}")
+    async def controller_did_connect_device(
+        self, controller: AnyController, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        logger.info(f"connected device {physical_id or device_id}")
 
-    async def controller_did_lose_device(self, controller: AnyController, physical_id: UUID):
-        logger.info(f"lost device {physical_id}")
+    async def controller_did_lose_device(
+        self, controller: AnyController, *, physical_id: UUID | None = None, device_id: UUID | None = None
+    ):
+        logger.info(f"lost device {physical_id or device_id}")
 
     async def controller_did_receive_events(self, controller: AnyController, events: Iterable[Event]):
         for event in events:
