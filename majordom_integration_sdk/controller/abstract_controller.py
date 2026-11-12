@@ -233,6 +233,9 @@ class AbstractController[
         On any failure but a refused id, and when the Hub fails to save what you return, it calls ``unpair(draft)``
         with the draft as far as you filled it, to roll back.
 
+        Retrying must work: after a failed or rolled-back attempt, tolerate the state it left behind and overwrite it
+        instead of failing.
+
         Raise when it can't pair (`MissingCredentialsError` before touching the device when credentials are lacking).
         """
 
@@ -246,6 +249,8 @@ class AbstractController[
         set on the device, a pairing the accessory holds); what stays harmless (a node left on a fabric or network,
         offered again as a discovery) needs no undo. Tolerate any partial state, never wait for the user, and go as
         far as you can: it is best effort, within the Hub's timeout.
+
+        Calling it again must work: on a device already unpaired, or never fully paired, it does nothing more.
 
         Raise `DeviceUnreachableError` when the device can't be reached to undo its pairing, after forgetting your own
         state of it.
