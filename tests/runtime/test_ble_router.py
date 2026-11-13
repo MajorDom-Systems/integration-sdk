@@ -760,3 +760,57 @@ def test_a_need_is_made_optional_by_calling_it():
     optional = BLE_ROUTER(is_required=False)
     assert (optional.family, optional.dialects, optional.is_required) == ("ble", ["router"], False)
     assert BLE_ROUTER.is_required
+
+
+async def test_a_proxy_without_a_free_connection_slot_is_skipped_until_one_frees():
+    full = FakeBLESource("full", connection=Mock(spec=BLEConnection), free_slots=0)
+    ble = BLEService(sources=[full])
+    await ble.start()
+    full.advertise("AA")
+    await settle()
+
+    with pytest.raises(BLEBusyError):
+        await ble.open_connection("AA", busy_timeout=0.5)
+    assert full.connected == []
+    full.free_slots = 1
+    await ble.open_connection("AA")
+    assert full.connected == ["AA"]
+    await ble.stop()
+
+
+async def test_a_device_heard_only_by_a_radio_leased_for_another_stays_until_the_lease_ends(radios):
+    ble, near, far = radios
+    listener = Listener()
+    ble.register(listener, {MATTER})
+    near.advertise("AA", service_uuids=[str(MATTER)])
+    near.advertise("BB")
+    await settle()
+    ble._removal_grace_sec = 0
+
+    async with ble.exclusive("BB", owner="esphome"):  # near paused: it can't hear AA meanwhile
+        await ble.perform_scan()
+        assert listener.removed == []
+    await ble.perform_scan()
+    assert [i.device.address for i in listener.removed] == ["AA"]
+
+
+async def test_a_radio_that_never_hears_anything_is_restarted_less_and_less_often():
+    quiet = FakeBLESource("quiet")  # an RF-quiet place: nothing to hear, nothing wrong
+    ble = BLEService(sources=[quiet])
+    await ble.start()
+    ble._silence_sec = 0.05
+    restarts = 0
+    for _ in range(30):
+        await asyncio.sleep(0.01)
+        hearing = quiet.on_advertisement
+        await ble._revive_silent()
+        restarts += quiet.on_advertisement is not hearing
+    assert restarts == 2  # after 0.05 s, then 0.1 s more; the next waits 0.2 s
+
+    quiet.advertise("AA")  # heard: back to the short interval
+    await asyncio.sleep(0.06)
+    hearing = quiet.on_advertisement
+    await ble._revive_silent()
+    assert quiet.on_advertisement is not hearing
+    await ble.stop()
+
