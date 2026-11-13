@@ -2,8 +2,8 @@
 they are written to a device. An integration picks one per device and opens it on the leased connection::
 
     async with ble.exclusive(address, owner=OWNER, is_pairing_needed=channel.is_pairing_needed) as lease:
-        async with channel.secure(await lease.connect()) as connection:
-            await connection.write(rpc, credentials)
+        async with lease.connect() as connection, channel.secure(connection) as secured:
+            await secured.write(rpc, credentials)
 
 `LESecureConnections` encrypts the link by pairing. "Just Works" pairing, all a headless Hub can do, stops passive
 sniffing but not an active man in the middle during the pairing itself. A channel that

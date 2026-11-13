@@ -99,7 +99,7 @@ async def test_a_pairing_lease_fails_when_no_radio_hearing_the_device_can_pair(r
     adapter.is_pairable = False
 
     with pytest.raises(BLEPairingError, match="can pair"):
-        async with ble.exclusive("AA", owner="test", is_pairing_needed=True, timeout=0.1):
+        async with ble.exclusive("AA", owner="test", is_pairing_needed=True, busy_timeout=0.1):
             pytest.fail("leased a radio that can't pair")
 
 

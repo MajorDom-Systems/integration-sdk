@@ -5,8 +5,9 @@ Bluetooth, which the router holds. Its sources are the radios the runtime binds 
 ``ble/silabs-cpc-hci``, ``ble/esphome-proxy`` nodes an integration brings along): `BLESource`s.
 
 Listeners register `BLEMatcher`s and hear about matching devices whichever source saw them.
-`BLERouter.connect` opens a GATT connection through the source that hears the device best;
-`BLERouter.exclusive` leases that one source to a device for as long as pairing it takes.
+`BLERouter.connect` opens a GATT connection through the source that hears the device best, closed when its block
+ends; `BLERouter.exclusive` leases that one source to a device for as long as pairing it takes. Whatever waits takes a
+``busy_timeout``, and connections and leases end after ``max_duration``.
 Credentials go to a device only over a link a `SecureChannel` (`ble_security`) has secured first.
 
 bleak's advertisement types describe what is heard; this module imports them for type checking only.
@@ -14,8 +15,9 @@ bleak's advertisement types describe what is heard; this module imports them for
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
-from collections.abc import Callable, Iterable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from uuid import UUID
@@ -27,6 +29,10 @@ if TYPE_CHECKING:
     from bleak.backends.scanner import AdvertisementData
 
 type OnAdvertisement = Callable[[BLEDevice, AdvertisementData], None]
+
+CONNECT_BUSY_TIMEOUT = 10.0  # seconds to reach a device, a radio busy with another lease included
+LEASE_BUSY_TIMEOUT = 30.0  # seconds to wait for a free radio to lease
+LEASE_MAX_DURATION = 120.0  # seconds a lease holds its radio before it is taken back
 
 
 @dataclass(frozen=True)
@@ -156,8 +162,27 @@ class BLELease:
     owner: str
     _source: BLESource = field(repr=False)
 
-    async def connect(self, on_disconnect: Callable[[], None] = lambda: None) -> BLEConnection:
-        return await self._source.connect(self.address, on_disconnect)
+    def connect(
+        self,
+        on_disconnect: Callable[[], None] = lambda: None,
+        *,
+        busy_timeout: float = CONNECT_BUSY_TIMEOUT,
+        max_duration: float | None = None,
+    ) -> contextlib.AbstractAsyncContextManager[BLEConnection]:
+        """A GATT connection through the leased source, closed when the block ends."""
+        return connected(lambda: self._source.connect(self.address, on_disconnect), busy_timeout, max_duration)
+
+    async def open_connection(
+        self,
+        on_disconnect: Callable[[], None] = lambda: None,
+        *,
+        busy_timeout: float = CONNECT_BUSY_TIMEOUT,
+        max_duration: float | None = None,
+    ) -> BLEConnection:
+        """Like `connect`, without the block: disconnect it yourself."""
+        return await open_connection(
+            lambda: self._source.connect(self.address, on_disconnect), busy_timeout, max_duration
+        )
 
 
 class BLERouter(Protocol):
@@ -170,17 +195,46 @@ class BLERouter(Protocol):
         before it registered are new to it. Returns a cancel function — call it on stop to deregister."""
         ...
 
-    async def connect(self, address: str, on_disconnect: Callable[[], None] = lambda: None) -> BLEConnection:
-        """Opens a GATT connection to ``address`` through the source hearing it best, falling back to the others;
-        leased sources are skipped. ``on_disconnect`` is called when the connection drops."""
+    def connect(
+        self,
+        address: str,
+        on_disconnect: Callable[[], None] = lambda: None,
+        *,
+        busy_timeout: float = CONNECT_BUSY_TIMEOUT,
+        max_duration: float | None = None,
+    ) -> contextlib.AbstractAsyncContextManager[BLEConnection]:
+        """A GATT connection to ``address`` through the source hearing it best, falling back to the others, closed
+        when the block ends. Leased sources are waited for up to ``busy_timeout`` seconds, then `BLEBusyError`;
+        `ConnectionError` when no source reaches the device in that time. With ``max_duration``, it is closed after
+        that many seconds. ``on_disconnect`` is called when the connection drops."""
+        ...
+
+    async def open_connection(
+        self,
+        address: str,
+        on_disconnect: Callable[[], None] = lambda: None,
+        *,
+        busy_timeout: float = CONNECT_BUSY_TIMEOUT,
+        max_duration: float | None = None,
+    ) -> BLEConnection:
+        """Like `connect`, without the block: disconnect it yourself. Only when the connection must outlive a
+        block, e.g. a subscription kept for the integration's lifetime."""
         ...
 
     def exclusive(
-        self, address: str, *, owner: str, timeout: float = 30, wait: float = 1, is_pairing_needed: bool = False
+        self,
+        address: str,
+        *,
+        owner: str,
+        busy_timeout: float = LEASE_BUSY_TIMEOUT,
+        max_duration: float = LEASE_MAX_DURATION,
+        wait: float = 1,
+        is_pairing_needed: bool = False,
     ) -> contextlib.AbstractAsyncContextManager[BLELease]:
         """Leases the source hearing ``address`` best to ``owner`` (e.g. while pairing it): that source pauses
         scanning and others' connects avoid it; the rest keep going. A leased source is waited for ``wait`` seconds
-        before the next best is tried, round after round, until ``timeout`` raises `BLEBusyError`. With
+        before the next best is tried, round after round, until ``busy_timeout`` raises `BLEBusyError`. The lease
+        ends after ``max_duration`` seconds: the block gets `TimeoutError`, and the radio goes back. With
         ``is_pairing_needed``, only sources that can pair are leased (`BLEPairingError` when none hears it)."""
         ...
 
@@ -194,4 +248,48 @@ class BLERouter(Protocol):
         ...
 
 
-BLE_ROUTER = Need[BLERouter]("ble", ["router"])  # optional: dataclasses.replace(it, is_required=False)
+BLE_ROUTER = Need[BLERouter]("ble", ["router"])  # optional: BLE_ROUTER(is_required=False)
+
+
+async def open_connection(
+    connect: Callable[[], Awaitable[BLEConnection]], busy_timeout: float, max_duration: float | None
+) -> BLEConnection:
+    """Opens a connection within ``busy_timeout`` seconds and, with ``max_duration``, closes it after that many."""
+    try:
+        async with asyncio.timeout(busy_timeout):
+            connection = await connect()
+    except TimeoutError as error:
+        raise ConnectionError(f"Couldn't connect within {busy_timeout} s") from error
+    if max_duration is not None:
+        _spawn(_disconnect_after(connection, max_duration))
+    return connection
+
+
+@contextlib.asynccontextmanager
+async def connected(
+    connect: Callable[[], Awaitable[BLEConnection]], busy_timeout: float, max_duration: float | None
+) -> AsyncGenerator[BLEConnection]:
+    """`open_connection` as a block that disconnects when it ends; past ``max_duration`` the block gets
+    `TimeoutError`."""
+    connection = await open_connection(connect, busy_timeout, None)
+    try:
+        async with asyncio.timeout(max_duration):
+            yield connection
+    finally:
+        with contextlib.suppress(Exception):  # the device may be gone already
+            await asyncio.shield(connection.disconnect())
+
+
+_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coroutine: Awaitable[None]):
+    task = asyncio.ensure_future(coroutine)
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+
+
+async def _disconnect_after(connection: BLEConnection, seconds: float):
+    await asyncio.sleep(seconds)
+    with contextlib.suppress(Exception):  # disconnected meanwhile
+        await connection.disconnect()

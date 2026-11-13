@@ -132,12 +132,12 @@ async def test_connects_through_the_stronger_radio_and_falls_back(radios):
     near.advertise("AA", rssi=-50)
     await settle()
 
-    assert await ble.connect("AA") is near.connection
+    assert await ble.open_connection("AA") is near.connection
     near.connection = None
-    assert await ble.connect("AA") is far.connection
+    assert await ble.open_connection("AA") is far.connection
     far.connection = None
     with pytest.raises(ConnectionError, match="near.*far"):
-        await ble.connect("AA")
+        await ble.open_connection("AA")
 
 
 async def test_a_lease_takes_the_radio_hearing_the_device_best(radios):
@@ -148,7 +148,7 @@ async def test_a_lease_takes_the_radio_hearing_the_device_best(radios):
 
     async with ble.exclusive("AA", owner="matter") as lease:
         assert lease.source == "near"
-        assert await lease.connect() is near.connection
+        assert await lease.open_connection() is near.connection
         assert (near.connected, far.connected) == (["AA"], [])
 
 
@@ -252,10 +252,10 @@ async def test_a_connect_skips_leased_radios_and_fails_when_all_are(radios):
     await settle()
 
     async with ble.exclusive("AA", owner="matter"):
-        assert await ble.connect("AA") is far.connection
+        assert await ble.open_connection("AA") is far.connection
         async with ble.exclusive("AA", owner="improv", wait=0):
             with pytest.raises(BLEBusyError):
-                await ble.connect("AA")
+                await ble.open_connection("AA", busy_timeout=0.5)
 
 
 async def test_a_lease_cycles_through_busy_radios_until_it_gives_up(radios):
@@ -267,7 +267,7 @@ async def test_a_lease_cycles_through_busy_radios_until_it_gives_up(radios):
     async with ble.exclusive("AA", owner="matter"), ble.exclusive("AA", owner="matter", wait=0):
         started = asyncio.get_running_loop().time()
         with pytest.raises(BLEBusyError, match="hear AA are busy"):
-            async with ble.exclusive("AA", owner="improv", timeout=0.1, wait=0.02):
+            async with ble.exclusive("AA", owner="improv", busy_timeout=0.1, wait=0.02):
                 pass
         assert asyncio.get_running_loop().time() - started >= 0.1
 
@@ -569,7 +569,7 @@ async def test_a_rescan_waits_until_a_local_adapter_has_connected(scanners, monk
     monkeypatch.setattr(module, "BleakClient", Client)
     ble = BLEService(sources=[LocalAdapter("hci0")])
     await ble.start()
-    connection = asyncio.create_task(ble.connect("AA"))
+    connection = asyncio.create_task(ble.open_connection("AA"))
     await connecting.wait()
     burst = asyncio.create_task(ble.scan_actively(1))  # a pairing window opens meanwhile
     await settle()
@@ -613,7 +613,7 @@ async def test_a_proxy_without_a_free_connection_slot_is_tried_last():
     free.advertise("AA", rssi=-80)
     await settle()
 
-    await ble.connect("AA")
+    await ble.open_connection("AA")
     assert (full.connected, free.connected) == ([], ["AA"])
     await ble.stop()
 
@@ -701,3 +701,62 @@ async def test_a_new_device_without_a_name_gets_a_short_active_burst_bounded_in_
     await settle()
     assert radio.modes == [False, True, False]
     await ble.stop()
+
+
+async def test_a_connection_block_disconnects_when_it_ends(radios):
+    ble, near, _ = radios
+    near.advertise("AA")
+    await settle()
+
+    async with ble.connect("AA") as connection:
+        assert connection is near.connection
+        connection.disconnect.assert_not_awaited()
+    connection.disconnect.assert_awaited_once()
+
+
+async def test_a_connect_waits_for_a_leased_radio_to_come_back(radios):
+    ble, near, far = radios
+    near.advertise("AA")
+    await settle()
+    far.connection = None  # only near reaches it
+
+    async with ble.exclusive("AA", owner="matter"):
+        waiting = asyncio.create_task(ble.open_connection("AA", busy_timeout=2))
+        await asyncio.sleep(0.3)
+        assert not waiting.done()
+    assert await waiting is near.connection
+
+
+async def test_a_connection_ends_after_its_max_duration(radios):
+    ble, near, _ = radios
+    near.advertise("AA")
+    await settle()
+
+    with pytest.raises(TimeoutError):
+        async with ble.connect("AA", max_duration=0.05) as connection:
+            await asyncio.sleep(1)
+    connection.disconnect.assert_awaited_once()
+
+    opened = await ble.open_connection("AA", max_duration=0.05)
+    await asyncio.sleep(0.1)
+    opened.disconnect.assert_awaited()
+
+
+async def test_a_lease_gives_its_radio_back_after_its_max_duration(radios):
+    ble, near, _ = radios
+    near.advertise("AA")
+    await settle()
+
+    with pytest.raises(TimeoutError):
+        async with ble.exclusive("AA", owner="matter", max_duration=0.05):
+            await asyncio.sleep(1)
+    async with ble.exclusive("AA", owner="improv", busy_timeout=0.1) as lease:
+        assert lease.source == "near"
+
+
+def test_a_need_is_made_optional_by_calling_it():
+    from majordom_integration_sdk.capabilities import BLE_ROUTER
+
+    optional = BLE_ROUTER(is_required=False)
+    assert (optional.family, optional.dialects, optional.is_required) == ("ble", ["router"], False)
+    assert BLE_ROUTER.is_required

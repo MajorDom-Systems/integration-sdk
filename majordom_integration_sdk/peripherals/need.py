@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from majordom_integration_sdk.peripherals.endpoint import Endpoint
@@ -23,6 +23,10 @@ class Need[T = Any]:
     dialects: Sequence[str] = ()  # empty: any dialect of the family
     is_required: bool = True
     is_many: bool = False
+
+    def __call__(self, *, is_required: bool) -> Need[T]:
+        """The same need, optional or required: ``BLE_ROUTER(is_required=False)``."""
+        return replace(self, is_required=is_required)
 
     def accepts(self, endpoint: Endpoint) -> bool:
         return endpoint.family == self.family and (not self.dialects or endpoint.dialect in self.dialects)

@@ -44,4 +44,4 @@ class SSDP(Protocol):
         ...
 
 
-UPNP_SSDP = Need[SSDP]("upnp", ["ssdp"])  # optional: dataclasses.replace(it, is_required=False)
+UPNP_SSDP = Need[SSDP]("upnp", ["ssdp"])  # optional: UPNP_SSDP(is_required=False)
