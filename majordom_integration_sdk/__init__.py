@@ -20,7 +20,7 @@ The names an integration author reaches for most are re-exported here for conven
 
 from importlib.metadata import version
 
-from majordom_integration_sdk.controller import AbstractController, ControllerOutput, IntegrationError
+from majordom_integration_sdk.controller import AbstractController, ControllerOutput, ErrorAction, IntegrationError
 from majordom_integration_sdk.errors import DeviceIdTakenError, DeviceUnreachableError, MissingCredentialsError
 from majordom_integration_sdk.peripherals import (
     STABLE_RUN,
@@ -52,6 +52,7 @@ __version__ = version("majordom-integration-sdk")
 __all__ = [
     "AbstractController",
     "ControllerOutput",
+    "ErrorAction",
     "IntegrationError",
     "Platform",
     "DeviceRepositoryProtocol",

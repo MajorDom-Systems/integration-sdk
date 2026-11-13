@@ -10,7 +10,7 @@ import pytest
 from factories import make_device_state
 from pydantic import ValidationError
 
-from majordom_integration_sdk import DeviceIdTakenError, NoSettings, Platform
+from majordom_integration_sdk import DeviceIdTakenError, ErrorAction, IntegrationError, NoSettings, Platform
 from majordom_integration_sdk.controller import AbstractController, ControllerOutput, LoggingControllerOutput
 from majordom_integration_sdk.controller.output import AnyController
 from majordom_integration_sdk.repository import DeviceRepositoryMemory
@@ -257,3 +257,17 @@ async def test_library_mode_takes_every_id_for_free():
 
 def test_the_device_state_type_defaults_to_device_state():
     assert _MinimalController(build_test_platform()).device_state_type is DeviceState
+
+
+def test_an_error_carries_the_actions_the_user_can_resolve_it_with():
+    error = IntegrationError(
+        "channel", "Thread and Zigbee are on different channels", actions=(ErrorAction("move", "Move"),)
+    )
+    assert [action.id for action in error.actions] == ["move"]
+    assert IntegrationError("down", "It is down").actions == ()
+
+
+async def test_a_controller_without_actions_refuses_one(tmp_path):
+    controller = _MinimalController(build_test_platform(documents_root=tmp_path))
+    with pytest.raises(LookupError):
+        await controller.perform_error_action("channel", "move")
