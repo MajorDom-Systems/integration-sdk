@@ -92,7 +92,12 @@ async def pair_through_agent(adapter: str, address: str):
         bus.disconnect()
 
 
-_EVERY_ADVERTISER = [OrPattern(0, AdvertisementDataType.FLAGS, flags) for flags in (b"\x02", b"\x06", b"\x1a")]
+# Patterns match by prefix, so every flags value is one: non-connectable beacons carry other flags than 0x06 (0x04, or
+# none at all). Flagless ones are heard by their service data: BTHome, Xiaomi MiBeacon, SwitchBot.
+_FLAGLESS_SERVICES = [b"\xd2\xfc", b"\x95\xfe", b"\x3d\xfd"]
+_EVERY_ADVERTISER = [OrPattern(0, AdvertisementDataType.FLAGS, bytes([flags])) for flags in range(0x20)] + [
+    OrPattern(0, AdvertisementDataType.SERVICE_DATA_UUID16, uuid) for uuid in _FLAGLESS_SERVICES
+]
 
 
 class LocalAdapter:
@@ -108,7 +113,9 @@ class LocalAdapter:
         self.is_passive = False  # set: a passive scan of every advertiser, the listeners' matchers choose
         self._is_passive_refused = False
         self._on_advertisement: OnAdvertisement | None = None
-        self._scan_lock = asyncio.Lock()  # a connect holds it: no scan starts until it ends
+        self._scan_lock = asyncio.Lock()
+        self._is_scan_wanted = False  # started and not stopped: it scans again once no connect is underway
+        self._connects = 0  # underway: no scan runs meanwhile
 
     async def set_scan_mode(self, is_active: bool):
         if self.is_passive == (not is_active):
@@ -120,6 +127,14 @@ class LocalAdapter:
 
     async def start(self, on_advertisement: OnAdvertisement):
         self._on_advertisement = on_advertisement
+        async with self._scan_lock:
+            self._is_scan_wanted = True
+            if not self._connects:
+                await self._open_scanner()
+
+    async def _open_scanner(self):
+        on_advertisement = self._on_advertisement
+        assert on_advertisement
 
         def on_detection(device: BLEDevice, adv_data: AdvertisementData):
             self._devices.pop(device.address, None)  # re-added last: the dict stays oldest first
@@ -130,22 +145,22 @@ class LocalAdapter:
 
         # BlueZ refuses a passive scan without --experimental (Raspberry Pi OS's default): then it scans actively. With
         # it, a Pi 5 (BlueZ 5.82, no offload) passes adverts only through patterns on the flags (2026-10-14), as in HA.
-        async with self._scan_lock:
-            if self.is_passive and not self._is_passive_refused:
-                bluez = {**self._options.get("bluez", {}), "or_patterns": _EVERY_ADVERTISER}
-                try:  # macOS refuses a passive scan already when the scanner is made
-                    self._scanner = BleakScanner(detection_callback=on_detection, scanning_mode="passive", bluez=bluez)
-                    return await self._scanner.start()
-                except Exception as e:
-                    # BlueZ's advertisement monitor is missing (an old or non-experimental bluetoothd)
-                    logger.warning(f"BLE {self.name} can't scan passively, scanning actively: {e}")
-                    self._is_passive_refused = True
-            self.is_passive = False
-            self._scanner = BleakScanner(detection_callback=on_detection, **self._options)
-            await self._scanner.start()
+        if self.is_passive and not self._is_passive_refused:
+            bluez = {**self._options.get("bluez", {}), "or_patterns": _EVERY_ADVERTISER}
+            try:  # macOS refuses a passive scan already when the scanner is made
+                self._scanner = BleakScanner(detection_callback=on_detection, scanning_mode="passive", bluez=bluez)
+                return await self._scanner.start()
+            except Exception as e:
+                # BlueZ's advertisement monitor is missing (an old or non-experimental bluetoothd)
+                logger.warning(f"BLE {self.name} can't scan passively, scanning actively: {e}")
+                self._is_passive_refused = True
+        self.is_passive = False
+        self._scanner = BleakScanner(detection_callback=on_detection, **self._options)
+        await self._scanner.start()
 
     async def stop(self):
         async with self._scan_lock:
+            self._is_scan_wanted = False
             scanner, self._scanner = self._scanner, None
             if scanner:
                 await scanner.stop()
@@ -153,15 +168,20 @@ class LocalAdapter:
     async def connect(self, address: str, on_disconnect: Callable[[], None]) -> BLEConnection:
         device = self._devices.get(address, address)
         client = BleakClient(device, disconnected_callback=lambda _: on_disconnect(), **self._options)
+        # many adapters (the Raspberry Pi's included) stall a connect while discovering; the lock is held only to stop
+        # and restart the scan, not for the connect, which may take bleak's whole timeout
         async with self._scan_lock:
-            scanner = self._scanner
-            if scanner:  # many adapters (the Raspberry Pi's included) stall a connect while discovering
+            self._connects += 1
+            scanner, self._scanner = self._scanner, None
+        try:
+            if scanner:
                 await scanner.stop()
-            try:
-                await client.connect()
-            finally:
-                if scanner:
-                    await scanner.start()
+            await client.connect()
+        finally:
+            async with self._scan_lock:
+                self._connects -= 1
+                if not self._connects and self._is_scan_wanted and not self._scanner:
+                    await self._open_scanner()
         return _BleakConnection(client, self._options.get("bluez", {}).get("adapter") or "hci0")
 
 

@@ -514,7 +514,7 @@ async def test_local_adapters_hear_every_advertiser_and_the_matchers_choose(scan
     ble.register(everything, [BLEMatcher()])
     await ble.start()
     assert scanners[-1]["mode"] == "passive"
-    assert scanners[-1]["patterns"] == [(0, T.FLAGS, b"\x02"), (0, T.FLAGS, b"\x06"), (0, T.FLAGS, b"\x1a")]
+    assert {(0, T.FLAGS, b"\x02"), (0, T.FLAGS, b"\x06"), (0, T.FLAGS, b"\x1a")} <= set(scanners[-1]["patterns"])
 
     hear = scanners[-1]["on_detection"]
     hear(BLEDevice("AA", None, {}), AdvertisementData(None, {APPLE: b"\x10\x05"}, {}, [], None, -60, ()))
@@ -814,3 +814,53 @@ async def test_a_radio_that_never_hears_anything_is_restarted_less_and_less_ofte
     assert quiet.on_advertisement is not hearing
     await ble.stop()
 
+
+async def test_a_local_adapter_holds_no_scan_lock_while_it_connects(monkeypatch):
+    from majordom_integration_sdk.runtime.peripherals.providers.ble import bluez as module
+    from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import LocalAdapter
+
+    scanning: list[bool] = []
+    connecting, connected = asyncio.Event(), asyncio.Event()
+
+    class Scanner:
+        def __init__(self, **kwargs):
+            pass
+
+        async def start(self):
+            scanning.append(True)
+
+        async def stop(self):
+            scanning.append(False)
+
+    class Client:
+        def __init__(self, device, **kwargs):
+            pass
+
+        async def connect(self):
+            connecting.set()
+            await connected.wait()
+
+    monkeypatch.setattr(module, "BleakScanner", Scanner)
+    monkeypatch.setattr(module, "BleakClient", Client)
+    adapter = LocalAdapter("hci0")
+    await adapter.start(lambda device, adv: None)
+    connection = asyncio.create_task(adapter.connect("AA", lambda: None))
+    await connecting.wait()
+
+    await asyncio.wait_for(adapter.stop(), 0.1)  # bleak's connect may take its whole timeout
+    await asyncio.wait_for(adapter.start(lambda device, adv: None), 0.1)
+    assert scanning == [True, False], "discovering while connecting: many adapters stall"
+    connected.set()
+    await connection
+    assert scanning == [True, False, True]
+
+
+def test_local_adapters_hear_beacons_without_flags_and_with_any_flags():
+    from bleak.assigned_numbers import AdvertisementDataType as T
+
+    from majordom_integration_sdk.runtime.peripherals.providers.ble.bluez import _EVERY_ADVERTISER
+
+    patterns = {(p.start_position, p.ad_data_type, bytes(p.content_of_pattern)) for p in _EVERY_ADVERTISER}
+    assert (0, T.FLAGS, b"\x04") in patterns  # LE only, not discoverable: a non-connectable beacon's flags
+    for uuid in (b"\xd2\xfc", b"\x95\xfe", b"\x3d\xfd"):  # BTHome, Xiaomi MiBeacon, SwitchBot, often flagless
+        assert (0, T.SERVICE_DATA_UUID16, uuid) in patterns
