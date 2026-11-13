@@ -82,7 +82,7 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
                 "zigbee",
                 "ezsp",
                 "socket://127.0.0.1:{ports.ezsp}",
-                params={"control": "127.0.0.1:{ports.ezsp_control}"},
+                params={"multipan": True, "control": "127.0.0.1:{ports.ezsp_control}"},
             ),
             _OTBR_REST,
         ],
