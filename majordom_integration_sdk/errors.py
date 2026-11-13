@@ -47,7 +47,7 @@ class DeviceIdTakenError(Exception):
 class DeviceUnreachableError(Exception):
     """``unpair`` could not reach the device to undo its pairing, e.g. it is off or out of range.
 
-    Raised after the controller forgot its own state of the device, so only the device keeps the pairing: the Hub
-    answers with it (``device_unreachable``), and the app offers to forget the device instead, which then needs a
-    manual factory reset to pair again.
+    The controller changes nothing else, the record and its ``integration_data`` included: the Hub answers with it
+    (``device_unreachable``), and the app offers to forget the device instead, which may then need a manual factory
+    reset to pair again.
     """

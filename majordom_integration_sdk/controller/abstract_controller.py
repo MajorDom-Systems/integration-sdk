@@ -226,14 +226,16 @@ class AbstractController[
 
         - don't use the device repository: nothing is saved during pairing;
         - report nothing about this device (no ``controller_did_connect_device``, no events) until the Hub saved it;
-        - once the ``physical_id`` is known, call ``check_device_id`` before anything irreversible;
+        - once the ``physical_id`` is known, call ``check_device_id`` before anything irreversible: it confirms no
+          other record holds this device already;
+        - don't read values or subscribe: the Hub calls ``fetch`` for that right after the save;
         - keep what the device needs from now on (a key just set on it) in ``integration_data``, filled in *before*
           each irreversible step: it is saved with the device, so no storage of your own is needed.
 
-        On any failure but a refused id, and when the Hub fails to save what you return, it calls ``unpair(draft)``
-        with the draft as far as you filled it, to roll back.
+        Just raise on failure: on any failure but a refused id, and when the Hub fails to save what you return, it
+        calls ``unpair(draft)`` with the draft as far as you filled it, which undoes the partial pairing.
 
-        Idempotent, like ``fetch``: called again after a failed or rolled-back attempt, bring the device to a
+        Idempotent: called again after a failed or rolled-back attempt, bring the device to a
         known-good paired state from whatever the last one left. Check each step and redo only what is missing or
         stale (a key already set is checked, not set again), so a device found already paired is confirmed and
         returned, not refused.
@@ -247,15 +249,14 @@ class AbstractController[
         Unpairs a device from the Hub. Called when the user initiates removal from the UI.
 
         Also the rollback of a failed pairing: the Hub calls it with the draft as ``pair_device`` left it, at any
-        stage. Undo, in reverse order of pairing, only what would block a clean re-pair once the draft is lost (a key
-        set on the device, a pairing the accessory holds); what stays harmless (a node left on a fabric or network,
-        offered again as a discovery) needs no undo. Tolerate any partial state, never wait for the user, and go as
-        far as you can: it is best effort, within the Hub's timeout.
+        stage. Undo everything pairing did, in reverse order (a key set on the device, the pairing it holds, its place
+        on the network or fabric). Tolerate any partial state, never wait for the user, and go as far as you can: it
+        is best effort, within the Hub's timeout.
 
         Calling it again must work: on a device already unpaired, or never fully paired, it does nothing more.
 
-        Raise `DeviceUnreachableError` when the device can't be reached to undo its pairing, after forgetting your own
-        state of it.
+        Talk to the device only: the Hub alone decides whether to delete the record and its ``integration_data``. When
+        the device can't be reached to undo its pairing, raise `DeviceUnreachableError` and change nothing else.
         """
 
     @abstractmethod
