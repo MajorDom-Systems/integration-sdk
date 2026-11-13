@@ -3,6 +3,7 @@
 import inspect
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID, uuid4, uuid5
 
@@ -100,6 +101,21 @@ def test_its_documents_folder_is_its_own_under_the_platforms(tmp_path):
     controller = _MinimalController(build_test_platform(documents_root=tmp_path))
     assert controller.platform.documents_folder(controller) == tmp_path / "example-protocol"
     assert (tmp_path / "example-protocol").is_dir()
+
+
+def test_after_a_factory_reset_it_forgets_its_radio_s_network_once(tmp_path):
+    # a Z-Wave controller's nodes, an EZSP coordinator's network: the Hub before the reset held their keys
+    controller = _MinimalController(replace(build_test_platform(documents_root=tmp_path), factory_reset=True))
+    assert controller.platform.forgets_network(controller)
+
+    controller.platform.network_forgotten(controller)
+
+    assert not controller.platform.forgets_network(controller)  # the new one is kept, restarts and reboots alike
+
+
+def test_a_hub_never_reset_keeps_its_radio_s_network(tmp_path):
+    controller = _MinimalController(build_test_platform(documents_root=tmp_path))
+    assert not controller.platform.forgets_network(controller)
 
 
 LEAVES = """

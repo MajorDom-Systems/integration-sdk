@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 type MakeDeviceRepository = Callable[[str], AbstractAsyncContextManager[DeviceRepositoryProtocol]]
 type CheckDeviceId = Callable[[UUID, DeviceState], Awaitable[None]]
 
+NETWORK_FORGOTTEN = ".network-forgotten"  # in a peripheral's folder: it forgot its radio's network since the reset
+
 
 def _in_memory() -> MakeDeviceRepository:
     store: dict[UUID, dict[str, Any]] = {}  # shared by the repositories of every peripheral
@@ -55,6 +57,9 @@ class Platform:
     region: str | None = None  # RF region for sub-GHz radios, a Z-Wave JS name: "Europe", "USA", …
     wifi: WifiCredentials | None = None  # the network to provision Wi-Fi devices onto
     thread_dataset: str | None = None  # active operational dataset of the hub's Thread network, hex TLVs
+    # The host was factory reset: a network a radio keeps in its own memory (a Z-Wave controller's nodes and home ID,
+    # an EZSP coordinator's network) belongs to the Hub before it, whose keys are gone
+    factory_reset: bool = False
 
     def documents_folder(self, peripheral: Peripheral) -> Path:
         """The folder of ``peripheral``, by its key, created on use: what it keeps across restarts that doesn't belong
@@ -67,3 +72,12 @@ class Platform:
         """One unit of work on the device repository, scoped to the devices of ``peripheral``, by its key: a
         controller's is its slug, the ``integration`` of every `Device` it keeps."""
         return self.make_device_repository(peripheral.key)
+
+    def forgets_network(self, peripheral: Peripheral) -> bool:
+        """Whether ``peripheral`` is to forget the network its radio keeps in its own memory and start a new one: once
+        after a factory reset, until it tells it did (`network_forgotten`)."""
+        return self.factory_reset and not (self.documents_folder(peripheral) / NETWORK_FORGOTTEN).exists()
+
+    def network_forgotten(self, peripheral: Peripheral):
+        """``peripheral``'s radio forgot its network: it keeps the one it starts from now on, the next reset aside."""
+        (self.documents_folder(peripheral) / NETWORK_FORGOTTEN).touch()
