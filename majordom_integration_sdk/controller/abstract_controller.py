@@ -275,8 +275,8 @@ class AbstractController[
 
         - return the device as it is now: ``device`` with its full ``parameters`` list (ids from ``parameter_uuid``,
           current values) and ``available``. The Hub creates the parameters on the first fetch, then compares each one
-          with what it stored: new and gone parameters, changed values. Report nothing of it as events: events are
-          for changes the device starts itself;
+          with what it stored: new and gone parameters, changed values. The Hub saves it. Report none of it as
+          events: those are for changes the device starts itself;
         - check its event subscription and subscribe again only when it is gone, never a second one;
         - finish in bounded time; return ``None`` when the device doesn't answer (a sleeping battery device): not a
           failure, the Hub keeps what it has.
