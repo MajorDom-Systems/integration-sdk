@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 type OnAdvertisement = Callable[[BLEDevice, AdvertisementData], None]
 
 CONNECT_BUSY_TIMEOUT = 10.0  # seconds to reach a device, a radio busy with another lease included
+CONNECT_MAX_DURATION = 600.0  # seconds a connection stays open; None only when it must stay open for good
 LEASE_BUSY_TIMEOUT = 30.0  # seconds to wait for a free radio to lease
 LEASE_MAX_DURATION = 120.0  # seconds a lease holds its radio before it is taken back
 
@@ -167,7 +168,7 @@ class BLELease:
         on_disconnect: Callable[[], None] = lambda: None,
         *,
         busy_timeout: float = CONNECT_BUSY_TIMEOUT,
-        max_duration: float | None = None,
+        max_duration: float | None = CONNECT_MAX_DURATION,
     ) -> contextlib.AbstractAsyncContextManager[BLEConnection]:
         """A GATT connection through the leased source, closed when the block ends."""
         return connected(lambda: self._source.connect(self.address, on_disconnect), busy_timeout, max_duration)
@@ -177,7 +178,7 @@ class BLELease:
         on_disconnect: Callable[[], None] = lambda: None,
         *,
         busy_timeout: float = CONNECT_BUSY_TIMEOUT,
-        max_duration: float | None = None,
+        max_duration: float | None = CONNECT_MAX_DURATION,
     ) -> BLEConnection:
         """Like `connect`, without the block: disconnect it yourself."""
         return await open_connection(
@@ -201,12 +202,13 @@ class BLERouter(Protocol):
         on_disconnect: Callable[[], None] = lambda: None,
         *,
         busy_timeout: float = CONNECT_BUSY_TIMEOUT,
-        max_duration: float | None = None,
+        max_duration: float | None = CONNECT_MAX_DURATION,
     ) -> contextlib.AbstractAsyncContextManager[BLEConnection]:
         """A GATT connection to ``address`` through the source hearing it best, falling back to the others, closed
         when the block ends. Leased sources are waited for up to ``busy_timeout`` seconds, then `BLEBusyError`;
         `ConnectionError` when no source reaches the device in that time. With ``max_duration``, it is closed after
-        that many seconds. ``on_disconnect`` is called when the connection drops."""
+        that many seconds (``None``: open until the block ends). ``on_disconnect`` is called when the connection
+        drops."""
         ...
 
     async def open_connection(
@@ -215,10 +217,10 @@ class BLERouter(Protocol):
         on_disconnect: Callable[[], None] = lambda: None,
         *,
         busy_timeout: float = CONNECT_BUSY_TIMEOUT,
-        max_duration: float | None = None,
+        max_duration: float | None = CONNECT_MAX_DURATION,
     ) -> BLEConnection:
         """Like `connect`, without the block: disconnect it yourself. Only when the connection must outlive a
-        block, e.g. a subscription kept for the integration's lifetime."""
+        block, e.g. a subscription kept for the integration's lifetime: ``max_duration=None`` then, explicitly."""
         ...
 
     def exclusive(

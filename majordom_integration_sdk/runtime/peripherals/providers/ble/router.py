@@ -19,6 +19,7 @@ from uuid import UUID
 
 from majordom_integration_sdk.capabilities.ble import (
     CONNECT_BUSY_TIMEOUT,
+    CONNECT_MAX_DURATION,
     LEASE_BUSY_TIMEOUT,
     LEASE_MAX_DURATION,
     BLEBusyError,
@@ -214,7 +215,7 @@ class BLEService(Peripheral):
         on_disconnect: Callable[[], None] = lambda: None,
         *,
         busy_timeout: float = CONNECT_BUSY_TIMEOUT,
-        max_duration: float | None = None,
+        max_duration: float | None = CONNECT_MAX_DURATION,
     ) -> contextlib.AbstractAsyncContextManager[BLEConnection]:
         """A GATT connection to ``address`` through the source hearing it best, closed when the block ends."""
         return connected(
@@ -227,7 +228,7 @@ class BLEService(Peripheral):
         on_disconnect: Callable[[], None] = lambda: None,
         *,
         busy_timeout: float = CONNECT_BUSY_TIMEOUT,
-        max_duration: float | None = None,
+        max_duration: float | None = CONNECT_MAX_DURATION,
     ) -> BLEConnection:
         """Like `connect`, without the block: disconnect it yourself."""
         connect = lambda: self._connect_waiting(address, on_disconnect, busy_timeout)  # noqa: E731
