@@ -18,6 +18,10 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from majordom_integration_sdk.capabilities.ble import (
+    CONNECT_BUSY_TIMEOUT,
+    CONNECT_MAX_DURATION,
+    LEASE_BUSY_TIMEOUT,
+    LEASE_MAX_DURATION,
     BLEBusyError,
     BLEConnection,
     BLEDiscoveryInfo,
@@ -29,6 +33,8 @@ from majordom_integration_sdk.capabilities.ble import (
     OnAdvertisement,
     PausableBLESource,
     ScanModeBLESource,
+    connected,
+    open_connection,
 )
 from majordom_integration_sdk.peripherals import Endpoint, Need, Peripheral, PeripheralChange
 
@@ -38,6 +44,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_BUSY_RETRY_DELAY = 0.2  # seconds between connects while every source that hears the device is leased
 RAW_BLE = ["bluez", "silabs-cpc-hci", "esphome-proxy"]  # every radio the router hears through
 
 
@@ -175,27 +182,74 @@ class BLEService(Peripheral):
 
     @contextlib.asynccontextmanager
     async def exclusive(
-        self, address: str, *, owner: str, timeout: float = 30, wait: float = 1, is_pairing_needed: bool = False
+        self,
+        address: str,
+        *,
+        owner: str,
+        busy_timeout: float = LEASE_BUSY_TIMEOUT,
+        max_duration: float = LEASE_MAX_DURATION,
+        wait: float = 1,
+        is_pairing_needed: bool = False,
     ) -> AsyncGenerator[BLELease]:
         """Leases the source hearing ``address`` best to ``owner`` (e.g. while pairing it): that source stops
         scanning and others' connects avoid it; the rest keep going. A leased source is waited for ``wait``
-        seconds before the next best is tried, round after round, until ``timeout`` raises `BLEBusyError`.
+        seconds before the next best is tried, round after round, until ``busy_timeout`` raises `BLEBusyError`.
+        After ``max_duration`` seconds the block gets `TimeoutError` and the source goes back.
         With ``is_pairing_needed``, only sources that can pair are leased (`BLEPairingError` when none hears it).
         The device stays tracked until the lease ends, though no radio may hear it meanwhile."""
-        name = await self._acquire(address, owner, timeout, wait, is_pairing_needed)
+        name = await self._acquire(address, owner, busy_timeout, wait, is_pairing_needed)
         self._leased[name] = address
         try:
             source = self._sources[name]
             with contextlib.suppress(Exception):
                 # paused, not stopped: a proxy answers connects only while it stays subscribed
                 await (source.pause_scanning() if isinstance(source, PausableBLESource) else source.stop())
-            yield BLELease(address, name, owner, self._sources[name])
+            async with asyncio.timeout(max_duration):
+                yield BLELease(address, name, owner, self._sources[name])
         finally:
             await asyncio.shield(self._release(name, owner))
 
-    async def connect(self, address: str, on_disconnect: Callable[[], None] = lambda: None) -> BLEConnection:
-        """Opens a GATT connection to ``address`` through the source hearing it best, falling back to
-        the others; leased sources are skipped. ``on_disconnect`` is called when the connection drops."""
+    def connect(
+        self,
+        address: str,
+        on_disconnect: Callable[[], None] = lambda: None,
+        *,
+        busy_timeout: float = CONNECT_BUSY_TIMEOUT,
+        max_duration: float | None = CONNECT_MAX_DURATION,
+    ) -> contextlib.AbstractAsyncContextManager[BLEConnection]:
+        """A GATT connection to ``address`` through the source hearing it best, closed when the block ends."""
+        return connected(
+            lambda: self._connect_waiting(address, on_disconnect, busy_timeout), busy_timeout, max_duration
+        )
+
+    async def open_connection(
+        self,
+        address: str,
+        on_disconnect: Callable[[], None] = lambda: None,
+        *,
+        busy_timeout: float = CONNECT_BUSY_TIMEOUT,
+        max_duration: float | None = CONNECT_MAX_DURATION,
+    ) -> BLEConnection:
+        """Like `connect`, without the block: disconnect it yourself."""
+        connect = lambda: self._connect_waiting(address, on_disconnect, busy_timeout)  # noqa: E731
+        return await open_connection(connect, busy_timeout, max_duration)
+
+    async def _connect_waiting(
+        self, address: str, on_disconnect: Callable[[], None], busy_timeout: float
+    ) -> BLEConnection:
+        """Connects, waiting while every source that hears ``address`` is leased: `BLEBusyError` once
+        ``busy_timeout`` would run out, before the caller's bound cuts it off as a plain `ConnectionError`."""
+        deadline = monotonic() + busy_timeout
+        while True:
+            try:
+                return await self._connect_once(address, on_disconnect)
+            except BLEBusyError:
+                if deadline - monotonic() <= 2 * _BUSY_RETRY_DELAY:
+                    raise
+            await asyncio.sleep(_BUSY_RETRY_DELAY)
+
+    async def _connect_once(self, address: str, on_disconnect: Callable[[], None]) -> BLEConnection:
+        """Through the source hearing ``address`` best, falling back to the others; leased sources are skipped."""
         candidates = self._candidates(address)
         free = [name for name in candidates if not self._is_leased(name)]
         if candidates and not free:
@@ -235,10 +289,10 @@ class BLEService(Peripheral):
         return not self._is_leased(name) or isinstance(self._sources[name], PausableBLESource)
 
     async def _acquire(
-        self, address: str, owner: str, timeout: float, wait: float, is_pairing_needed: bool = False
+        self, address: str, owner: str, busy_timeout: float, wait: float, is_pairing_needed: bool = False
     ) -> str:
-        """Locks the first candidate source that frees up within ``wait``, cycling until ``timeout``."""
-        deadline = monotonic() + timeout
+        """Locks the first candidate source that frees up within ``wait``, cycling until ``busy_timeout``."""
+        deadline = monotonic() + busy_timeout
         while True:
             if not (candidates := self._candidates(address)):
                 raise ConnectionError(f"Can't reach {address}: no Bluetooth sources")

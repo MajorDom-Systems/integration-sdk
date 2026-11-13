@@ -92,4 +92,4 @@ class Zeroconf(Protocol):
         ...
 
 
-ZEROCONF = Need[Zeroconf]("mdns", ["zeroconf"])  # optional: dataclasses.replace(it, is_required=False)
+ZEROCONF = Need[Zeroconf]("mdns", ["zeroconf"])  # optional: ZEROCONF(is_required=False)
