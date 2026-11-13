@@ -22,6 +22,7 @@ from importlib.metadata import version
 
 from majordom_integration_sdk.controller import AbstractController, ControllerOutput, IntegrationError
 from majordom_integration_sdk.errors import DeviceIdTakenError, DeviceUnreachableError, MissingCredentialsError
+from majordom_integration_sdk.imports import ImportMode, ImportOffer, ImportPart, ImportReport, ImportSource
 from majordom_integration_sdk.peripherals import (
     STABLE_RUN,
     ComposeService,
@@ -54,6 +55,11 @@ __all__ = [
     "ControllerOutput",
     "IntegrationError",
     "Platform",
+    "ImportMode",
+    "ImportOffer",
+    "ImportPart",
+    "ImportReport",
+    "ImportSource",
     "DeviceRepositoryProtocol",
     "DeviceRepositoryMemory",
     "SqliteDeviceRepository",

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Any, cast, final
 from uuid import UUID, uuid5
 
@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from slugify import slugify
 
 from majordom_integration_sdk.controller.output import ControllerOutput, LoggingControllerOutput
+from majordom_integration_sdk.imports import ImportMode, ImportOffer, ImportPart, ImportReport, ImportSource
 from majordom_integration_sdk.peripherals import Need, Peripheral, PeripheralChange
 from majordom_integration_sdk.platform import Platform
 from majordom_integration_sdk.schemas.command import DeviceCommand
@@ -158,6 +159,16 @@ class AbstractController[
         integration. One that reads them only when it acts (pairing a device) needs no override.
         """
         return True
+
+    async def import_inspect(self, source: ImportSource) -> ImportOffer:
+        """What this blob offers to import (a Zigbee coordinator backup: its network and each device), for the user to
+        pick from. ValueError for a blob it can't read; NotImplementedError when it imports nothing."""
+        raise NotImplementedError(f"{self.name} has nothing to import")
+
+    async def import_data(self, source: ImportSource, parts: Collection[ImportPart], mode: ImportMode) -> ImportReport:
+        """Apply only the picked parts of the blob, offered by `import_inspect`. Taking over another controller's
+        network (its devices go on working without re-pairing) means the old controller has to be retired."""
+        raise NotImplementedError(f"{self.name} has nothing to import")
 
     # TODO: review if these two are needed, test the implementation
 
