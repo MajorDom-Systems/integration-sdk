@@ -61,7 +61,8 @@ class ControllerOutput(Protocol):
         ...
 
     async def controller_did_receive_events(self, controller: AnyController, events: Iterable[Event]):
-        """Report device-domain events (e.g. DeviceParameterChange) observed by the controller."""
+        """Report device-domain events (e.g. DeviceParameterChange) observed by the controller. The Hub saves their
+        values."""
         ...
 
     async def controller_did_encounter_error(self, controller: AnyController, error: IntegrationError):
