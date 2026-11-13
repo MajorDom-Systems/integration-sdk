@@ -146,7 +146,7 @@ class _CliSession:
             await self._controller.output.controller_did_connect_device(
                 self._controller, physical_id=device.physical_id
             )
-        await self._controller.fetch(device)
+        await self._fetch(self._controller.device_type.model_validate(device.model_dump()))
         return device.physical_id
 
     async def pair_window(self, seconds: int):
@@ -174,8 +174,16 @@ class _CliSession:
     async def fetch(self, physical_id: UUID) -> bool:
         if not (device := await self._device(physical_id)):
             return False
-        await self._controller.fetch(device)
+        await self._fetch(device)
         return True
+
+    async def _fetch(self, device: Device):
+        """Fetches the device and saves what it read, as the Hub does; keeps what it has when it doesn't answer."""
+        state = await self._controller.fetch(device)
+        if state is None:
+            return
+        async with self._controller.platform.device_repository(self._controller) as repo:
+            await repo.save(state)
 
     async def unpair(self, physical_id: UUID) -> bool:
         if not (device := await self._device(physical_id)):
