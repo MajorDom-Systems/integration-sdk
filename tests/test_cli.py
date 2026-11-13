@@ -45,7 +45,7 @@ def _param(role: ParameterRole = ParameterRole.control) -> ParameterState:
 
 
 class FakeController(AbstractController):
-    """Minimal controller: pairing persists a device with one control parameter; every other
+    """Minimal controller: pairing gives the device its identity, fetching reads its one parameter; every other
     method just records that it was called with the resolved object."""
 
     name = INTEGRATION
@@ -59,6 +59,7 @@ class FakeController(AbstractController):
         self.identified: list[UUID] = []
         self.fetched: list[UUID] = []
         self.unpaired: list[UUID] = []
+        self._parameters: dict[UUID, ParameterState] = {}  # by physical id: the same one on every read
 
     @property
     def discoveries(self) -> dict[UUID, Discovery]:
@@ -74,7 +75,6 @@ class FakeController(AbstractController):
         self, discovery: Discovery, draft: DeviceState, credentials: ProvidedCredentials | None
     ) -> DeviceState:
         draft.physical_id = uuid4()
-        draft.parameters = [_param(self._param_role)]
         draft.available = True
         self.paired.append(draft.physical_id)
         return draft
@@ -85,8 +85,10 @@ class FakeController(AbstractController):
     async def identify(self, device: Device):
         self.identified.append(device.physical_id)
 
-    async def fetch(self, device: Device):
+    async def fetch(self, device: Device) -> DeviceState:
         self.fetched.append(device.physical_id)
+        parameter = self._parameters.setdefault(device.physical_id, _param(self._param_role))
+        return DeviceState(**device.model_dump(), parameters=[parameter])
 
     async def send_command(self, command: DeviceCommand, device: Device, parameter):
         self.sent.append((command.device_id, command.parameter_id, command.value))
@@ -118,7 +120,7 @@ async def test_pair_list_control_unpair_flow(session_and_controller):
     discovery = _discovery()
     controller.discoveries[discovery.id] = discovery
 
-    # pair -> persists the filled draft, then reports it connected and fetches it, as the Hub does
+    # pair -> persists the filled draft, then reports it connected, fetches it and saves what it read, as the Hub does
     device_id = await session.pair(discovery.id, "none", "")
     assert device_id in controller.paired
     assert controller.fetched == [device_id]
@@ -327,3 +329,18 @@ async def test_needs_without_a_runtime_list_what_was_given():
     assert session.needs()[0] == "zigbee/ezsp|znp  -> /dev/ttyUSB0  by you"
     with pytest.raises(RuntimeError, match="by hand"):
         await session.resolve()
+
+
+async def test_fetch_of_an_unanswering_device_keeps_what_it_has(session_and_controller, monkeypatch):
+    session, controller = session_and_controller
+    discovery = _discovery()
+    controller.discoveries[discovery.id] = discovery
+    device_id = await session.pair(discovery.id)
+
+    async def unanswering(device: Device) -> None:
+        return None
+
+    monkeypatch.setattr(controller, "fetch", unanswering)
+    assert await session.fetch(device_id) is True
+    state = await session.device_state(device_id)
+    assert state is not None and len(state.parameters) == 1

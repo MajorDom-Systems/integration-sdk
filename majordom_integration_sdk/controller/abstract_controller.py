@@ -220,20 +220,23 @@ class AbstractController[
         this controller's key. When the user picked an existing record to pair onto, it carries that record's data,
         its ``id``, ``physical_id`` and ``integration_data`` included: decide what in it is stale.
 
-        Fill in what the device is: ``parameters``, ``integration_data``, its ``physical_id`` (``device_uuid``, what
-        you look the device up by from now on), ``available``, … and return it. The Hub then saves it to its database,
-        reports it connected if you set it ``available``, and calls ``fetch``. So:
+        Establish the device's identity and trust only: its ``physical_id`` (``device_uuid``, what you look the device
+        up by from now on), ``integration_data`` (keys, addresses), ``available``, and return it. Leave ``parameters``
+        to ``fetch``: the Hub saves the draft, reports it connected if you set it ``available``, and calls ``fetch``,
+        whose result gives the device its parameters. So:
 
         - don't use the device repository: nothing is saved during pairing;
         - report nothing about this device (no ``controller_did_connect_device``, no events) until the Hub saved it;
-        - once the ``physical_id`` is known, call ``check_device_id`` before anything irreversible;
+        - once the ``physical_id`` is known, call ``check_device_id`` before anything irreversible: it confirms no
+          other record holds this device already;
+        - don't map parameters, read values or subscribe: the Hub calls ``fetch`` for that right after the save;
         - keep what the device needs from now on (a key just set on it) in ``integration_data``, filled in *before*
           each irreversible step: it is saved with the device, so no storage of your own is needed.
 
-        On any failure but a refused id, and when the Hub fails to save what you return, it calls ``unpair(draft)``
-        with the draft as far as you filled it, to roll back.
+        Just raise on failure: on any failure but a refused id, and when the Hub fails to save what you return, it
+        calls ``unpair(draft)`` with the draft as far as you filled it, which undoes the partial pairing.
 
-        Idempotent, like ``fetch``: called again after a failed or rolled-back attempt, bring the device to a
+        Idempotent: called again after a failed or rolled-back attempt, bring the device to a
         known-good paired state from whatever the last one left. Check each step and redo only what is missing or
         stale (a key already set is checked, not set again), so a device found already paired is confirmed and
         returned, not refused.
@@ -247,15 +250,14 @@ class AbstractController[
         Unpairs a device from the Hub. Called when the user initiates removal from the UI.
 
         Also the rollback of a failed pairing: the Hub calls it with the draft as ``pair_device`` left it, at any
-        stage. Undo, in reverse order of pairing, only what would block a clean re-pair once the draft is lost (a key
-        set on the device, a pairing the accessory holds); what stays harmless (a node left on a fabric or network,
-        offered again as a discovery) needs no undo. Tolerate any partial state, never wait for the user, and go as
-        far as you can: it is best effort, within the Hub's timeout.
+        stage. Undo everything pairing did, in reverse order (a key set on the device, the pairing it holds, its place
+        on the network or fabric). Tolerate any partial state, never wait for the user, and go as far as you can: it
+        is best effort, within the Hub's timeout.
 
         Calling it again must work: on a device already unpaired, or never fully paired, it does nothing more.
 
-        Raise `DeviceUnreachableError` when the device can't be reached to undo its pairing, after forgetting your own
-        state of it.
+        Talk to the device only: the Hub alone decides whether to delete the record and its ``integration_data``. When
+        the device can't be reached to undo its pairing, raise `DeviceUnreachableError` and change nothing else.
         """
 
     @abstractmethod
@@ -266,14 +268,18 @@ class AbstractController[
         """
 
     @abstractmethod
-    async def fetch(self, device: TDevice):
+    async def fetch(self, device: TDevice) -> TDeviceState | None:
         """
-        Brings the device to a known-good state; called after pairing, on a manual refresh, and to revive a device
-        that is unavailable. Idempotent:
+        Reads the whole device and brings it to a known-good state; called right after pairing, on a manual refresh,
+        and to revive a device that is unavailable. Idempotent:
 
-        - check the device answers and read its current values, reported through the normal events;
+        - return the device as it is now: ``device`` with its full ``parameters`` list (ids from ``parameter_uuid``,
+          current values) and ``available``. The Hub creates the parameters on the first fetch, then compares each one
+          with what it stored: new and gone parameters, changed values. Report nothing of it as events: events are
+          for changes the device starts itself;
         - check its event subscription and subscribe again only when it is gone, never a second one;
-        - finish in bounded time; a sleeping battery device that doesn't answer is not a failure.
+        - finish in bounded time; return ``None`` when the device doesn't answer (a sleeping battery device): not a
+          failure, the Hub keeps what it has.
         """
 
     @abstractmethod
