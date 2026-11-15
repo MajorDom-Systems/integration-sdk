@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 type OnAdvertisement = Callable[[BLEDevice, AdvertisementData], None]
 
-CONNECT_BUSY_TIMEOUT = 10.0  # seconds to reach a device, a radio busy with another lease included
+CONNECT_BUSY_TIMEOUT = 30.0  # seconds to reach a device, a radio busy with another lease included
 CONNECT_MAX_DURATION = 600.0  # seconds a connection stays open; None only when it must stay open for good
 LEASE_BUSY_TIMEOUT = 30.0  # seconds to wait for a free radio to lease
 LEASE_MAX_DURATION = 120.0  # seconds a lease holds its radio before it is taken back
