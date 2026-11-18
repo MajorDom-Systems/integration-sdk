@@ -93,6 +93,8 @@ class BLEService(Peripheral):
         self._removal_grace_sec: float = 11.0  # seconds unheard by every source before did_remove is fired
         self._eviction_interval_sec: float = 10.0
         self._silence_sec: float = 60.0  # a source unheard this long is restarted
+        self._silence_max_sec: float = 600.0  # the longest it waits after restarts that heard nothing
+        self._quiet_restarts: dict[str, int] = {}  # source -> restarts in a row unheard since: each waits twice as long
         self._active_until: float = 0.0  # monotonic end of an active scan burst
         self._name_burst_sec: float = 5.0  # an active burst to hear the name of a new device advertising none
         self._name_burst_interval_sec: float = 60.0  # at most one such burst this often
@@ -249,9 +251,10 @@ class BLEService(Peripheral):
             await asyncio.sleep(_BUSY_RETRY_DELAY)
 
     async def _connect_once(self, address: str, on_disconnect: Callable[[], None]) -> BLEConnection:
-        """Through the source hearing ``address`` best, falling back to the others; leased sources are skipped."""
+        """Through the source hearing ``address`` best, falling back to the others; leased sources and proxies with no
+        connection slot left are skipped."""
         candidates = self._candidates(address)
-        free = [name for name in candidates if not self._is_leased(name)]
+        free = [name for name in candidates if not self._is_leased(name) and self._has_slot(name)]
         if candidates and not free:
             raise BLEBusyError(f"all Bluetooth sources that hear {address} are busy")
         errors = []
@@ -280,6 +283,9 @@ class BLEService(Peripheral):
         tracked = self._tracked.get(address)
         names = (tracked.sources(self._removal_grace_sec) if tracked else []) or list(self._sources)
         return sorted(names, key=lambda name: getattr(self._sources.get(name), "free_slots", None) == 0)
+
+    def _has_slot(self, name: str) -> bool:
+        return getattr(self._sources.get(name), "free_slots", None) != 0
 
     def _is_leased(self, name: str) -> bool:
         return name in self._leases and self._leases[name].locked()
@@ -376,6 +382,7 @@ class BLEService(Peripheral):
     def _advertisement_handler(self, source: str) -> OnAdvertisement:
         def on_advertisement(device: BLEDevice, adv_data: AdvertisementData):
             self._heard_at[source] = monotonic()
+            self._quiet_restarts.pop(source, None)
             self._spawn(self._handle_advertisement(source, device, adv_data))
 
         return on_advertisement
@@ -448,15 +455,19 @@ class BLEService(Peripheral):
         for name, source in list(self._sources.items()):
             if getattr(source, "is_loss_reported", False) or self._is_leased(name):
                 continue
-            if monotonic() - self._heard_at.get(name, 0) > self._silence_sec:
-                logger.info(f"BLE source {name} heard nothing for {self._silence_sec:.0f} s, restarting it")
+            # one that heard nothing since its last restart may just be somewhere RF-quiet: it waits longer each time
+            restarts = self._quiet_restarts.get(name, 0)
+            silence = min(self._silence_sec * 2**restarts, self._silence_max_sec)
+            if monotonic() - self._heard_at.get(name, 0) > silence:
+                logger.info(f"BLE source {name} heard nothing for {silence:.0f} s, restarting it")
+                self._quiet_restarts[name] = restarts + 1
                 with contextlib.suppress(Exception):
                     await source.stop()
                 await self._start_source(name)
 
     async def _evict_stale(self):
         for address, tracked in list(self._tracked.items()):
-            if tracked.sources(self._removal_grace_sec) or address in self._leased.values():
+            if tracked.sources(self._removal_grace_sec) or self._is_held_by_lease(address, tracked):
                 continue
             del self._tracked[address]
             adv_data = tracked.info.advertisement
@@ -468,6 +479,10 @@ class BLEService(Peripheral):
             if tasks:
                 logger.debug(f"BLE removed: {tracked.info.device.name} ({address})")
                 await asyncio.gather(*tasks)
+
+    def _is_held_by_lease(self, address: str, tracked: _BLETrackedDevice) -> bool:
+        """Leased for it, or a source that heard it is leased: a paused radio can't tell whether it is still there."""
+        return address in self._leased.values() or any(self._is_leased(source) for source in tracked.heard)
 
     async def perform_scan(self):
         """Triggers an immediate eviction check. Sources listen continuously — no manual scan needed."""
