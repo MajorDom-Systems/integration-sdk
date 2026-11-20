@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "channel": "stable",
-  "issued_at": "2026-11-20T00:00:00Z",
-  "expires_at": "2027-02-18T00:00:00Z",
-  "boards_sha256": "b955da524dc7e1831bb9b2a11f0065e3304b366adbd1d5cd9df6ef3f78c4f3dd",
+  "issued_at": "2026-11-20T06:13:15Z",
+  "expires_at": "2027-02-18T06:13:15Z",
+  "boards_sha256": "6180d3570a873fc2209582d69985c10dcc5b346a6ce62aedc91f51ddbacf91cb",
   "policy": {
     "downgrade": false
   },

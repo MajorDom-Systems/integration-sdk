@@ -93,7 +93,6 @@
             ],
             "type": "gecko-uart-xmodem"
           },
-          "default": "skyconnect-zigbee",
           "firmware": [
             "skyconnect-zigbee",
             "skyconnect-thread"
