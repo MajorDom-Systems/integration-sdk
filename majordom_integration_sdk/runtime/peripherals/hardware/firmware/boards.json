@@ -14,7 +14,7 @@
       "name": "Aeotec Z-Stick",
       "slots": {
         "radio": {
-          "chip": "ZM5101"
+          "label": "ZM5101"
         }
       }
     },
@@ -35,7 +35,7 @@
       "name": "dresden elektronik ConBee II",
       "slots": {
         "radio": {
-          "chip": "ATSAMR21G18A"
+          "label": "ATSAMR21G18A"
         }
       }
     },
@@ -56,7 +56,7 @@
       "name": "dresden elektronik ConBee III",
       "slots": {
         "radio": {
-          "chip": "EFR32MG21"
+          "label": "EFR32MG21"
         }
       }
     },
@@ -74,7 +74,7 @@
       "name": "HomeSeer SmartStick",
       "slots": {
         "radio": {
-          "chip": "ZM5101"
+          "label": "ZM5101"
         }
       }
     },
@@ -101,10 +101,15 @@
             ],
             "type": "gecko-uart-xmodem"
           },
-          "chip": "EFR32MG21",
+          "default": "skyconnect-zigbee",
+          "firmware": [
+            "skyconnect-zigbee",
+            "skyconnect-thread"
+          ],
           "flashers": [
             "usf"
-          ]
+          ],
+          "label": "EFR32MG21"
         }
       }
     },
@@ -125,10 +130,10 @@
       "name": "Nortek HUSBZB-1",
       "slots": {
         "zigbee": {
-          "chip": "EM357"
+          "label": "EM357"
         },
         "zwave": {
-          "chip": "ZM5304"
+          "label": "ZM5304"
         }
       }
     },
@@ -156,7 +161,7 @@
       "name": "SMLIGHT SLZB-07",
       "slots": {
         "radio": {
-          "chip": "EFR32MG21"
+          "label": "EFR32MG21"
         }
       }
     },
@@ -177,7 +182,7 @@
       "name": "Sonoff Z-Wave 800 USB Dongle Plus (Dongle-PZG23)",
       "slots": {
         "radio": {
-          "chip": "EFR32ZG23"
+          "label": "EFR32ZG23"
         }
       }
     },
@@ -199,7 +204,7 @@
       "name": "Sonoff Zigbee 3.0 USB Dongle Plus V2 (ZBDongle-E)",
       "slots": {
         "radio": {
-          "chip": "EFR32MG21"
+          "label": "EFR32MG21"
         }
       }
     },
@@ -220,7 +225,7 @@
       "name": "Sonoff Zigbee 3.0 USB Dongle Plus (ZBDongle-P)",
       "slots": {
         "radio": {
-          "chip": "CC2652P"
+          "label": "TI CC2652P"
         }
       }
     },
@@ -241,7 +246,7 @@
       "name": "Texas Instruments CC2531 USB dongle",
       "slots": {
         "radio": {
-          "chip": "CC2531"
+          "label": "TI CC2531"
         }
       }
     },
@@ -262,7 +267,7 @@
       "name": "ZiGate+",
       "slots": {
         "radio": {
-          "chip": "JN5168"
+          "label": "JN5168"
         }
       }
     },
@@ -283,7 +288,7 @@
       "name": "Zooz ZST10 700 Z-Wave Stick",
       "slots": {
         "radio": {
-          "chip": "ZGM130S"
+          "label": "ZGM130S"
         }
       }
     }

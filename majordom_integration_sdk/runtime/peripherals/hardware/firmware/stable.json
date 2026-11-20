@@ -3,7 +3,7 @@
   "channel": "stable",
   "issued_at": "2026-11-20T00:00:00Z",
   "expires_at": "2027-02-18T00:00:00Z",
-  "boards_sha256": "d808909befbaaf9250dffdbd18a04fc7b884437c8e950d03f5a5584fd0071981",
+  "boards_sha256": "730dd92a1b470e25def0a3cad0a5ae2a8b9975ffd1f6e77de6f201a09c5d12d8",
   "policy": {
     "downgrade": false
   },

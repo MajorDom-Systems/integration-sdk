@@ -26,6 +26,12 @@ class UsbDriver(Peripheral):
     bluetooth: ClassVar[frozenset[str]] = frozenset()  # firmwares that serve Bluetooth too (multiprotocol over CPC)
 
     @property
+    def protocols(self) -> dict[str, str]:
+        """The protocols it handles (the ``dialect`` of its firmwares' endpoints), each to the firmware speaking it: how
+        the firmware catalog's packages, which name their ``protocol``, find their driver."""
+        return {e.dialect: firmware for firmware, endpoints in self.firmwares.items() for e in endpoints}
+
+    @property
     def provides(self) -> Sequence[Endpoint]:
         return [Endpoint(USB_DRIVER, self.name, self.name, is_shared=True, instance=self)]
 

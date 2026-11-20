@@ -57,8 +57,10 @@ class Silabs(UsbDriver):
         await _flasher(path, "flash", "--firmware", str(file))
 
     def _builds(self, path: str, channel: str) -> dict[str, Build]:
-        board = self.catalog.usb_board(path)
-        return self.catalog.builds(board, channel) if board else {}
+        """The builds for the stick at ``path`` this driver speaks the protocol of, by firmware."""
+        board, protocols = self.catalog.usb_board(path), self.protocols
+        builds = self.catalog.builds(board, channel).values() if board else []
+        return {protocols[b.protocol]: b for b in builds if b.protocol in protocols}
 
 
 class ZWave(UsbDriver):

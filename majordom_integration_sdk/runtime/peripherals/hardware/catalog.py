@@ -12,11 +12,14 @@ import logging
 import os
 import re
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from majordom_integration_sdk.peripherals import UsbDriver
 
 log = logging.getLogger(__name__)
 
@@ -25,10 +28,6 @@ SNAPSHOT = Path(__file__).with_name("firmware")
 CHANNEL_URL = "https://majordom-systems.github.io/firmware/v1/"
 CATALOG_ENV = "MAJORDOM_FIRMWARE_CATALOG"  # a folder with the channel's files, in place of the snapshot
 CHANNELS = ("stable", "dev")
-
-#: What the host runs against a package of each kind. TODO(firmware): read the packages' ``[runtime]`` once the channel
-#: carries it; its entries don't today.
-KINDS = {"zigbee": ("silabs", "zigbee-ncp"), "thread": ("silabs", "thread-rcp"), "multipan": ("silabs", "multipan-rcp")}
 
 type Json = Mapping[str, Any]
 
@@ -44,6 +43,7 @@ class Build:
     url: str
     sha256: str
     params: Mapping[str, Any]  # the firmware's serial settings: ``baud``, ``flow_control``
+    protocol: str  # what it speaks, an `Endpoint.dialect`: its driver is the one handling it
 
 
 class Catalog:
@@ -99,43 +99,55 @@ class Catalog:
         return max(matches)[1] if matches else None
 
     def builds(self, board: str, channel: str, slot: str | None = None) -> dict[str, Build]:
-        """The newest build of each firmware for ``board`` on ``channel`` (dev lists the stable builds too)."""
+        """The newest build on ``channel`` (dev lists the stable builds too) of each package the slots of ``board`` (or
+        its ``slot``) list, by package, in their order."""
         found = {}
-        for kinds in self.channels[channel]["firmware"].values():
-            for kind, items in kinds.items():
-                newest = next((i for i in items if i["board"] == board and slot in (None, i["slot"])), None)
-                if newest and kind in KINDS:
+        for name, entry in self.boards[board]["slots"].items():
+            for package in entry.get("firmware", []) if slot in (None, name) else []:
+                if newest := next(iter(self.channels[channel]["firmware"].get(package, [])), None):
                     serial, gbl = newest["serial"], newest["files"]["gbl"]
                     params = {"baud": serial["baud"], "flow_control": serial["flow"] != "none"}
-                    found[KINDS[kind][1]] = Build(
-                        newest["package"], newest["version"], gbl["url"], gbl["sha256"], params
+                    found[package] = Build(
+                        package, newest["version"], gbl["url"], gbl["sha256"], params, newest["protocol"]
                     )
-        return {firmware: found[firmware] for _, firmware in KINDS.values() if firmware in found}
+        return found
 
-    def profile(self, board_id: str) -> Json:
+    def profile(self, board_id: str, drivers: Sequence[UsbDriver]) -> Json:
         """The ``board.json`` of the host-wired board ``board_id`` (``hub1-cm4``, or a revision: ``hub1-cm4/r1``), as
-        the firmware repo generates it: each radio wired to the host with the firmware of its newest build."""
+        the firmware repo generates it: each slot wired to the host with the firmware of its ``default`` package, named
+        by the ``drivers`` handling that package's protocol."""
         keys = sorted(k for k in self.boards if k.split("/", 1)[1] == board_id or k.split("/")[1] == board_id)
         if not keys or not any("pins" in slot for slot in self.boards[keys[-1]]["slots"].values()):
             raise CatalogError(f"No host-wired board {board_id} in the firmware catalog")
-        key, radios = keys[-1], []
-        for name, slot in self.boards[keys[-1]]["slots"].items():
+        key, slots = keys[-1], []
+        for name, slot in self.boards[key]["slots"].items():
             if "pins" not in slot:
                 continue
-            radio: dict[str, Any] = {"name": name, "path": slot["pins"]["uart"]}
-            builds = self.builds(key, "stable", name) or self.builds(key, "dev", name)
-            if firmware := next(iter(builds), None):
-                radio |= {"driver": "silabs", "firmware": firmware}
-                params: dict[str, Any] = dict(builds[firmware].params)
+            entry: dict[str, Any] = {"name": name, "path": slot["pins"]["uart"]}
+            builds = self.builds(key, "dev", name)
+            if build := builds.get(slot.get("default", "")):
+                driver, firmware = _driver(build.protocol, drivers)
+                entry |= {"driver": driver, "firmware": firmware}
+                params: dict[str, Any] = dict(build.params)
+            elif builds:  # nothing pre-flashed: the driver identifies what runs
+                entry["driver"], params = _driver(next(iter(builds.values())).protocol, drivers)[0], {}
             elif stock := slot.get("stock"):
-                radio["driver"], params = stock["driver"], {"baud": stock["baud"]}
+                entry["driver"], params = stock["driver"], {"baud": stock["baud"]}
             else:
                 raise CatalogError(f"{key}/{name}: no build and no stock firmware")
             if reset := slot.get("reset"):
                 params["reset_gpio"] = reset["gpio"]
-            radios.append(radio | {"params": params})
+            slots.append(entry | {"params": params})
         revision = key.split("/")[2].removeprefix("r") if key.count("/") == 2 else None
-        return {"schema": 1, "board": key.split("/")[1], "revision": revision and int(revision), "radios": radios}
+        return {"schema": 1, "board": key.split("/")[1], "revision": revision and int(revision), "slots": slots}
+
+
+def _driver(protocol: str, drivers: Sequence[UsbDriver]) -> tuple[str, str]:
+    """The driver handling ``protocol`` and its firmware speaking it."""
+    for driver in drivers:
+        if firmware := driver.protocols.get(protocol):
+            return driver.name, firmware
+    raise CatalogError(f"No driver handles the {protocol} protocol")
 
 
 def _download(url: str) -> dict[str, bytes]:

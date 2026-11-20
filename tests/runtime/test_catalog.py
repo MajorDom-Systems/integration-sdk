@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from majordom_integration_sdk.peripherals import Endpoint
-from majordom_integration_sdk.runtime import OS_BOARD_PROFILE, Catalog, FixedRadio, Silabs, board_profile
+from majordom_integration_sdk.runtime import OS_BOARD_PROFILE, Catalog, FixedRadio, Silabs, ZWave, board_profile
 from majordom_integration_sdk.runtime.peripherals.hardware import catalog as module
 from majordom_integration_sdk.runtime.peripherals.hardware.catalog import CatalogError
 
@@ -37,15 +37,20 @@ PROTO = {
     "match": {"board_json": "proto-hub1-cm4-devkits"},
     "name": "proto",
     "slots": {
-        "mg26": {"chip": "EFR32MG26", "pins": {"uart": "/dev/ttyAMA3"}, "reset": {"gpio": "gpiochip0:23"}},
-        "zwave": {"chip": "ZGM230S", "pins": {"uart": "/dev/ttyAMA4"}, "stock": {"driver": "zwave", "baud": 115200}},
+        "mg26": {
+            "label": "MGM260P (EFR32MG26)",
+            "pins": {"uart": "/dev/ttyAMA3"},
+            "reset": {"gpio": "gpiochip0:23"},
+            "firmware": ["mg26-multipan-pa04-pa05"],
+            "default": "mg26-multipan-pa04-pa05",
+        },
+        "zwave": {"label": "ZGM230S", "pins": {"uart": "/dev/ttyAMA4"}, "stock": {"driver": "zwave", "baud": 115200}},
     },
 }
 MULTIPAN = {
-    "package": "proto-hub1-cm4-devkits-mg26-multipan",
+    "package": "mg26-multipan-pa04-pa05",
     "version": "1.0.0",
-    "board": "majordom/proto-hub1-cm4-devkits/r1",
-    "slot": "mg26",
+    "protocol": "silabs-cpc",
     "serial": {"baud": 115200, "flow": "none"},
     "files": {"gbl": {"url": "https://example/mp.gbl", "sha256": "a" * 64, "size": 1}},
 }
@@ -64,10 +69,16 @@ def test_a_skyconnect_is_offered_the_mirrored_nabucasa_builds_on_the_dev_channel
     assert silabs.flashable(SKYCONNECT, "dev") == ["zigbee-ncp", "thread-rcp"]
     assert silabs.flashable(ZBT1, "dev") == ["zigbee-ncp", "thread-rcp"]
     builds = silabs.catalog.builds("nabucasa/skyconnect", "dev")
-    assert (builds["zigbee-ncp"].version, builds["thread-rcp"].version) == ("7.5.1", "2.7.2")
-    assert builds["zigbee-ncp"].url == f"{NABUCASA}/skyconnect_zigbee_ncp_7.5.1.0.gbl"
-    assert builds["zigbee-ncp"].sha256 == "5b9221fc1decb687cfe822de119443db06728a53a7ce465c7a14ef73c8e146ad"
-    assert builds["thread-rcp"].sha256 == "15c70a4a235ccb8a086a29cb9f073d1f9346bf2ea0bca34fb6239ab9c9fe4ca2"
+    zigbee, thread = builds["skyconnect-zigbee"], builds["skyconnect-thread"]
+    assert (zigbee.version, zigbee.protocol, thread.version, thread.protocol) == ("7.5.1", "ezsp", "2.7.2", "spinel")
+    assert zigbee.url == f"{NABUCASA}/skyconnect_zigbee_ncp_7.5.1.0.gbl"
+    assert zigbee.sha256 == "5b9221fc1decb687cfe822de119443db06728a53a7ce465c7a14ef73c8e146ad"
+    assert thread.sha256 == "15c70a4a235ccb8a086a29cb9f073d1f9346bf2ea0bca34fb6239ab9c9fe4ca2"
+
+
+def test_drivers_take_the_builds_of_the_protocols_they_handle():
+    assert Silabs().protocols == {"ezsp": "zigbee-ncp", "spinel": "thread-rcp", "silabs-cpc": "multipan-rcp"}
+    assert ZWave().protocols == {"serial-api": "serial-api"}
 
 
 def test_an_identify_only_or_unknown_stick_is_offered_nothing():
@@ -93,8 +104,10 @@ async def test_flashing_downloads_the_catalogs_build_and_checks_it(tmp_path, mon
 
     data, ran = b"gbl", []
     build = {"url": "https://example/sky.gbl", "sha256": hashlib.sha256(data).hexdigest(), "size": 3}
-    doc = _channel("dev", [{**MULTIPAN, "board": "nabucasa/skyconnect", "slot": "radio", "files": {"gbl": build}}])
-    catalog = Catalog(Catalog.default().boards, {"stable": _channel("stable", []), "dev": doc})
+    boards = json.loads(json.dumps(Catalog.default().boards))
+    boards["nabucasa/skyconnect"]["slots"]["radio"]["firmware"].append(MULTIPAN["package"])
+    doc = _channel("dev", [{**MULTIPAN, "files": {"gbl": build}}])
+    catalog = Catalog(boards, {"stable": _channel("stable", []), "dev": doc})
 
     class Response:
         def read(self) -> bytes:
@@ -204,7 +217,7 @@ def test_the_os_images_profile_in_the_firmware_repos_format(tmp_path):
                 "schema": 1,
                 "board": "proto-hub1-cm4-devkits",
                 "revision": 1,
-                "radios": [
+                "slots": [
                     {
                         "name": "mg26",
                         "path": "/dev/ttyAMA3",
@@ -230,7 +243,8 @@ def test_a_catalog_board_id_builds_its_profile():
     boards = {**Catalog.default().boards, "majordom/proto-hub1-cm4-devkits/r1": PROTO}
     catalog = Catalog(boards, {"stable": _channel("stable", []), "dev": _channel("dev", [MULTIPAN])})
     assert board_profile("proto-hub1-cm4-devkits", catalog) == PROTO_RADIOS
-    assert catalog.profile("proto-hub1-cm4-devkits/r1")["revision"] == 1
+    profile = catalog.profile("proto-hub1-cm4-devkits/r1", [Silabs(catalog)])
+    assert (profile["revision"], [slot["name"] for slot in profile["slots"]]) == (1, ["mg26", "zwave"])
     with pytest.raises(CatalogError, match="No host-wired board"):
         board_profile("skyconnect", catalog)
 
@@ -252,8 +266,7 @@ def _channel(name: str, items: list[dict], boards_sha256: str = "", expires: dat
     expires = expires or datetime.now(UTC) + timedelta(days=90)
     firmware: dict = {}
     for item in items:
-        kind = item["package"].rsplit("-", 1)[1]
-        firmware.setdefault("family", {}).setdefault(kind, []).append(item)
+        firmware.setdefault(item["package"], []).append(item)
     return {
         "schema": 1,
         "channel": name,

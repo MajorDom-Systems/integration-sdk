@@ -3,74 +3,72 @@
   "channel": "dev",
   "issued_at": "2026-11-20T00:00:00Z",
   "expires_at": "2027-02-18T00:00:00Z",
-  "boards_sha256": "d808909befbaaf9250dffdbd18a04fc7b884437c8e950d03f5a5584fd0071981",
+  "boards_sha256": "730dd92a1b470e25def0a3cad0a5ae2a8b9975ffd1f6e77de6f201a09c5d12d8",
   "policy": {
     "downgrade": true
   },
   "firmware": {
-    "skyconnect": {
-      "thread": [
-        {
-          "package": "skyconnect-thread",
-          "version": "2.7.2",
-          "stability": "dev",
-          "released_at": "2026-02-23T00:00:00Z",
-          "sdk": {
-            "name": "sisdk",
-            "version": "2025.6.2"
-          },
-          "stack": {
-            "openthread": "SL-OPENTHREAD/2.7.2.0_GitHub-fb0446f53"
-          },
-          "serial": {
-            "baud": 460800,
-            "flow": "rtscts"
-          },
-          "source": "url",
-          "board": "nabucasa/skyconnect",
-          "slot": "radio",
-          "files": {
-            "gbl": {
-              "url": "https://github.com/NabuCasa/silabs-firmware-builder/releases/download/v2026.02.23/skyconnect_openthread_rcp_2.7.2.0_GitHub-fb0446f53_gsdk_2025.6.2.gbl",
-              "size": 99952,
-              "sha256": "15c70a4a235ccb8a086a29cb9f073d1f9346bf2ea0bca34fb6239ab9c9fe4ca2"
-            }
-          },
-          "notes_url": "https://github.com/MajorDom-Systems/firmware/releases/tag/skyconnect-thread-v2.7.2",
-          "notes": "OpenThread RCP (SL-OPENTHREAD/2.7.2.0_GitHub-fb0446f53) for the SkyConnect / Connect ZBT-1, mirrored from Nabu Casa's silabs-firmware-builder v2026.02.23."
-        }
-      ],
-      "zigbee": [
-        {
-          "package": "skyconnect-zigbee",
-          "version": "7.5.1",
-          "stability": "dev",
-          "released_at": "2026-02-23T00:00:00Z",
-          "sdk": {
-            "name": "gsdk",
-            "version": "4.5.0"
-          },
-          "stack": {
-            "ezsp": "7.5.1.0"
-          },
-          "serial": {
-            "baud": 115200,
-            "flow": "rtscts"
-          },
-          "source": "url",
-          "board": "nabucasa/skyconnect",
-          "slot": "radio",
-          "files": {
-            "gbl": {
-              "url": "https://github.com/NabuCasa/silabs-firmware-builder/releases/download/v2026.02.23/skyconnect_zigbee_ncp_7.5.1.0.gbl",
-              "size": 241512,
-              "sha256": "5b9221fc1decb687cfe822de119443db06728a53a7ce465c7a14ef73c8e146ad"
-            }
-          },
-          "notes_url": "https://github.com/MajorDom-Systems/firmware/releases/tag/skyconnect-zigbee-v7.5.1",
-          "notes": "Zigbee NCP (EZSP 7.5.1.0) for the SkyConnect / Connect ZBT-1, mirrored from Nabu Casa's silabs-firmware-builder v2026.02.23."
-        }
-      ]
-    }
+    "skyconnect-thread": [
+      {
+        "package": "skyconnect-thread",
+        "version": "2.7.2",
+        "stability": "dev",
+        "chip": "EFR32MG21",
+        "sdk": {
+          "name": "sisdk",
+          "version": "2025.6.2"
+        },
+        "stack": {
+          "openthread": "SL-OPENTHREAD/2.7.2.0_GitHub-fb0446f53"
+        },
+        "protocol": "spinel",
+        "serial": {
+          "baud": 460800,
+          "flow": "rtscts"
+        },
+        "source": "url",
+        "upstream": "NabuCasa/silabs-firmware-builder v2026.02.23",
+        "files": {
+          "gbl": {
+            "url": "https://github.com/NabuCasa/silabs-firmware-builder/releases/download/v2026.02.23/skyconnect_openthread_rcp_2.7.2.0_GitHub-fb0446f53_gsdk_2025.6.2.gbl",
+            "size": 99952,
+            "sha256": "15c70a4a235ccb8a086a29cb9f073d1f9346bf2ea0bca34fb6239ab9c9fe4ca2"
+          }
+        },
+        "notes_url": "https://github.com/NabuCasa/silabs-firmware-builder/releases/tag/v2026.02.23",
+        "notes": "OpenThread RCP (SL-OPENTHREAD/2.7.2.0_GitHub-fb0446f53) for the SkyConnect / Connect ZBT-1, mirrored from Nabu Casa's silabs-firmware-builder v2026.02.23."
+      }
+    ],
+    "skyconnect-zigbee": [
+      {
+        "package": "skyconnect-zigbee",
+        "version": "7.5.1",
+        "stability": "dev",
+        "chip": "EFR32MG21",
+        "sdk": {
+          "name": "gsdk",
+          "version": "4.5.0"
+        },
+        "stack": {
+          "ezsp": "7.5.1.0"
+        },
+        "protocol": "ezsp",
+        "serial": {
+          "baud": 115200,
+          "flow": "rtscts"
+        },
+        "source": "url",
+        "upstream": "NabuCasa/silabs-firmware-builder v2026.02.23",
+        "files": {
+          "gbl": {
+            "url": "https://github.com/NabuCasa/silabs-firmware-builder/releases/download/v2026.02.23/skyconnect_zigbee_ncp_7.5.1.0.gbl",
+            "size": 241512,
+            "sha256": "5b9221fc1decb687cfe822de119443db06728a53a7ce465c7a14ef73c8e146ad"
+          }
+        },
+        "notes_url": "https://github.com/NabuCasa/silabs-firmware-builder/releases/tag/v2026.02.23",
+        "notes": "Zigbee NCP (EZSP 7.5.1.0) for the SkyConnect / Connect ZBT-1, mirrored from Nabu Casa's silabs-firmware-builder v2026.02.23."
+      }
+    ]
   }
 }

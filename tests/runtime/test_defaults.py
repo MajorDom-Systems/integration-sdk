@@ -54,7 +54,8 @@ def test_every_runtime_gets_defaults_of_its_own():
     first, second = default_peripherals(), default_peripherals()
     assert not {id(p) for p in first} & {id(p) for p in second}
     assert otbr() is not otbr() and silabs_multiprotocol() is not silabs_multiprotocol()
-    assert not {id(d) for d in default_usb_drivers()} & {id(d) for d in default_usb_drivers()}
+    drivers, others = default_usb_drivers(), default_usb_drivers()  # both alive: ids aren't reused
+    assert not {id(d) for d in drivers} & {id(d) for d in others}
     assert not {id(d) for d in UsbScanner().drivers} & {id(d) for d in UsbScanner().drivers}
 
 

@@ -31,9 +31,9 @@ OS_BOARD_PROFILE = Path("/etc/majordom/board.json")  # where the MajorDom OS ima
 
 
 def parse_board_profile(profile: Any) -> list[FixedRadio]:
-    """The radios of a ``board.json``: the firmware repo's ``{"schema": 1, "board", "revision", "radios": [{"name",
-    "path", "driver", "firmware"?, "params"}]}``, or the older bare list of ``{"id", ...}``."""
-    radios = profile if isinstance(profile, list) else profile["radios"]
+    """The radios of a ``board.json``: the firmware repo's ``{"schema": 1, "board", "revision", "slots": [{"name",
+    "path", "driver", "firmware"?, "params"}]}``, or the Hub's older bare list of ``{"id", ...}``."""
+    radios = profile if isinstance(profile, list) else profile["slots"]
     return [
         FixedRadio(r.get("name") or r["id"], r["path"], r["driver"], r.get("firmware"), r.get("params", {}))
         for r in radios
@@ -47,7 +47,8 @@ def board_profile(board: str | Path | None, catalog: Catalog | None = None) -> l
         return []
     if isinstance(board, Path):
         return parse_board_profile(json.loads(board.read_bytes()))
-    return parse_board_profile((catalog or Catalog.default()).profile(board))
+    catalog = catalog or Catalog.default()
+    return parse_board_profile(catalog.profile(board, default_usb_drivers(catalog)))
 
 
 class FixedPeripherals(Peripheral):
