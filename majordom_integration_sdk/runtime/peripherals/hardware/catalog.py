@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 # Regenerate: `python -m majordom_integration_sdk.runtime.peripherals.hardware.catalog`
 SNAPSHOT = Path(__file__).with_name("firmware")
-CHANNEL_URL = "https://firmware.majordom.io/v1/"
+CHANNEL_URL = "https://majordom-systems.github.io/firmware/v1/"
 CATALOG_ENV = "MAJORDOM_FIRMWARE_CATALOG"  # a folder with the channel's files, in place of the snapshot
 CHANNELS = ("stable", "dev")
 

@@ -103,25 +103,6 @@ async def _flasher(path: str, *args: str) -> str:
     return output
 
 
-#: USB ids of radios opened unasked to identify them, besides the catalog's boards (`radio_usb_ids`): sticks the
-#: firmware repo doesn't describe yet. Generic bridges common on other boards stay out (CH340 1a86:7523 on Arduinos,
-#: Espressif 303a on ESP32s): opening their port resets the board. A device that isn't listed is identified only when
-#: asked (`Radio.probe`).
-THIRD_PARTY_RADIO_USB_IDS = {
-    ("10c4", "ea60"),  # CP210x: Sonoff Z-Wave PZG23, Zooz ZST10 (SkyConnect / ZBT-1 and ZBDongle-P are catalog boards)
-    ("10c4", "8a2a"),  # Nortek HUSBZB-1
-    ("1a86", "55d4"),  # CH9102: Sonoff ZBDongle-E, SMLIGHT SLZB-07
-    ("0658", "0200"),  # Sigma Designs: Aeotec Z-Stick, HomeSeer SmartStick
-    ("1cf1", "0030"),  # dresden elektronik ConBee II
-    ("0403", "6015"),  # FTDI X: ConBee III, ZiGate+
-    ("0451", "16a8"),  # TI CC2531
-}
-
-
-def radio_usb_ids(catalog: Catalog) -> set[tuple[str, str]]:
-    return catalog.usb_ids() | THIRD_PARTY_RADIO_USB_IDS
-
-
 def default_usb_drivers(catalog: Catalog | None = None) -> list[UsbDriver]:
     """Every driver of the SDK, tried in this order on every unidentified stick: the cheap single-frame Z-Wave check
     first."""

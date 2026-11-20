@@ -1,5 +1,83 @@
 {
   "boards": {
+    "aeotec/z-stick": {
+      "host": "usb",
+      "identify_only": true,
+      "match": {
+        "usb": [
+          {
+            "pid": "0200",
+            "vid": "0658"
+          }
+        ]
+      },
+      "name": "Aeotec Z-Stick",
+      "slots": {
+        "radio": {
+          "chip": "ZM5101"
+        }
+      }
+    },
+    "dresden/conbee-ii": {
+      "host": "usb",
+      "identify_only": true,
+      "match": {
+        "usb": [
+          {
+            "pid": "0030",
+            "product": [
+              "ConBee II "
+            ],
+            "vid": "1cf1"
+          }
+        ]
+      },
+      "name": "dresden elektronik ConBee II",
+      "slots": {
+        "radio": {
+          "chip": "ATSAMR21G18A"
+        }
+      }
+    },
+    "dresden/conbee-iii": {
+      "host": "usb",
+      "identify_only": true,
+      "match": {
+        "usb": [
+          {
+            "pid": "6015",
+            "product": [
+              "ConBee III"
+            ],
+            "vid": "0403"
+          }
+        ]
+      },
+      "name": "dresden elektronik ConBee III",
+      "slots": {
+        "radio": {
+          "chip": "EFR32MG21"
+        }
+      }
+    },
+    "homeseer/smartstick": {
+      "host": "usb",
+      "identify_only": true,
+      "match": {
+        "usb": [
+          {
+            "pid": "0200",
+            "vid": "0658"
+          }
+        ]
+      },
+      "name": "HomeSeer SmartStick",
+      "slots": {
+        "radio": {
+          "chip": "ZM5101"
+        }
+      }
+    },
     "nabucasa/skyconnect": {
       "host": "usb",
       "match": {
@@ -30,6 +108,101 @@
         }
       }
     },
+    "nortek/husbzb-1": {
+      "host": "usb",
+      "identify_only": true,
+      "match": {
+        "usb": [
+          {
+            "pid": "8a2a",
+            "product": [
+              "HubZ Smart Home Controller"
+            ],
+            "vid": "10c4"
+          }
+        ]
+      },
+      "name": "Nortek HUSBZB-1",
+      "slots": {
+        "zigbee": {
+          "chip": "EM357"
+        },
+        "zwave": {
+          "chip": "ZM5304"
+        }
+      }
+    },
+    "smlight/slzb-07": {
+      "host": "usb",
+      "identify_only": true,
+      "match": {
+        "usb": [
+          {
+            "pid": "55d4",
+            "product": [
+              "SLZB-07"
+            ],
+            "vid": "1a86"
+          },
+          {
+            "pid": "ea60",
+            "product": [
+              "SLZB-07"
+            ],
+            "vid": "10c4"
+          }
+        ]
+      },
+      "name": "SMLIGHT SLZB-07",
+      "slots": {
+        "radio": {
+          "chip": "EFR32MG21"
+        }
+      }
+    },
+    "sonoff/pzg23": {
+      "host": "usb",
+      "identify_only": true,
+      "match": {
+        "usb": [
+          {
+            "pid": "ea60",
+            "product": [
+              "SONOFF ZWave 800 Dongle Plus"
+            ],
+            "vid": "10c4"
+          }
+        ]
+      },
+      "name": "Sonoff Z-Wave 800 USB Dongle Plus (Dongle-PZG23)",
+      "slots": {
+        "radio": {
+          "chip": "EFR32ZG23"
+        }
+      }
+    },
+    "sonoff/zbdongle-e": {
+      "host": "usb",
+      "identify_only": true,
+      "match": {
+        "usb": [
+          {
+            "pid": "55d4",
+            "product": [
+              "Sonoff Zigbee 3.0 USB Dongle Plus V2",
+              "SONOFF Zigbee 3.0 USB Dongle Plus V2"
+            ],
+            "vid": "1a86"
+          }
+        ]
+      },
+      "name": "Sonoff Zigbee 3.0 USB Dongle Plus V2 (ZBDongle-E)",
+      "slots": {
+        "radio": {
+          "chip": "EFR32MG21"
+        }
+      }
+    },
     "sonoff/zbdongle-p": {
       "host": "usb",
       "identify_only": true,
@@ -48,6 +221,69 @@
       "slots": {
         "radio": {
           "chip": "CC2652P"
+        }
+      }
+    },
+    "ti/cc2531": {
+      "host": "usb",
+      "identify_only": true,
+      "match": {
+        "usb": [
+          {
+            "pid": "16a8",
+            "product": [
+              "TI CC2531 USB CDC"
+            ],
+            "vid": "0451"
+          }
+        ]
+      },
+      "name": "Texas Instruments CC2531 USB dongle",
+      "slots": {
+        "radio": {
+          "chip": "CC2531"
+        }
+      }
+    },
+    "zigate/zigate-plus": {
+      "host": "usb",
+      "identify_only": true,
+      "match": {
+        "usb": [
+          {
+            "pid": "6015",
+            "product": [
+              "ZiGate"
+            ],
+            "vid": "0403"
+          }
+        ]
+      },
+      "name": "ZiGate+",
+      "slots": {
+        "radio": {
+          "chip": "JN5168"
+        }
+      }
+    },
+    "zooz/zst10": {
+      "host": "usb",
+      "identify_only": true,
+      "match": {
+        "usb": [
+          {
+            "pid": "ea60",
+            "product": [
+              "Zooz ZST10"
+            ],
+            "vid": "10c4"
+          }
+        ]
+      },
+      "name": "Zooz ZST10 700 Z-Wave Stick",
+      "slots": {
+        "radio": {
+          "chip": "ZGM130S"
         }
       }
     }

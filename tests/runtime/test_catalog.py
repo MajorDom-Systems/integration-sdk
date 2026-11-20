@@ -15,7 +15,6 @@ from majordom_integration_sdk.peripherals import Endpoint
 from majordom_integration_sdk.runtime import OS_BOARD_PROFILE, Catalog, FixedRadio, Silabs, board_profile
 from majordom_integration_sdk.runtime.peripherals.hardware import catalog as module
 from majordom_integration_sdk.runtime.peripherals.hardware.catalog import CatalogError
-from majordom_integration_sdk.runtime.peripherals.hardware.drivers import radio_usb_ids
 
 SKYCONNECT = "/dev/serial/by-id/usb-Nabu_Casa_SkyConnect_v1.0_0-if00-port0"
 ZBT1 = "/dev/serial/by-id/usb-Nabu_Casa_Home_Assistant_Connect_ZBT-1_9e2adbd75b8beb119fe564a0f320645d-if00-port0"
@@ -56,8 +55,7 @@ MULTIPAN = {
 
 
 def test_the_snapshot_knows_every_radio_usb_id_the_sdk_did():
-    assert radio_usb_ids(Catalog.default()) == OLD_RADIO_USB_IDS
-    assert ("10c4", "ea60") in Catalog.default().usb_ids()
+    assert Catalog.default().usb_ids() == OLD_RADIO_USB_IDS
 
 
 def test_a_skyconnect_is_offered_the_mirrored_nabucasa_builds_on_the_dev_channel_only():
@@ -278,3 +276,13 @@ def _sign(key: Ed25519PrivateKey, key_id: bytes, data: bytes, comment: str = "t"
 
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
+
+
+def test_identify_only_sticks_of_shared_usb_ids_are_told_apart_by_product():
+    catalog = Catalog.default()
+    prefix = "/dev/serial/by-id/usb-"
+    assert catalog.usb_board(f"{prefix}ITEAD_SONOFF_Zigbee_3.0_USB_Dongle_Plus_V2_1-if00") == "sonoff/zbdongle-e"
+    assert catalog.usb_board(DONGLE_P) == "sonoff/zbdongle-p"
+    assert catalog.usb_board(f"{prefix}dresden_elektronik_ConBee_III_DE1-if00-port0") == "dresden/conbee-iii"
+    assert catalog.usb_board(f"{prefix}Silicon_Labs_HubZ_Smart_Home_Controller_C0F0-if01-port0") == "nortek/husbzb-1"
+    assert catalog.usb_board(f"{prefix}Silicon_Labs_Zooz_ZST10\u00a0700_Z-Wave_Stick_0001-if00-port0") == "zooz/zst10"

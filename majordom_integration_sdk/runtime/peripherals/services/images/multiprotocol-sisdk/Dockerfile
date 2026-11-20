@@ -85,7 +85,7 @@ ARG SISDK=v2025.6.3
 ARG MDNS
 LABEL org.opencontainers.image.title="MajorDom multi-PAN host stack" \
       org.opencontainers.image.description="cpcd 4.7.1, zigbeed 8.2.2, ot-br-posix 2.7.3.0 from Silicon Labs SiSDK ${SISDK}" \
-      org.opencontainers.image.source="https://github.com/majordom-systems/majordom-transports" \
+      org.opencontainers.image.source="https://github.com/MajorDom-Systems/integration-sdk" \
       io.majordom.sisdk="${SISDK}" \
       io.majordom.mdns="${MDNS}"
 RUN apt-get update && apt-get install -y --no-install-recommends \
