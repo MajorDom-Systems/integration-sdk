@@ -68,11 +68,13 @@ class ZWave(UsbDriver):
 
     name = "zwave"
     firmwares = {
-        "serial-api": [Endpoint("zwave", "serial-api", "{device}", params={"baud": 115200, "flow_control": False})]
+        "zwave-serial-api": [
+            Endpoint("zwave", "zwave-serial-api", "{device}", params={"baud": 115200, "flow_control": False})
+        ]
     }
 
     async def identify(self, path: str) -> str | None:
-        return "serial-api" if await asyncio.to_thread(_zwave_answers, path) else None
+        return "zwave-serial-api" if await asyncio.to_thread(_zwave_answers, path) else None
 
 
 def _zwave_answers(path: str) -> bool:

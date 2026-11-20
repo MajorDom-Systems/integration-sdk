@@ -78,7 +78,7 @@ def test_a_skyconnect_is_offered_the_mirrored_nabucasa_builds_on_the_dev_channel
 
 def test_drivers_take_the_builds_of_the_protocols_they_handle():
     assert Silabs().protocols == {"ezsp": "zigbee-ncp", "spinel": "thread-rcp", "silabs-cpc": "multipan-rcp"}
-    assert ZWave().protocols == {"serial-api": "serial-api"}
+    assert ZWave().protocols == {"zwave-serial-api": "zwave-serial-api"}
 
 
 def test_an_identify_only_or_unknown_stick_is_offered_nothing():
