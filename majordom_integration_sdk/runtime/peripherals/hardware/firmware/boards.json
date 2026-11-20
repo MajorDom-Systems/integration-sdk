@@ -13,9 +13,7 @@
       },
       "name": "Aeotec Z-Stick",
       "slots": {
-        "radio": {
-          "label": "ZM5101"
-        }
+        "radio": {}
       }
     },
     "dresden/conbee-ii": {
@@ -34,9 +32,7 @@
       },
       "name": "dresden elektronik ConBee II",
       "slots": {
-        "radio": {
-          "label": "ATSAMR21G18A"
-        }
+        "radio": {}
       }
     },
     "dresden/conbee-iii": {
@@ -55,9 +51,7 @@
       },
       "name": "dresden elektronik ConBee III",
       "slots": {
-        "radio": {
-          "label": "EFR32MG21"
-        }
+        "radio": {}
       }
     },
     "homeseer/smartstick": {
@@ -73,9 +67,7 @@
       },
       "name": "HomeSeer SmartStick",
       "slots": {
-        "radio": {
-          "label": "ZM5101"
-        }
+        "radio": {}
       }
     },
     "nabucasa/skyconnect": {
@@ -108,8 +100,7 @@
           ],
           "flashers": [
             "usf"
-          ],
-          "label": "EFR32MG21"
+          ]
         }
       }
     },
@@ -160,9 +151,7 @@
       },
       "name": "SMLIGHT SLZB-07",
       "slots": {
-        "radio": {
-          "label": "EFR32MG21"
-        }
+        "radio": {}
       }
     },
     "sonoff/pzg23": {
@@ -181,9 +170,7 @@
       },
       "name": "Sonoff Z-Wave 800 USB Dongle Plus (Dongle-PZG23)",
       "slots": {
-        "radio": {
-          "label": "EFR32ZG23"
-        }
+        "radio": {}
       }
     },
     "sonoff/zbdongle-e": {
@@ -203,9 +190,7 @@
       },
       "name": "Sonoff Zigbee 3.0 USB Dongle Plus V2 (ZBDongle-E)",
       "slots": {
-        "radio": {
-          "label": "EFR32MG21"
-        }
+        "radio": {}
       }
     },
     "sonoff/zbdongle-p": {
@@ -224,9 +209,7 @@
       },
       "name": "Sonoff Zigbee 3.0 USB Dongle Plus (ZBDongle-P)",
       "slots": {
-        "radio": {
-          "label": "TI CC2652P"
-        }
+        "radio": {}
       }
     },
     "ti/cc2531": {
@@ -245,9 +228,7 @@
       },
       "name": "Texas Instruments CC2531 USB dongle",
       "slots": {
-        "radio": {
-          "label": "TI CC2531"
-        }
+        "radio": {}
       }
     },
     "zigate/zigate-plus": {
@@ -266,9 +247,7 @@
       },
       "name": "ZiGate+",
       "slots": {
-        "radio": {
-          "label": "JN5168"
-        }
+        "radio": {}
       }
     },
     "zooz/zst10": {
@@ -287,9 +266,7 @@
       },
       "name": "Zooz ZST10 700 Z-Wave Stick",
       "slots": {
-        "radio": {
-          "label": "ZGM130S"
-        }
+        "radio": {}
       }
     }
   },
