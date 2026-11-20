@@ -25,7 +25,8 @@ from majordom_integration_sdk.peripherals import (
     PeripheralChange,
     UsbDriver,
 )
-from majordom_integration_sdk.runtime.peripherals.hardware.drivers import RADIO_USB_IDS, default_usb_drivers
+from majordom_integration_sdk.runtime.peripherals.hardware.catalog import Catalog
+from majordom_integration_sdk.runtime.peripherals.hardware.drivers import default_usb_drivers, radio_usb_ids
 from majordom_integration_sdk.runtime.peripherals.providers.ble import cpc_hci
 
 log = logging.getLogger(__name__)
@@ -179,17 +180,19 @@ class UsbScanner(Peripheral):
     radio's is opened unasked; another is identified when the user asks (`Radio.probe`). One another program holds is
     left alone until then. What it identified and what the user probed is remembered, in ``sticks.json`` of its data
     folder: a stick known from before isn't opened again, and waits for the driver that identified it (an
-    integration's, bound once that runs).
+    integration's, bound once that runs). Which sticks are radios, and what they can be flashed with, is in the firmware
+    ``catalog`` (the bundled snapshot by default), refreshed from the signed channel on start.
 
         UsbScanner()  # every SDK driver: default_usb_drivers()
-        UsbScanner(drivers=[Silabs()])
+        UsbScanner(drivers=[Silabs(catalog)], catalog=catalog)
     """
 
     name = "usb"
     needs = [Need(USB_DRIVER, is_many=True, is_required=False)]
 
-    def __init__(self, drivers: Sequence[UsbDriver] | None = None):
-        self.drivers = default_usb_drivers() if drivers is None else list(drivers)
+    def __init__(self, drivers: Sequence[UsbDriver] | None = None, catalog: Catalog | None = None):
+        self.catalog = catalog or Catalog.default()
+        self.drivers = default_usb_drivers(self.catalog) if drivers is None else list(drivers)
         self._radios: list[Radio] = []
         self._known: dict[str, Any] = {}  # by-id name -> what it was identified as, whether the user claimed it
         self._tasks: set[asyncio.Task] = set()  # watching the sticks, and asking new drivers about them
@@ -207,6 +210,7 @@ class UsbScanner(Peripheral):
 
     async def start(self):
         self._known = read_json(self.platform.documents_folder(self) / "sticks.json")
+        self._spawn(self.catalog.refresh())
         await self._scan()
         self._spawn(self._watch())
 
@@ -273,7 +277,7 @@ class UsbScanner(Peripheral):
                 radio.node = os.path.realpath(path)
                 remembered = self._known.get(name, {}).get("driver")
                 is_awaited = radio.driver is None and remembered is not None and remembered not in drivers
-                is_trusted = (radio.is_claimed or _usb_id(path) in RADIO_USB_IDS) and not is_awaited
+                is_trusted = (radio.is_claimed or _usb_id(path) in radio_usb_ids(self.catalog)) and not is_awaited
                 if not radio.is_claimed and not radio.is_busy:
                     radio.held_by = _holder(path, is_opening_allowed=is_trusted and radio.driver is None)
                 if is_trusted and radio.driver is None and not radio.held_by and not radio.is_busy:
