@@ -1,0 +1,56 @@
+{
+  "boards": {
+    "nabucasa/skyconnect": {
+      "host": "usb",
+      "match": {
+        "usb": [
+          {
+            "pid": "ea60",
+            "product": [
+              "SkyConnect v1.0",
+              "Home Assistant Connect ZBT-1"
+            ],
+            "vid": "10c4"
+          }
+        ]
+      },
+      "name": "Home Assistant SkyConnect / Connect ZBT-1",
+      "slots": {
+        "radio": {
+          "bootloader": {
+            "enter": [
+              "app"
+            ],
+            "type": "gecko-uart-xmodem"
+          },
+          "chip": "EFR32MG21",
+          "flashers": [
+            "usf"
+          ]
+        }
+      }
+    },
+    "sonoff/zbdongle-p": {
+      "host": "usb",
+      "identify_only": true,
+      "match": {
+        "usb": [
+          {
+            "pid": "ea60",
+            "product": [
+              "Sonoff Zigbee 3.0 USB Dongle Plus"
+            ],
+            "vid": "10c4"
+          }
+        ]
+      },
+      "name": "Sonoff Zigbee 3.0 USB Dongle Plus (ZBDongle-P)",
+      "slots": {
+        "radio": {
+          "chip": "CC2652P"
+        }
+      }
+    }
+  },
+  "schema": 1
+}

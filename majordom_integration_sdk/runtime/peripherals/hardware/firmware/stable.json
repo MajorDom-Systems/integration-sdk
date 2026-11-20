@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "channel": "stable",
+  "issued_at": "2026-11-20T00:00:00Z",
+  "expires_at": "2027-02-18T00:00:00Z",
+  "boards_sha256": "3816a7727d111611924fe83cbc7581740b718919c8a54ecb2d9e85d5c082117f",
+  "policy": {
+    "downgrade": false
+  },
+  "firmware": {}
+}
