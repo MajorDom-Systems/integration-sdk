@@ -27,7 +27,7 @@ dependencies = [
 # install (the SDK is a runtime dep of every integration) — `pip install "majordom-integration-sdk[cli]"`.
 cli = ["typer-shell (>=0.2)", "rich (>=13)"]
 # The runtime (`majordom_integration_sdk.runtime`): radios, firmware, services. The Hub and the dev runner install it.
-runtime = ["pyserial (>=3.5)"]
+runtime = ["pyserial (>=3.5)", "cryptography (>=46)"]
 # The Bluetooth router's adapters (bleak; dbus-fast pairs through BlueZ on Linux).
 ble = ["bleak (>=3.1.0)", "dbus-fast (>=5.2.0) ; sys_platform == 'linux'"]
 # DNS-SD over mDNS (zeroconf).
@@ -62,6 +62,7 @@ dev = [
     "pyserial",       # the `runtime`, `ble` and `discovery` extras, for the same reason
     "bleak",
     "zeroconf",
+    "cryptography",
 ]
 
 [build-system]
