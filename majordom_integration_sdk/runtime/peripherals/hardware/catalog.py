@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -86,17 +87,16 @@ class Catalog:
 
     def usb_board(self, path: str) -> str | None:
         """The board of the stick at ``path`` (``/dev/serial/by-id/usb-<vendor>_<product>_<serial>-if00``), by its
-        product name."""
+        product name; the longest matching name wins, so ``…Plus`` never takes a ``…Plus_V2``."""
         name = Path(path).name
-        return next(
-            (
-                key
-                for key, board in self.boards.items()
-                for rule in board["match"].get("usb", [])
-                if any(product.replace(" ", "_") in name for product in rule.get("product", []))
-            ),
-            None,
-        )
+        matches = [
+            (len(product), key)
+            for key, board in self.boards.items()
+            for rule in board["match"].get("usb", [])
+            for product in rule.get("product", [])
+            if _names_product(name, product)
+        ]
+        return max(matches)[1] if matches else None
 
     def builds(self, board: str, channel: str, slot: str | None = None) -> dict[str, Build]:
         """The newest build of each firmware for ``board`` on ``channel`` (dev lists the stable builds too)."""
@@ -184,3 +184,8 @@ if __name__ == "__main__":  # refresh the snapshot from the live channel, verifi
     )
     for name, doc in catalog.channels.items():
         (SNAPSHOT / f"{name}.json").write_text(json.dumps(doc, indent=2) + "\n")
+
+
+def _names_product(by_id_name: str, product: str) -> bool:
+    """Whole words only: ``ConBee II`` doesn't match ``…_ConBee_III_<serial>``."""
+    return re.search(rf"(?:^usb-|_){re.escape(product.replace(' ', '_'))}(?![0-9A-Za-z])", by_id_name) is not None
