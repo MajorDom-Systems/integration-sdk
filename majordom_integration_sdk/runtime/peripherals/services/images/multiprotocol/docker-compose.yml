@@ -1,15 +1,12 @@
-# Harness: the SiSDK multi-PAN stack (../multiprotocol-sisdk, avahi build) and integration-matter's matterjs-server
+# Harness: the SiSDK multi-PAN stack (MajorDom-Systems/firmware images/multiprotocol, avahi build) and integration-matter's matterjs-server
 # (its config.py), as static services for a host without the hub, as the cage's lab-pi5 runs them.
 # Keep both in step with those definitions.
-# Host side once: the OTBR publishes through the host's avahi over D-Bus (../multiprotocol-sisdk/Dockerfile, MDNS):
+# Host side once: the OTBR publishes through the host's avahi over D-Bus (the image's Dockerfile, MDNS):
 #   docker cp silabs-multiprotocol:/etc/dbus-1/system.d/otbr-agent.conf /etc/dbus-1/system.d/ && systemctl reload dbus
-#   RADIO_BY_ID=/dev/serial/by-id/<stick> docker compose up -d --build
+#   RADIO_BY_ID=/dev/serial/by-id/<stick> docker compose up -d
 services:
   silabs-multiprotocol:
-    image: majordom/multiprotocol:sisdk-2025.6.3-avahi-arm64
-    build:
-      context: ../multiprotocol-sisdk
-      platforms: [linux/arm64]
+    image: ghcr.io/majordom-systems/multiprotocol@sha256:887648ce36ea05b60e0e58b6b5ed8ca0cc444948bb3a3c9250671b6bfa495682 # as builtin.py's
     container_name: silabs-multiprotocol
     restart: unless-stopped
     privileged: true

@@ -73,7 +73,7 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
         settings=ThreadRadio,
         ports={"ezsp": 9999, "rest": 8081},
         compose={
-            # built from images/multiprotocol-sisdk by .github/workflows/multiprotocol-image.yml (sisdk-2025.6.3-avahi)
+            # built by MajorDom-Systems/firmware (images/multiprotocol, sisdk-2025.6.3-avahi), in step with its RCP firmware
             "image": "ghcr.io/majordom-systems/multiprotocol@sha256:887648ce36ea05b60e0e58b6b5ed8ca0cc444948bb3a3c9250671b6bfa495682",
             "privileged": True,
             "userns_mode": "host",
@@ -82,7 +82,6 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
             # a privileged container sees the host's /dev: a common name (ttyACM0) would be the host's own device
             "devices": ["{peripherals.multipan.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
             "volumes": [
-                f"{_IMAGES}/multiprotocol-sisdk/entrypoint.sh:/entrypoint.sh:ro",
                 f"{_IMAGES}/thread-source/run:/thread-source:ro",
                 # the avahi build publishes through the host's avahi-daemon, on the host's bus
                 "{host.avahi:?/run/dbus:/run/dbus}",
@@ -90,7 +89,6 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
                 "{data}/zigbee:/var/lib/zigbee",
             ],
             "tmpfs": ["/run:exec,mode=1777"],
-            "entrypoint": ["/bin/bash", "/entrypoint.sh"],
             "environment": {
                 "RADIO_DEVICE": "/dev/ttyRCP",
                 "RADIO_BAUD": "{peripherals.multipan.params[baud]}",
