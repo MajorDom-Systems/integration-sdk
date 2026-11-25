@@ -73,8 +73,8 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
         settings=ThreadRadio,
         ports={"ezsp": 9999, "rest": 8081},
         compose={
-            # built by MajorDom-Systems/firmware (images/multiprotocol, sisdk-2025.6.3-avahi), in step with its RCP firmware
-            "image": "ghcr.io/majordom-systems/multiprotocol@sha256:887648ce36ea05b60e0e58b6b5ed8ca0cc444948bb3a3c9250671b6bfa495682",
+            # MajorDom-Systems/firmware images/multiprotocol (sisdk-2025.6.3-avahi), in step with its RCP firmware
+            "image": "ghcr.io/majordom-systems/multiprotocol@sha256:887648ce36ea05b60e0e58b6b5ed8ca0cc444948bb3a3c9250671b6bfa495682",  # noqa: E501
             "privileged": True,
             "userns_mode": "host",
             "network_mode": "host",

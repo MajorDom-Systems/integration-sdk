@@ -39,8 +39,8 @@ def test_the_defaults_are_what_runs_around_integrations_in_the_order_they_bind()
 
 def test_the_containers_listen_where_the_host_says():
     assert next(p for p in default_peripherals() if isinstance(p, Compose)).listen_address == "127.0.0.1"
-    lab = default_peripherals(listen_address="0.0.0.0")  # a lab harness reached from another host
-    assert next(p for p in lab if isinstance(p, Compose)).listen_address == "0.0.0.0"
+    served = default_peripherals(listen_address="0.0.0.0")  # served to other hosts
+    assert next(p for p in served if isinstance(p, Compose)).listen_address == "0.0.0.0"
 
 
 def test_the_usb_scanner_knows_every_sdk_driver_by_default():
