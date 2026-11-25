@@ -7,14 +7,11 @@ import contextlib
 import json
 import time
 import urllib.request
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from majordom_integration_sdk.peripherals import Endpoint, Need, Service
-
-_IMAGES = Path(__file__).parent / "images"
 
 
 class ThreadRadio(BaseModel):
@@ -82,7 +79,6 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
             # a privileged container sees the host's /dev: a common name (ttyACM0) would be the host's own device
             "devices": ["{peripherals.multipan.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
             "volumes": [
-                f"{_IMAGES}/thread-source/run:/thread-source:ro",
                 # the avahi build publishes through the host's avahi-daemon, on the host's bus
                 "{host.avahi:?/run/dbus:/run/dbus}",
                 "{data}/thread:/var/lib/thread",
@@ -127,7 +123,7 @@ def otbr() -> Service:
             "network_mode": "host",
             "hostname": "majordom-thread",  # its mDNS daemon announces this, not the hub's own name
             "devices": ["{peripherals.thread.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
-            "volumes": ["{data}:/data", f"{_IMAGES}/thread-source:/etc/services.d/thread-source:ro"],
+            "volumes": ["{data}:/data"],
             "tmpfs": ["/run:exec,mode=1777", "/tmp:mode=1777"],  # s6-overlay runs its init from /run
             "environment": {
                 "OT_RCP_DEVICE": "spinel+hdlc+uart:///dev/ttyRCP?uart-baudrate={peripherals.thread.params[baud]}"
