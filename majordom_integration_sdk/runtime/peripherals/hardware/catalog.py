@@ -1,6 +1,7 @@
 """The firmware catalog: which radio boards exist and which firmware builds each can run, as the firmware repo publishes
-them on its signed channel (``boards.json``, ``stable.json``, ``dev.json``). A snapshot of the channel ships with the
-SDK (``firmware/``) and works offline; `Catalog.refresh` replaces it with the channel's when that verifies."""
+them on its signed channel (``boards.json``, ``stable.json``, ``dev.json``). A copy of the channel ships with the
+SDK as the offline fallback (``firmware_offline_fallback/``); `Catalog.refresh` replaces it with the channel's when
+that verifies against the bundled ``firmware_channel.pub``."""
 
 from __future__ import annotations
 
@@ -24,9 +25,10 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # Regenerate: `python -m majordom_integration_sdk.runtime.peripherals.hardware.catalog`
-SNAPSHOT = Path(__file__).with_name("firmware")
+OFFLINE_FALLBACK = Path(__file__).with_name("firmware_offline_fallback")
+CHANNEL_KEY = Path(__file__).with_name("firmware_channel.pub")
 CHANNEL_URL = "https://majordom-systems.github.io/firmware/v1/"
-CATALOG_ENV = "MAJORDOM_FIRMWARE_CATALOG"  # a folder with the channel's files, in place of the snapshot
+CATALOG_ENV = "MAJORDOM_FIRMWARE_CATALOG"  # a folder with the channel's files, in place of the offline fallback
 CHANNELS = ("stable", "dev")
 
 type Json = Mapping[str, Any]
@@ -59,14 +61,14 @@ class Catalog:
 
     @classmethod
     def default(cls) -> Catalog:
-        """The one ``MAJORDOM_FIRMWARE_CATALOG`` points at, else the snapshot."""
-        return cls.read(Path(os.environ.get(CATALOG_ENV) or SNAPSHOT))
+        """The one ``MAJORDOM_FIRMWARE_CATALOG`` points at, else the offline fallback."""
+        return cls.read(Path(os.environ.get(CATALOG_ENV) or OFFLINE_FALLBACK))
 
     async def refresh(self, url: str = CHANNEL_URL, public_key: str | None = None) -> bool:
         """Take the channel's catalog at ``url`` if its manifests are signed by ``public_key`` (minisign, the bundled
         one by default) and not expired; otherwise keep this one."""
         try:
-            key = public_key or (SNAPSHOT / "minisign.pub").read_text()
+            key = public_key or CHANNEL_KEY.read_text()
             files = await asyncio.to_thread(_download, url)
             for channel in CHANNELS:
                 _verify(key, files[f"{channel}.json"], files[f"{channel}.json.minisig"].decode())
@@ -187,15 +189,15 @@ def _verify(public_key: str, data: bytes, signature: str):
         raise CatalogError("Bad signature") from error
 
 
-if __name__ == "__main__":  # refresh the snapshot from the live channel, verified
-    catalog = Catalog.read(SNAPSHOT)
+if __name__ == "__main__":  # refresh the offline fallback from the live channel, verified
+    catalog = Catalog.read(OFFLINE_FALLBACK)
     if not asyncio.run(catalog.refresh()):
-        raise SystemExit("The channel's catalog didn't verify: the snapshot is unchanged")
-    (SNAPSHOT / "boards.json").write_text(
+        raise SystemExit("The channel's catalog didn't verify: the offline fallback is unchanged")
+    (OFFLINE_FALLBACK / "boards.json").write_text(
         json.dumps({"schema": 1, "boards": catalog.boards}, indent=2, sort_keys=True) + "\n"
     )
     for name, doc in catalog.channels.items():
-        (SNAPSHOT / f"{name}.json").write_text(json.dumps(doc, indent=2) + "\n")
+        (OFFLINE_FALLBACK / f"{name}.json").write_text(json.dumps(doc, indent=2) + "\n")
 
 
 def _names_product(by_id_name: str, product: str) -> bool:

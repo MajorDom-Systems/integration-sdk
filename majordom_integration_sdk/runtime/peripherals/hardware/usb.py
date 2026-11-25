@@ -181,7 +181,7 @@ class UsbScanner(Peripheral):
     left alone until then. What it identified and what the user probed is remembered, in ``sticks.json`` of its data
     folder: a stick known from before isn't opened again, and waits for the driver that identified it (an
     integration's, bound once that runs). Which sticks are radios, and what they can be flashed with, is in the firmware
-    ``catalog`` (the bundled snapshot by default), refreshed from the signed channel on start (unless
+    ``catalog`` (the bundled offline fallback by default), refreshed from the signed channel on start (unless
     ``refresh=False``). Generic bridges (CH340 1a86:7523 on Arduinos, Espressif 303a) stay out of it: opening their port
     resets the board.
 

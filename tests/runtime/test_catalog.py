@@ -56,10 +56,10 @@ MULTIPAN = {
 }
 
 
-# Snapshot and parity with the hardcoded data it replaced
+# Offline fallback and parity with the hardcoded data it replaced
 
 
-def test_the_snapshot_knows_every_radio_usb_id_the_sdk_did():
+def test_the_offline_fallback_knows_every_radio_usb_id_the_sdk_did():
     assert Catalog.default().usb_ids() == OLD_RADIO_USB_IDS
 
 
@@ -129,7 +129,7 @@ async def test_flashing_downloads_the_catalogs_build_and_checks_it(tmp_path, mon
 
 
 def test_the_env_points_at_a_local_catalog(tmp_path, monkeypatch):
-    shutil.copytree(module.SNAPSHOT, tmp_path, dirs_exist_ok=True)
+    shutil.copytree(module.OFFLINE_FALLBACK, tmp_path, dirs_exist_ok=True)
     boards = json.loads((tmp_path / "boards.json").read_text())
     boards["boards"]["majordom/proto-hub1-cm4-devkits/r1"] = PROTO
     (tmp_path / "boards.json").write_text(json.dumps(boards))
@@ -188,7 +188,7 @@ async def test_a_channel_that_doesnt_verify_leaves_the_catalog_as_it_was(channel
     assert catalog.boards == Catalog.default().boards
 
 
-async def test_the_bundled_key_is_still_a_placeholder_so_the_snapshot_stays(channel):
+async def test_a_channel_not_signed_by_the_bundled_key_keeps_the_offline_fallback(channel):
     assert not await Catalog.default().refresh("https://example/v1")
 
 
