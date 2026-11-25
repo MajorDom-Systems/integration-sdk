@@ -1,0 +1,64 @@
+name: Multiprotocol image
+
+# Publishes the multi-PAN host stack (cpcd + zigbeed + otbr-agent) so hubs pull it instead of building it.
+# The SDK pins the image by digest (runtime/peripherals/services/builtin.py): after a rebuild, copy the
+# digest from the run summary there.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - develop
+    paths:
+      - majordom_integration_sdk/runtime/peripherals/services/images/multiprotocol-sisdk/**
+      - .github/workflows/multiprotocol-image.yml
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/majordom-systems/multiprotocol
+  TAG: sisdk-2025.6.3-avahi
+  CONTEXT: majordom_integration_sdk/runtime/peripherals/services/images/multiprotocol-sisdk
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: type=raw,value=${{ env.TAG }}
+          labels: |
+            org.opencontainers.image.title=MajorDom multi-PAN host stack
+            org.opencontainers.image.licenses=LicenseRef-Silicon-Labs-MSLA AND BSD-3-Clause AND GPL-3.0-only
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.CONTEXT }}
+          platforms: linux/arm64,linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - run: |
+          {
+            echo "### ${IMAGE}:${TAG}"
+            echo '```'
+            echo "${IMAGE}@${{ steps.build.outputs.digest }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
