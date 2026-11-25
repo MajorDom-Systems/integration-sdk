@@ -73,8 +73,8 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
         settings=ThreadRadio,
         ports={"ezsp": 9999, "rest": 8081},
         compose={
-            "image": "majordom/multiprotocol:sisdk-2025.6.3-avahi-arm64",
-            "build": str(_IMAGES / "multiprotocol-sisdk"),
+            # built from images/multiprotocol-sisdk by .github/workflows/multiprotocol-image.yml (sisdk-2025.6.3-avahi)
+            "image": "ghcr.io/majordom-systems/multiprotocol@sha256:887648ce36ea05b60e0e58b6b5ed8ca0cc444948bb3a3c9250671b6bfa495682",
             "privileged": True,
             "userns_mode": "host",
             "network_mode": "host",
