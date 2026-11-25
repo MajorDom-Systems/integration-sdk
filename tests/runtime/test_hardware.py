@@ -23,6 +23,7 @@ from majordom_integration_sdk.runtime import (
     UsbScanner,
 )
 from majordom_integration_sdk.runtime.peripherals.hardware import host, usb
+from majordom_integration_sdk.runtime.peripherals.hardware.catalog import Catalog
 from majordom_integration_sdk.runtime.peripherals.providers.ble import cpc_hci
 from majordom_integration_sdk.testing import FakePeripheral, RecordingPeripheralOutput, RecordingRuntimeOutput
 
@@ -529,3 +530,19 @@ def test_a_skyconnect_is_never_offered_a_multipan_build_the_sisdk_stack_cant_run
 
     monkeypatch.setattr(drivers, "_flasher", probe)
     assert asyncio.run(drivers.Silabs().identify(sky)) == "multipan-rcp"  # a stick already on our SiSDK build
+
+
+async def test_the_catalog_refresh_can_be_turned_off(tmp_path, sticks, monkeypatch):
+    refreshed: list[bool] = []
+
+    async def refresh(self, *args) -> bool:
+        refreshed.append(True)
+        return False
+
+    monkeypatch.setattr(Catalog, "refresh", refresh)
+    runtime = await run(tmp_path, UsbScanner([Driver()], refresh=False))
+    await settle(runtime)
+    assert refreshed == []
+    await runtime.stop()
+    runtime = await run(tmp_path, UsbScanner([Driver()]))
+    await until(runtime, lambda: refreshed)
