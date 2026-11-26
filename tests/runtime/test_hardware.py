@@ -529,6 +529,7 @@ def test_a_skyconnect_is_never_offered_a_multipan_build_the_sisdk_stack_cant_run
         return "Detected ApplicationType.CPC"
 
     monkeypatch.setattr(drivers, "_flasher", probe)
+    monkeypatch.setattr(drivers.shutil, "which", lambda name: name)
     assert asyncio.run(drivers.Silabs().identify(sky)) == "multipan-rcp"  # a stick already on our SiSDK build
 
 
@@ -546,3 +547,35 @@ async def test_the_catalog_refresh_can_be_turned_off(tmp_path, sticks, monkeypat
     await runtime.stop()
     runtime = await run(tmp_path, UsbScanner([Driver()]))
     await until(runtime, lambda: refreshed)
+
+
+async def test_silabs_without_the_flasher_says_so_once_and_recognises_nothing(monkeypatch, caplog):
+    from majordom_integration_sdk.runtime.peripherals.hardware import drivers
+
+    monkeypatch.setattr(drivers.shutil, "which", lambda name: None)
+    silabs = drivers.Silabs(Catalog.default())
+
+    assert await silabs.identify("/dev/ttyUSB0") is None
+    assert await silabs.identify("/dev/ttyUSB1") is None
+    assert [r.levelname for r in caplog.records if "silabs extra" in r.message] == ["ERROR"]
+
+
+async def test_silabs_probes_cpc_first_and_once_more_after_a_failed_probe(monkeypatch):
+    from majordom_integration_sdk.runtime.peripherals.hardware import drivers
+
+    calls: list[tuple[str, ...]] = []
+
+    async def probe(path: str, *args: str) -> str:
+        calls.append(args)
+        if len(calls) == 1:  # bellows crashing on a stick a container only just let go of
+            raise RuntimeError("universal-silabs-flasher probe failed")
+        return "Detected ApplicationType.CPC"
+
+    monkeypatch.setattr(drivers, "_flasher", probe)
+    monkeypatch.setattr(drivers.shutil, "which", lambda name: name)
+    monkeypatch.setattr(drivers, "PROBE_RETRY_DELAY", 0)
+
+    assert await drivers.Silabs(Catalog.default()).identify("/dev/ttyUSB0") == "multipan-rcp"
+    assert len(calls) == 2
+    methods = calls[0][calls[0].index("--probe-methods") + 1].split(",")
+    assert methods[0].startswith("cpc:")
