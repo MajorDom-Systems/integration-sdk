@@ -71,7 +71,7 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
         ports={"ezsp": 9999, "rest": 8081},
         compose={
             # MajorDom-Systems/firmware images/multiprotocol (sisdk-2025.6.3-avahi), in step with its RCP firmware
-            "image": "ghcr.io/majordom-systems/multiprotocol@sha256:887648ce36ea05b60e0e58b6b5ed8ca0cc444948bb3a3c9250671b6bfa495682",  # noqa: E501
+            "image": "ghcr.io/majordom-systems/multiprotocol@sha256:1177eb33b594108901ca358bc3dcea655d08761d2b44818a8066f01a2b4b779f",  # noqa: E501
             "privileged": True,
             "userns_mode": "host",
             "network_mode": "host",
@@ -116,8 +116,8 @@ def otbr() -> Service:
         provides=[_OTBR_REST],
         ports={"rest": 8081},
         compose={
-            # Pinned: a moved :latest once shipped a broken RCP serial init (no wpan0). Bump on purpose.
-            "image": "openthread/border-router@sha256:acc612303d3bd5aea28621ec8f3d2cc154cdc94c370398285dc828d08c5a5cf9",
+            # MajorDom-Systems/firmware images/otbr (openthread-acc61230): upstream, plus the Thread source script
+            "image": "ghcr.io/majordom-systems/otbr@sha256:463c0c141db00113d81fe29008aac8f21a165068c71a4e92c1e39a729fc5d915",  # noqa: E501
             "privileged": True,
             "userns_mode": "host",
             "network_mode": "host",
