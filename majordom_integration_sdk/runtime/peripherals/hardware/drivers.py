@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import re
+import shutil
 import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
@@ -13,6 +15,8 @@ from typing import Any
 
 from majordom_integration_sdk.peripherals import Endpoint, UsbDriver
 from majordom_integration_sdk.runtime.peripherals.hardware.catalog import Build, Catalog
+
+log = logging.getLogger(__name__)
 
 
 class Silabs(UsbDriver):
@@ -29,11 +33,17 @@ class Silabs(UsbDriver):
 
     def __init__(self, catalog: Catalog | None = None):
         self.catalog = catalog or Catalog.default()
+        self._is_flasher_missing_reported = False
 
     # NabuCasa's multi-PAN RCP is 802.15.4 only: none of these builds serves Bluetooth (``bluetooth`` stays empty)
     _apps = {"EZSP": "zigbee-ncp", "SPINEL": "thread-rcp", "CPC": "multipan-rcp"}
 
     async def identify(self, path: str) -> str | None:
+        if not shutil.which(FLASHER):
+            if not self._is_flasher_missing_reported:
+                log.error(f"{FLASHER} isn't installed: Silicon Labs sticks stay unrecognised; install the silabs extra")
+                self._is_flasher_missing_reported = True
+            return None
         found = re.search(r"Detected ApplicationType\.(\w+)", await _flasher(path, "probe"))
         return self._apps.get(found[1]) if found else None
 
@@ -94,16 +104,19 @@ def _zwave_answers(path: str) -> bool:
     return False
 
 
+FLASHER = "universal-silabs-flasher"
+
+
 async def _flasher(path: str, *args: str) -> str:
-    """Run universal-silabs-flasher (an external tool, kept out of this package's dependencies)."""
+    """Run universal-silabs-flasher (GPL-3.0, so a separate process; the `silabs` extra installs it)."""
     process = await asyncio.create_subprocess_exec(
-        "universal-silabs-flasher", "--device", path, *args,
+        FLASHER, "--device", path, *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )  # fmt: skip
     output = (await process.communicate())[0].decode(errors="replace")
     if process.returncode:
-        raise RuntimeError(f"universal-silabs-flasher {args[0]} failed on {path}:\n{output[-2000:]}")
+        raise RuntimeError(f"{FLASHER} {args[0]} failed on {path}:\n{output[-2000:]}")
     return output
 
 

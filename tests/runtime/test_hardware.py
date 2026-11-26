@@ -529,6 +529,7 @@ def test_a_skyconnect_is_never_offered_a_multipan_build_the_sisdk_stack_cant_run
         return "Detected ApplicationType.CPC"
 
     monkeypatch.setattr(drivers, "_flasher", probe)
+    monkeypatch.setattr(drivers.shutil, "which", lambda name: name)
     assert asyncio.run(drivers.Silabs().identify(sky)) == "multipan-rcp"  # a stick already on our SiSDK build
 
 
@@ -546,3 +547,14 @@ async def test_the_catalog_refresh_can_be_turned_off(tmp_path, sticks, monkeypat
     await runtime.stop()
     runtime = await run(tmp_path, UsbScanner([Driver()]))
     await until(runtime, lambda: refreshed)
+
+
+async def test_silabs_without_the_flasher_says_so_once_and_recognises_nothing(monkeypatch, caplog):
+    from majordom_integration_sdk.runtime.peripherals.hardware import drivers
+
+    monkeypatch.setattr(drivers.shutil, "which", lambda name: None)
+    silabs = drivers.Silabs(Catalog.default())
+
+    assert await silabs.identify("/dev/ttyUSB0") is None
+    assert await silabs.identify("/dev/ttyUSB1") is None
+    assert [r.levelname for r in caplog.records if "silabs extra" in r.message] == ["ERROR"]
