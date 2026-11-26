@@ -72,7 +72,6 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 requires-poetry = ">=2.0"
 packages = [{ include = "majordom_integration_sdk" }]
-include = [{ path = "majordom_integration_sdk/runtime/peripherals/services/images", format = ["sdist", "wheel"] }]
 
 # The BlueZ agent's dbus-fast comes with bleak on Linux only
 [tool.ty.analysis]

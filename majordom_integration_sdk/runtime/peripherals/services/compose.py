@@ -36,7 +36,7 @@ class Compose(Peripheral):
     services wait, saying so.
 
     ``listen_address`` is where the services on the host network answer, ``{host.listen_address}``: loopback, the hub
-    only, by default; ``0.0.0.0`` for a lab harness reached from another host, where nothing guards them."""
+    only, by default; ``0.0.0.0`` to serve other hosts, where nothing guards them."""
 
     name = "compose"
     is_on_demand = True

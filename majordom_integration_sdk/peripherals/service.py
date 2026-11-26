@@ -79,7 +79,7 @@ class Service[S: BaseModel = Any](Peripheral[S]):
     ``{x:?text}`` when it isn't; a list item that renders empty is left out, so
     ``"volumes": ["{peripherals.ble.url:?/run/dbus:/run/dbus:ro}"]`` mounts D-Bus only while an adapter is bound. One
     on the host network (``network_mode: host``) listens on ``{host.listen_address}``: loopback unless the host opens
-    its services to the LAN for a lab harness.
+    its services to the LAN.
     The ``params`` of the ``provides`` endpoints render the same way, which is how a consumer learns what its service
     got: ``params={"adapter": "{peripherals.ble.url}"}``. ``settings`` is the model of its options, its ``Settings``.
 

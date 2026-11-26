@@ -7,14 +7,11 @@ import contextlib
 import json
 import time
 import urllib.request
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from majordom_integration_sdk.peripherals import Endpoint, Need, Service
-
-_IMAGES = Path(__file__).parent / "images"
 
 
 class ThreadRadio(BaseModel):
@@ -73,8 +70,8 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
         settings=ThreadRadio,
         ports={"ezsp": 9999, "rest": 8081},
         compose={
-            "image": "majordom/multiprotocol:sisdk-2025.6.3-avahi-arm64",
-            "build": str(_IMAGES / "multiprotocol-sisdk"),
+            # MajorDom-Systems/firmware images/multiprotocol (sisdk-2025.6.3-avahi), in step with its RCP firmware
+            "image": "ghcr.io/majordom-systems/multiprotocol@sha256:1177eb33b594108901ca358bc3dcea655d08761d2b44818a8066f01a2b4b779f",  # noqa: E501
             "privileged": True,
             "userns_mode": "host",
             "network_mode": "host",
@@ -82,15 +79,12 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
             # a privileged container sees the host's /dev: a common name (ttyACM0) would be the host's own device
             "devices": ["{peripherals.multipan.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
             "volumes": [
-                f"{_IMAGES}/multiprotocol-sisdk/entrypoint.sh:/entrypoint.sh:ro",
-                f"{_IMAGES}/thread-source/run:/thread-source:ro",
                 # the avahi build publishes through the host's avahi-daemon, on the host's bus
                 "{host.avahi:?/run/dbus:/run/dbus}",
                 "{data}/thread:/var/lib/thread",
                 "{data}/zigbee:/var/lib/zigbee",
             ],
             "tmpfs": ["/run:exec,mode=1777"],
-            "entrypoint": ["/bin/bash", "/entrypoint.sh"],
             "environment": {
                 "RADIO_DEVICE": "/dev/ttyRCP",
                 "RADIO_BAUD": "{peripherals.multipan.params[baud]}",
@@ -122,14 +116,14 @@ def otbr() -> Service:
         provides=[_OTBR_REST],
         ports={"rest": 8081},
         compose={
-            # Pinned: a moved :latest once shipped a broken RCP serial init (no wpan0). Bump on purpose.
-            "image": "openthread/border-router@sha256:acc612303d3bd5aea28621ec8f3d2cc154cdc94c370398285dc828d08c5a5cf9",
+            # MajorDom-Systems/firmware images/otbr (openthread-acc61230): upstream, plus the Thread source script
+            "image": "ghcr.io/majordom-systems/otbr@sha256:463c0c141db00113d81fe29008aac8f21a165068c71a4e92c1e39a729fc5d915",  # noqa: E501
             "privileged": True,
             "userns_mode": "host",
             "network_mode": "host",
             "hostname": "majordom-thread",  # its mDNS daemon announces this, not the hub's own name
             "devices": ["{peripherals.thread.url}:/dev/ttyRCP", "/dev/net/tun:/dev/net/tun"],
-            "volumes": ["{data}:/data", f"{_IMAGES}/thread-source:/etc/services.d/thread-source:ro"],
+            "volumes": ["{data}:/data"],
             "tmpfs": ["/run:exec,mode=1777", "/tmp:mode=1777"],  # s6-overlay runs its init from /run
             "environment": {
                 "OT_RCP_DEVICE": "spinel+hdlc+uart:///dev/ttyRCP?uart-baudrate={peripherals.thread.params[baud]}"
