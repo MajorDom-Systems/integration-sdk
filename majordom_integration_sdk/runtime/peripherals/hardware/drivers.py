@@ -37,6 +37,9 @@ class Silabs(UsbDriver):
 
     # NabuCasa's multi-PAN RCP is 802.15.4 only: none of these builds serves Bluetooth (``bluetooth`` stays empty)
     _apps = {"EZSP": "zigbee-ncp", "SPINEL": "thread-rcp", "CPC": "multipan-rcp"}
+    #: What it recognises, our multi-PAN build first: the flasher's own order tries EZSP first, ~25 s on a CPC stick,
+    #: and bellows can crash there on a stick a container only just let go of.
+    _probes = "cpc:460800,cpc:115200,cpc:230400,ezsp:115200,ezsp:460800,spinel:460800"
 
     async def identify(self, path: str) -> str | None:
         if not shutil.which(FLASHER):
@@ -44,7 +47,12 @@ class Silabs(UsbDriver):
                 log.error(f"{FLASHER} isn't installed: Silicon Labs sticks stay unrecognised; install the silabs extra")
                 self._is_flasher_missing_reported = True
             return None
-        found = re.search(r"Detected ApplicationType\.(\w+)", await _flasher(path, "probe"))
+        try:
+            output = await _flasher(path, "--probe-methods", self._probes, "probe")
+        except RuntimeError:  # once more: a stick just let go of may still be resetting
+            await asyncio.sleep(PROBE_RETRY_DELAY)
+            output = await _flasher(path, "--probe-methods", self._probes, "probe")
+        found = re.search(r"Detected ApplicationType\.(\w+)", output)
         return self._apps.get(found[1]) if found else None
 
     def serves(self, firmware: str | None, path: str, params: Mapping[str, Any] | None = None) -> list[Endpoint]:
@@ -105,6 +113,7 @@ def _zwave_answers(path: str) -> bool:
 
 
 FLASHER = "universal-silabs-flasher"
+PROBE_RETRY_DELAY = 3
 
 
 async def _flasher(path: str, *args: str) -> str:
@@ -116,7 +125,7 @@ async def _flasher(path: str, *args: str) -> str:
     )  # fmt: skip
     output = (await process.communicate())[0].decode(errors="replace")
     if process.returncode:
-        raise RuntimeError(f"{FLASHER} {args[0]} failed on {path}:\n{output[-2000:]}")
+        raise RuntimeError(f"{FLASHER} {" ".join(args)} failed on {path}:\n{output[-2000:]}")
     return output
 
 
