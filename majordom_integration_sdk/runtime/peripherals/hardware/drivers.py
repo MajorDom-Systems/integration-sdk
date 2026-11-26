@@ -125,7 +125,7 @@ async def _flasher(path: str, *args: str) -> str:
     )  # fmt: skip
     output = (await process.communicate())[0].decode(errors="replace")
     if process.returncode:
-        raise RuntimeError(f"{FLASHER} {" ".join(args)} failed on {path}:\n{output[-2000:]}")
+        raise RuntimeError(f"{FLASHER} {' '.join(args)} failed on {path}:\n{output[-2000:]}")
     return output
 
 
