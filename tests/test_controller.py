@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID, uuid4, uuid5
 
@@ -11,7 +12,7 @@ import pytest
 from factories import make_device_state
 from pydantic import ValidationError
 
-from majordom_integration_sdk import DeviceIdTakenError, NoSettings, Platform
+from majordom_integration_sdk import DeviceIdTakenError, ErrorAction, IntegrationError, NoSettings, Platform
 from majordom_integration_sdk.controller import AbstractController, ControllerOutput, LoggingControllerOutput
 from majordom_integration_sdk.controller.output import AnyController
 from majordom_integration_sdk.imports import ImportMode, ImportPart, ImportSource
@@ -102,6 +103,21 @@ def test_its_documents_folder_is_its_own_under_the_platforms(tmp_path):
     controller = _MinimalController(build_test_platform(documents_root=tmp_path))
     assert controller.platform.documents_folder(controller) == tmp_path / "example-protocol"
     assert (tmp_path / "example-protocol").is_dir()
+
+
+def test_after_a_factory_reset_it_forgets_its_radio_s_network_once(tmp_path):
+    # a Z-Wave controller's nodes, an EZSP coordinator's network: the Hub before the reset held their keys
+    controller = _MinimalController(replace(build_test_platform(documents_root=tmp_path), factory_reset=True))
+    assert controller.platform.forgets_network(controller)
+
+    controller.platform.network_forgotten(controller)
+
+    assert not controller.platform.forgets_network(controller)  # the new one is kept, restarts and reboots alike
+
+
+def test_a_hub_never_reset_keeps_its_radio_s_network(tmp_path):
+    controller = _MinimalController(build_test_platform(documents_root=tmp_path))
+    assert not controller.platform.forgets_network(controller)
 
 
 LEAVES = """
@@ -273,3 +289,17 @@ async def test_a_controller_without_imports_refuses_a_blob(tmp_path):
 def test_an_import_source_is_identified_by_its_hash_and_size():
     source = ImportSource.of(b"backup")
     assert (source.id, source.size) == (hashlib.sha256(b"backup").hexdigest(), 6)
+
+
+def test_an_error_carries_the_actions_the_user_can_resolve_it_with():
+    error = IntegrationError(
+        "channel", "Thread and Zigbee are on different channels", actions=(ErrorAction("move", "Move"),)
+    )
+    assert [action.id for action in error.actions] == ["move"]
+    assert IntegrationError("down", "It is down").actions == ()
+
+
+async def test_a_controller_without_actions_refuses_one(tmp_path):
+    controller = _MinimalController(build_test_platform(documents_root=tmp_path))
+    with pytest.raises(LookupError):
+        await controller.perform_error_action("channel", "move")

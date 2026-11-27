@@ -170,6 +170,11 @@ class AbstractController[
         network (its devices go on working without re-pairing) means the old controller has to be retired."""
         raise NotImplementedError(f"{self.name} has nothing to import")
 
+    async def perform_error_action(self, error_id: str, action_id: str):
+        """The user picked ``action_id`` of the `IntegrationError` ``error_id`` it reported (`ErrorAction`): resolve it.
+        LookupError for an error or an action it doesn't have."""
+        raise LookupError(f"{self.key} has no action {action_id!r} for {error_id!r}")
+
     # TODO: review if these two are needed, test the implementation
 
     @property
