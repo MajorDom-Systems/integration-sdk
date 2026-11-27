@@ -1,5 +1,6 @@
 """A minimal concrete controller exercises the framework end to end with test doubles."""
 
+import hashlib
 import inspect
 import subprocess
 import sys
@@ -14,6 +15,7 @@ from pydantic import ValidationError
 from majordom_integration_sdk import DeviceIdTakenError, ErrorAction, IntegrationError, NoSettings, Platform
 from majordom_integration_sdk.controller import AbstractController, ControllerOutput, LoggingControllerOutput
 from majordom_integration_sdk.controller.output import AnyController
+from majordom_integration_sdk.imports import ImportMode, ImportPart, ImportSource
 from majordom_integration_sdk.repository import DeviceRepositoryMemory
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import Device, DeviceState, Discovery, Parameter, ProvidedCredentials
@@ -273,6 +275,20 @@ async def test_library_mode_takes_every_id_for_free():
 
 def test_the_device_state_type_defaults_to_device_state():
     assert _MinimalController(build_test_platform()).device_state_type is DeviceState
+
+
+async def test_a_controller_without_imports_refuses_a_blob(tmp_path):
+    controller = _MinimalController(build_test_platform(documents_root=tmp_path))
+    source = ImportSource.of(b"{}")
+    with pytest.raises(NotImplementedError):
+        await controller.import_inspect(source)
+    with pytest.raises(NotImplementedError):
+        await controller.import_data(source, [ImportPart("network", "Network")], ImportMode.REPLACE)
+
+
+def test_an_import_source_is_identified_by_its_hash_and_size():
+    source = ImportSource.of(b"backup")
+    assert (source.id, source.size) == (hashlib.sha256(b"backup").hexdigest(), 6)
 
 
 def test_an_error_carries_the_actions_the_user_can_resolve_it_with():
