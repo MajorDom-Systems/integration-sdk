@@ -195,7 +195,7 @@ async def test_a_standalone_router_keeps_the_channel_of_the_network_it_joins(bor
 def test_a_move_is_stamped_after_the_network_it_moves_with_the_clock_behind(monkeypatch):
     monkeypatch.setattr(services.time, "time", lambda: 1000)  # a Pi without a clock of its own, before NTP
     stamped = (2_000_000_000 << 16).to_bytes(8).hex()  # by an earlier move, with the clock right
-    moved = services._tlvs(services._moved(f"0e08{stamped}000300000f0208dead00beef00cafe", 20))
+    moved = services.dataset_tlvs(services._moved(f"0e08{stamped}000300000f0208dead00beef00cafe", 20))
     assert int.from_bytes(moved[services._ACTIVE_TIMESTAMP]) >> 16 == 2_000_000_001  # newer: the devices take it
     assert moved[services._PENDING_TIMESTAMP] == moved[services._ACTIVE_TIMESTAMP]
 
@@ -280,3 +280,49 @@ async def test_a_border_router_tells_its_thread_network_once_it_serves(border_ro
     service = serving(router(), url)
     await asyncio.wait_for(service.start(), 3)
     assert learned(service) == [(service, {"thread_dataset": dataset("0123456789abcdef")})]
+
+
+async def test_a_multiprotocol_router_leaves_an_imported_network_on_its_own_channel(border_router):
+    # another ecosystem's devices are on it: moving it is the user's call (Zigbee reports the clash)
+    url, state = border_router
+    state["dataset"] = dataset("0123456789abcdef", channel=15)
+    service = serving(silabs_multiprotocol(), url, thread_dataset=dataset("dead00beef00cafe", channel=20))
+    service.platform = replace(service.platform, thread_origin="imported")
+    await asyncio.wait_for(service.start(), 3)
+
+    assert state["dataset"] == service.platform.thread_dataset  # joined
+    assert PENDING not in [path for path, _ in state["puts"]]
+
+
+@pytest.mark.parametrize("router", [otbr, silabs_multiprotocol])
+async def test_a_running_border_router_joins_a_network_imported_meanwhile(border_router, router):
+    url, state = border_router
+    state["dataset"] = HUB
+    service = serving(router(), url, thread_dataset=HUB)
+    await asyncio.wait_for(service.start(), 3)
+    before = service.platform
+
+    service.platform = replace(before, thread_dataset=dataset("0123456789abcdef", channel=15), thread_origin="imported")
+    assert await asyncio.wait_for(service.platform_facts_did_change(before), 3)  # in place: no container recreated
+
+    assert state["dataset"] == service.platform.thread_dataset
+
+
+async def test_an_imported_network_the_user_lets_move_follows_zigbee(border_router):
+    url, state = border_router
+    imported = dataset("0123456789abcdef", channel=20)
+    state["dataset"] = dataset("dead00beef00cafe", channel=15)  # its container formed one on Zigbee's channel
+    service = serving(silabs_multiprotocol(), url, thread_dataset=imported)
+    service.platform = replace(service.platform, thread_origin="imported")
+    await asyncio.wait_for(service.start(), 3)
+    before = service.platform
+
+    service.platform = replace(before, thread_origin="own")  # the user chose to move Thread
+    assert await asyncio.wait_for(service.platform_facts_did_change(before), 3)
+
+    assert "000300000f" in dict(state["puts"])[PENDING]  # moving to Zigbee's channel 15
+
+
+def test_the_platform_tells_the_channel_of_its_thread_network():
+    assert build_test_platform(thread_dataset=dataset("0123456789abcdef", channel=25)).thread_channel == 25
+    assert build_test_platform().thread_channel is None

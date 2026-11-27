@@ -16,6 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class ErrorAction:
+    """A way the user can resolve an error, a button in the app: it asks the integration (`perform_error_action`)."""
+
+    id: str  # stable, e.g. "move-zigbee"
+    label: str  # plain language, short
+
+
+@dataclass(frozen=True)
 class IntegrationError:
     """A problem with the whole integration, active until it is resolved or the integration restarts."""
 
@@ -25,6 +33,7 @@ class IntegrationError:
     message: str  # plain language, with any call-to-action in the text
     # False when it can't go on: it is stopped, and started again after each retry delay, then failed
     is_still_running: bool = True
+    actions: tuple[ErrorAction, ...] = ()  # the ways to resolve it the user can pick; none: the message tells
 
 
 class ControllerOutput(Protocol):

@@ -12,6 +12,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from majordom_integration_sdk.peripherals import Endpoint, Need, Service
+from majordom_integration_sdk.platform import Platform
+from majordom_integration_sdk.thread import dataset_channel, dataset_tlvs
 
 
 class ThreadRadio(BaseModel):
@@ -40,6 +42,14 @@ class _BorderRouter[S: BaseModel = Any](Service[S]):
         await self._align(rest.url)
         await self.output.peripheral_did_learn(self, {"thread_dataset": await active_dataset(rest.url)})
 
+    async def platform_facts_did_change(self, before: Platform) -> bool:
+        """A network imported, or one the user let it move, is joined and aligned in place: never rendered."""
+        if (self.platform.thread_dataset, self.platform.thread_origin) != (before.thread_dataset, before.thread_origin):
+            rest = next(endpoint for endpoint in self.provides if endpoint.dialect == _OTBR_REST.dialect)
+            await join_network(rest.url, self.platform.thread_dataset, FORM_PATIENCE)
+            await self._align(rest.url)
+        return await super().platform_facts_did_change(before)
+
     async def _align(self, url: str):
         """Put the network it joined where its radio needs it, before it is told: nowhere in particular here."""
         return
@@ -57,7 +67,7 @@ class _MultiPanBorderRouter(_BorderRouter[ThreadRadio]):
             await super().provision(endpoint)
 
     async def _align(self, url: str):
-        if self._zigbee_channel is not None:
+        if self._zigbee_channel is not None and self.platform.thread_origin != "imported":
             await move_channel(url, self._zigbee_channel, FORM_PATIENCE)  # one that can't land fails the start
 
 
@@ -72,7 +82,7 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
                 "zigbee",
                 "ezsp",
                 "socket://127.0.0.1:{ports.ezsp}",
-                params={"control": "127.0.0.1:{ports.ezsp_control}"},
+                params={"multipan": True, "control": "127.0.0.1:{ports.ezsp_control}"},
             ),
             _OTBR_REST,
         ],
@@ -167,7 +177,7 @@ def _datasets(url: str) -> tuple[str, str]:
     pending for another network (the one it had before it joined) is none: it moves nothing of this one."""
     pending = _call(url, "GET", "/node/dataset/pending")  # first: a move landing meanwhile is in the active one
     active = _call(url, "GET", "/node/dataset/active")
-    if pending and _tlvs(pending).get(_EXTENDED_PAN_ID) != _tlvs(active).get(_EXTENDED_PAN_ID):
+    if pending and dataset_tlvs(pending).get(_EXTENDED_PAN_ID) != dataset_tlvs(active).get(_EXTENDED_PAN_ID):
         pending = ""
     return active, pending
 
@@ -189,7 +199,7 @@ async def network_channel(url: str) -> int:
         with contextlib.suppress(OSError):  # not up yet
             active, pending = await asyncio.to_thread(_datasets, url)
             if active:
-                return _channel(pending or active)
+                return dataset_channel(pending or active)
         await asyncio.sleep(POLL)
 
 
@@ -200,7 +210,7 @@ async def move_channel(url: str, channel: int, patience: float = FORM_PATIENCE):
     while True:
         try:
             active, pending = await asyncio.to_thread(_datasets, url)
-            if _channel(pending or active) != channel:
+            if dataset_channel(pending or active) != channel:
                 await asyncio.to_thread(_call, url, "PUT", "/node/dataset/pending", _moved(active, channel))
             return
         except OSError as error:  # not up, or not attached yet: a pending dataset needs a network to go to
@@ -231,7 +241,7 @@ async def join_network(url: str, dataset: str | None, patience: float = FORM_PAT
     while True:
         try:
             if active := await asyncio.to_thread(_call, url, "GET", "/node/dataset/active"):
-                if dataset and _tlvs(active)[_EXTENDED_PAN_ID] != _tlvs(dataset)[_EXTENDED_PAN_ID]:
+                if dataset and dataset_tlvs(active)[_EXTENDED_PAN_ID] != dataset_tlvs(dataset)[_EXTENDED_PAN_ID]:
                     await asyncio.to_thread(put, True)
                 elif "disabled" in await asyncio.to_thread(_call, url, "GET", "/node/state"):
                     await asyncio.to_thread(enable)  # a join or a forming whose enable failed, tried again
@@ -245,21 +255,9 @@ async def join_network(url: str, dataset: str | None, patience: float = FORM_PAT
         await asyncio.sleep(POLL)
 
 
-def _tlvs(dataset: str) -> dict[int, bytes]:
-    """A dataset's TLVs by type: the Extended PAN ID tells networks apart, whatever moved since (the channel)."""
-    data, tlvs = bytes.fromhex(dataset), {}
-    while len(data) >= 2:
-        tlvs[data[0]], data = data[2 : 2 + data[1]], data[2 + data[1] :]
-    return tlvs
-
-
-def _channel(dataset: str) -> int:
-    return int.from_bytes(_tlvs(dataset)[_CHANNEL][1:])  # after the channel page
-
-
 def _moved(active: str, channel: int) -> str:
     """A pending dataset moving the network of ``active`` to ``channel`` in `MOVE_DELAY` ms."""
-    tlvs = _tlvs(active)
+    tlvs = dataset_tlvs(active)
     # newer than the network's own, which a clock still behind (no RTC, before NTP) wouldn't be: seconds, then no
     # ticks and not authoritative
     seconds = max(int(time.time()), (int.from_bytes(tlvs.get(_ACTIVE_TIMESTAMP, b"")) >> 16) + 1)

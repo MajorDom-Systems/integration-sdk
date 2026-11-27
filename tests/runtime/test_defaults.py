@@ -56,7 +56,8 @@ def test_every_runtime_gets_defaults_of_its_own():
     assert otbr() is not otbr() and silabs_multiprotocol() is not silabs_multiprotocol()
     drivers, others = default_usb_drivers(), default_usb_drivers()  # both alive: ids aren't reused
     assert not {id(d) for d in drivers} & {id(d) for d in others}
-    assert not {id(d) for d in UsbScanner().drivers} & {id(d) for d in UsbScanner().drivers}
+    scanner, other = UsbScanner(), UsbScanner()
+    assert not {id(d) for d in scanner.drivers} & {id(d) for d in other.drivers}
 
 
 def test_the_package_and_its_defaults_import_without_the_extras():

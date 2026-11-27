@@ -6,19 +6,23 @@ from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from majordom_integration_sdk.repository.memory import DeviceRepositoryMemory
 from majordom_integration_sdk.repository.protocol import DeviceRepositoryProtocol
 from majordom_integration_sdk.schemas.credentials import WifiCredentials
 from majordom_integration_sdk.schemas.device import DeviceState
+from majordom_integration_sdk.thread import dataset_channel
 
 if TYPE_CHECKING:
     from majordom_integration_sdk.peripherals import Peripheral
 
 type MakeDeviceRepository = Callable[[str], AbstractAsyncContextManager[DeviceRepositoryProtocol]]
 type CheckDeviceId = Callable[[UUID, DeviceState], Awaitable[None]]
+type AdoptThreadNetwork = Callable[[], Awaitable[None]]
+# Where the Thread network came from: formed by a border router of the Hub's, or imported from the user's (iOS)
+type ThreadOrigin = Literal["own", "imported"]
 
 NETWORK_FORGOTTEN = ".network-forgotten"  # in a peripheral's folder: it forgot its radio's network since the reset
 
@@ -30,6 +34,10 @@ def _in_memory() -> MakeDeviceRepository:
 
 async def _any_id_is_free(physical_id: UUID, draft: DeviceState):
     pass
+
+
+async def _no_host_to_adopt():
+    raise LookupError("No host keeps a Thread network to adopt")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -60,6 +68,15 @@ class Platform:
     # The host was factory reset: a network a radio keeps in its own memory (a Z-Wave controller's nodes and home ID,
     # an EZSP coordinator's network) belongs to the Hub before it, whose keys are gone
     factory_reset: bool = False
+    # A multi-PAN radio's border router moves its own network to Zigbee's channel; an imported one (other ecosystems'
+    # devices on it) stays, until the user lets the Hub move it: the host adopts it then (``adopt_thread_network``)
+    thread_origin: ThreadOrigin = "own"
+    adopt_thread_network: AdoptThreadNetwork = _no_host_to_adopt
+
+    @property
+    def thread_channel(self) -> int | None:
+        """The channel of the hub's Thread network, from its dataset."""
+        return None if self.thread_dataset is None else dataset_channel(self.thread_dataset)
 
     def documents_folder(self, peripheral: Peripheral) -> Path:
         """The folder of ``peripheral``, by its key, created on use: what it keeps across restarts that doesn't belong
