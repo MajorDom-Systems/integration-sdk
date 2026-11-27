@@ -77,7 +77,9 @@ async def test_a_multipan_stick_serves_zigbee_and_matter_through_one_container(t
     peripherals = (host(), radio, builtin.silabs_multiprotocol(), otbr, integration, server, app)
     runtime = await run(tmp_path, FakeCompose(), *peripherals)
 
-    assert integration.peripherals.endpoint("zigbee") == Endpoint("zigbee", "ezsp", "socket://127.0.0.1:9999")
+    assert integration.peripherals.endpoint("zigbee") == Endpoint(
+        "zigbee", "ezsp", "socket://127.0.0.1:9999", params={"control": "127.0.0.1:9998"}
+    )
     assert app.peripherals.endpoint("matter").url == "ws://127.0.0.1:5580/ws"
     services = compose(tmp_path)
     assert set(services) == {"silabs-multiprotocol", "matterjs-server"}  # no one binds the standalone border router

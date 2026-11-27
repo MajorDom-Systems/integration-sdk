@@ -66,9 +66,18 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
     return _MultiPanBorderRouter(
         "silabs-multiprotocol",
         needs=[Need("multipan", ["silabs-cpc"])],
-        provides=[Endpoint("zigbee", "ezsp", "socket://127.0.0.1:{ports.ezsp}"), _OTBR_REST],
+        provides=[
+            # control: where the network is formed or restored, on the radio's own link (the EZSP bridge loses frames)
+            Endpoint(
+                "zigbee",
+                "ezsp",
+                "socket://127.0.0.1:{ports.ezsp}",
+                params={"control": "127.0.0.1:{ports.ezsp_control}"},
+            ),
+            _OTBR_REST,
+        ],
         settings=ThreadRadio,
-        ports={"ezsp": 9999, "rest": 8081},
+        ports={"ezsp": 9999, "ezsp_control": 9998, "rest": 8081},
         compose={
             # MajorDom-Systems/firmware images/multiprotocol (sisdk-2025.6.3-avahi), in step with its RCP firmware
             "image": "ghcr.io/majordom-systems/multiprotocol@sha256:1177eb33b594108901ca358bc3dcea655d08761d2b44818a8066f01a2b4b779f",  # noqa: E501
@@ -94,6 +103,7 @@ def silabs_multiprotocol() -> Service[ThreadRadio]:
                 "RADIO_RESET_GPIO": "{peripherals.multipan.params[reset_gpio]}",
                 "BACKBONE_IF": "{host.interface}",
                 "EZSP_TCP_PORT": "{ports.ezsp}",
+                "EZSP_CONTROL_PORT": "{ports.ezsp_control}",
                 "OTBR_REST_PORT": "{ports.rest}",
                 "LISTEN_ADDRESS": "{host.listen_address}",
                 "THREAD_TX_DBM": "{settings.tx_power}",
